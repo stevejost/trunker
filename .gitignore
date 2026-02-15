@@ -1,0 +1,11 @@
+/target
+*.swp
+*.swo
+*~
+
+# Large IQ sample files (use Git LFS or download separately)
+samples/iq/*.wav
+samples/iq/*.iq
+samples/iq/*.raw
+samples/iq/*.cf32
+!samples/iq/.gitkeep
