@@ -60,9 +60,9 @@ impl TsbkOpcode {
             Self::IdentifierUpdateVu => "IDEN_UP_VU",
             Self::NetworkStatusBroadcast => "NET_STS_BCST",
             Self::RfssStatusBroadcast => "RFSS_STS_BCST",
-            Self::NetworkStatusBroadcastAlt => "NET_STS_BCST",
+            Self::NetworkStatusBroadcastAlt => "NET2_STS_BCST",
             Self::AdjacentStatusBroadcast => "ADJ_STS_BCST",
-            Self::ChannelParametersUpdate => "IDENT_UP",
+            Self::ChannelParametersUpdate => "IDEN_UP_TDMA",
             Self::Unknown(_) => "UNKNOWN",
         }
     }

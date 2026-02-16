@@ -305,7 +305,7 @@ mod tests {
         let json = to_json_line(nac, &parsed, &table);
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(v["name"], "IDENT_UP");
+        assert_eq!(v["name"], "IDEN_UP_TDMA");
         assert_eq!(v["identifier"], 6);
         assert_eq!(v["bandwidth"], 12_500);
         assert_eq!(v["channel_spacing"], 6_250);

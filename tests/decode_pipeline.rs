@@ -351,7 +351,7 @@ fn decode_grant_with_frequency_resolution() {
     // Also verify ident TSBK JSON.
     let ident_json = trunker::output::json::to_json_line(nac, ident_tsbk, &ident_table);
     let iv: serde_json::Value = serde_json::from_str(&ident_json).unwrap();
-    assert_eq!(iv["name"], "IDENT_UP");
+    assert_eq!(iv["name"], "IDEN_UP_TDMA");
     assert_eq!(iv["identifier"], 6);
     assert_eq!(iv["bandwidth"], 12_500);
     assert_eq!(iv["base_frequency"], 851_006_250u64);
