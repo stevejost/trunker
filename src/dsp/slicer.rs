@@ -12,10 +12,10 @@ use crate::p25::types::Dibit;
 /// - +1 deviation (600 Hz)  -> dibit 00
 /// - -1 deviation (600 Hz)  -> dibit 10
 /// - -3 deviation (1800 Hz) -> dibit 11
-const DIBIT_POSITIVE_OUTER: Dibit = Dibit::from_raw(0b01);
-const DIBIT_POSITIVE_INNER: Dibit = Dibit::from_raw(0b00);
-const DIBIT_NEGATIVE_INNER: Dibit = Dibit::from_raw(0b10);
-const DIBIT_NEGATIVE_OUTER: Dibit = Dibit::from_raw(0b11);
+const DIBIT_POSITIVE_OUTER: Dibit = Dibit::new(0b01);
+const DIBIT_POSITIVE_INNER: Dibit = Dibit::new(0b00);
+const DIBIT_NEGATIVE_INNER: Dibit = Dibit::new(0b10);
+const DIBIT_NEGATIVE_OUTER: Dibit = Dibit::new(0b11);
 
 /// Slices baseband FM demodulator output into P25 dibits.
 ///
