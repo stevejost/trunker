@@ -1,0 +1,34 @@
+{
+  "demod_type": "cqpsk",
+  "input_file": "srrcs_cc_852350000_2400k_cf32.iq",
+  "sample_rate": 2400000,
+  "total_tsbks": 1224,
+  "nac_distribution": {
+    "0x5FC": 1224
+  },
+  "opcode_distribution": {
+    "0x00 (GRP_V_CH_GRANT)": 270,
+    "0x02 (GRP_V_CH_GRANT_UPDT)": 68,
+    "0x03 (GRP_V_CH_GRANT_UPDT_EXP)": 59,
+    "0x05 (UNT_TO_UNT_ANS_REQ)": 64,
+    "0x09 (EMERGENCY_ALRM)": 64,
+    "0x0B (UNKNOWN)": 40,
+    "0x14 (SNDCP_DATA_CH_GRANT)": 15,
+    "0x16 (DENY_RSP)": 64,
+    "0x20 (IDENT_UP)": 8,
+    "0x28 (GRP_AFF_RSP)": 4,
+    "0x2B (UNKNOWN)": 48,
+    "0x2C (U_REG_RSP)": 4,
+    "0x2F (U_DE_REG_ACK)": 4,
+    "0x30 (PWR_CTRL_BCST)": 64,
+    "0x33 (IDEN_UP_TDMA)": 96,
+    "0x39 (NET_STS_BCST)": 64,
+    "0x3A (RFSS_STS_BCST)": 64,
+    "0x3B (NET_STS_BCST)": 64,
+    "0x3C (ADJ_STS_BCST)": 64,
+    "0x3D (IDEN_UP)": 96
+  },
+  "unique_opcodes": 20,
+  "raw_symbols_file": "op25_gold_cqpsk.raw",
+  "raw_symbols_bytes": 147248
+}

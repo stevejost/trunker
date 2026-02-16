@@ -1,0 +1,94 @@
+[
+  {
+    "nac": "0x5FC",
+    "opcode": "0x16",
+    "name": "DENY_RSP"
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x33",
+    "name": "IDEN_UP_TDMA",
+    "ident": 2,
+    "base_freq_mhz": "851.01250",
+    "spacing_khz": 12.5
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x00",
+    "name": "GRP_V_CH_GRANT",
+    "channel": "0x01B1",
+    "freq_mhz": "?",
+    "talkgroup": 2821,
+    "source": 9180201
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x09",
+    "name": "EMERGENCY_ALRM"
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x3C",
+    "name": "ADJ_STS_BCST"
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x00",
+    "name": "MOT_GRG_CMD"
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x33",
+    "name": "IDEN_UP_TDMA",
+    "ident": 3,
+    "base_freq_mhz": "762.00625",
+    "spacing_khz": 12.5
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x00",
+    "name": "MOT_GRG_CMD"
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x3D",
+    "name": "IDEN_UP"
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x30",
+    "name": "PWR_CTRL_BCST"
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x02",
+    "name": "GRP_V_CH_GRANT_UPDT",
+    "ch1": "0x0029",
+    "tg1": 2821,
+    "ch2": "0x0029",
+    "tg2": 2821
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x3A",
+    "name": "RFSS_STS_BCST",
+    "sysid": "0x5F2",
+    "rfss": 1,
+    "site": 12
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x3D",
+    "name": "IDEN_UP"
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x03",
+    "name": "GRP_V_CH_GRANT_UPDT_EXP"
+  },
+  {
+    "nac": "0x5FC",
+    "opcode": "0x00",
+    "name": "MOT_GRG_CMD"
+  }
+]

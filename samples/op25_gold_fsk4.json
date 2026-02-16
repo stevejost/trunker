@@ -1,0 +1,24 @@
+{
+  "demod_type": "fsk4",
+  "input_file": "srrcs_cc_852350000_2400k_cf32.iq",
+  "sample_rate": 2400000,
+  "total_tsbks": 15,
+  "nac_distribution": {
+    "0x5FC": 15
+  },
+  "opcode_distribution": {
+    "0x00 (GRP_V_CH_GRANT)": 4,
+    "0x02 (GRP_V_CH_GRANT_UPDT)": 1,
+    "0x03 (GRP_V_CH_GRANT_UPDT_EXP)": 1,
+    "0x09 (EMERGENCY_ALRM)": 1,
+    "0x16 (DENY_RSP)": 1,
+    "0x30 (PWR_CTRL_BCST)": 1,
+    "0x33 (IDEN_UP_TDMA)": 2,
+    "0x3A (RFSS_STS_BCST)": 1,
+    "0x3C (ADJ_STS_BCST)": 1,
+    "0x3D (IDEN_UP)": 2
+  },
+  "unique_opcodes": 10,
+  "raw_symbols_file": "op25_gold_fsk4.raw",
+  "raw_symbols_bytes": 147245
+}

@@ -1,0 +1,1030 @@
+Using two-stage decimator for speed=2400000, decim=25/4 if1=96000 if2=24000
+p25_frame_assembler_impl: do_imbe[0], do_output[0], do_audio_output[0], do_phase2_tdma[0], do_nocrypt[0]
+CQPSK Decode: /home/fuzz/source/trunker/samples/iq/srrcs_cc_852350000_2400k_cf32.iq
+Sample rate: 2400000
+Demod type: cqpsk
+==========================================================================================
+[   1] 0x00 MOT_GRG_CMD                  
+[   2] 0x00 MOT_GRG_CMD                  
+[   3] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[   4] 0x30 PWR_CTRL_BCST                
+[   5] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[   6] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[   7] 0x00 MOT_GRG_CMD                  
+[   8] 0x3D IDEN_UP                      
+[   9] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x0087 freq2_mhz=? tg2=3769
+[  10] 0x16 DENY_RSP                     
+[  11] 0x0B UNKNOWN(0x0B)                
+[  12] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[  13] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[  14] 0x09 EMERGENCY_ALRM               
+[  15] 0x3C ADJ_STS_BCST                 
+[  16] 0x00 MOT_GRG_CMD                  
+[  17] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[  18] 0x05 UNT_TO_UNT_ANS_REQ           
+[  19] 0x00 MOT_GRG_CMD                  
+[  20] 0x00 MOT_GRG_CMD                  
+[  21] 0x30 PWR_CTRL_BCST                
+[  22] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[  23] 0x3D IDEN_UP                      
+[  24] 0x00 MOT_GRG_CMD                  
+[  25] 0x3D IDEN_UP                      
+[  26] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x0087 freq2_mhz=? tg2=3769
+[  27] 0x16 DENY_RSP                     
+[  28] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[  29] 0x00 GRP_V_CH_GRANT               channel=0x01B1 freq_mhz=? talkgroup=2821 source=9180201
+[  30] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[  31] 0x09 EMERGENCY_ALRM               
+[  32] 0x00 GRP_V_CH_GRANT               channel=0x01B1 freq_mhz=? talkgroup=2821 source=9180201
+[  33] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0087 freq1_mhz=? tg1=3769 ch2=0x0087 freq2_mhz=? tg2=3769
+[  34] 0x3C ADJ_STS_BCST                 
+[  35] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[  36] 0x00 MOT_GRG_CMD                  
+[  37] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[  38] 0x05 UNT_TO_UNT_ANS_REQ           
+[  39] 0x00 MOT_GRG_CMD                  
+[  40] 0x00 MOT_GRG_CMD                  
+[  41] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[  42] 0x00 MOT_GRG_CMD                  
+[  43] 0x3D IDEN_UP                      
+[  44] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x0087 freq2_mhz=? tg2=3769
+[  45] 0x2B UNKNOWN(0x2B)                
+[  46] 0x16 DENY_RSP                     
+[  47] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[  48] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=33548 ch2=0xFF8C freq2_mhz=? tg2=5412
+[  49] 0x2B UNKNOWN(0x2B)                
+[  50] 0x09 EMERGENCY_ALRM               
+[  51] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=33548 ch2=0xFF8C freq2_mhz=? tg2=5412
+[  52] 0x3C ADJ_STS_BCST                 
+[  53] 0x00 MOT_GRG_CMD                  
+[  54] 0x00 GRP_V_CH_GRANT               channel=0x0087 freq_mhz=? talkgroup=3769 source=9180261
+[  55] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[  56] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[  57] 0x00 GRP_V_CH_GRANT               channel=0x0087 freq_mhz=? talkgroup=3769 source=9180261
+[  58] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[  59] 0x05 UNT_TO_UNT_ANS_REQ           
+[  60] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[  61] 0x09 EMERGENCY_ALRM               
+[  62] 0x3C ADJ_STS_BCST                 
+[  63] 0x0B UNKNOWN(0x0B)                
+[  64] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=32527 ch2=0x078A freq2_mhz=? tg2=60916
+[  65] 0x00 MOT_GRG_CMD                  
+[  66] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[  67] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=32527 ch2=0x078A freq2_mhz=? tg2=60916
+[  68] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[  69] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[  70] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[  71] 0x05 UNT_TO_UNT_ANS_REQ           
+[  72] 0x00 MOT_GRG_CMD                  
+[  73] 0x00 MOT_GRG_CMD                  
+[  74] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[  75] 0x30 PWR_CTRL_BCST                
+[  76] 0x20 IDENT_UP                     
+[  77] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[  78] 0x2B UNKNOWN(0x2B)                
+[  79] 0x20 IDENT_UP                     
+[  80] 0x09 EMERGENCY_ALRM               
+[  81] 0x3C ADJ_STS_BCST                 
+[  82] 0x00 MOT_GRG_CMD                  
+[  83] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[  84] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[  85] 0x05 UNT_TO_UNT_ANS_REQ           
+[  86] 0x00 MOT_GRG_CMD                  
+[  87] 0x00 MOT_GRG_CMD                  
+[  88] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[  89] 0x30 PWR_CTRL_BCST                
+[  90] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[  91] 0x3D IDEN_UP                      
+[  92] 0x0B UNKNOWN(0x0B)                
+[  93] 0x00 MOT_GRG_CMD                  
+[  94] 0x3D IDEN_UP                      
+[  95] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0087 freq1_mhz=? tg1=3769 ch2=0x01B1 freq2_mhz=? tg2=2821
+[  96] 0x16 DENY_RSP                     
+[  97] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[  98] 0x09 EMERGENCY_ALRM               
+[  99] 0x3C ADJ_STS_BCST                 
+[ 100] 0x30 PWR_CTRL_BCST                
+[ 101] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 102] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 103] 0x00 MOT_GRG_CMD                  
+[ 104] 0x3D IDEN_UP                      
+[ 105] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 106] 0x16 DENY_RSP                     
+[ 107] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 108] 0x09 EMERGENCY_ALRM               
+[ 109] 0x3C ADJ_STS_BCST                 
+[ 110] 0x00 MOT_GRG_CMD                  
+[ 111] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 112] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 113] 0x2B UNKNOWN(0x2B)                
+[ 114] 0x0B UNKNOWN(0x0B)                
+[ 115] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 116] 0x2B UNKNOWN(0x2B)                
+[ 117] 0x00 MOT_GRG_CMD                  
+[ 118] 0x00 MOT_GRG_CMD                  
+[ 119] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 120] 0x09 EMERGENCY_ALRM               
+[ 121] 0x3C ADJ_STS_BCST                 
+[ 122] 0x00 MOT_GRG_CMD                  
+[ 123] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 124] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 125] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 126] 0x00 MOT_GRG_CMD                  
+[ 127] 0x00 MOT_GRG_CMD                  
+[ 128] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 129] 0x30 PWR_CTRL_BCST                
+[ 130] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 131] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 132] 0x00 MOT_GRG_CMD                  
+[ 133] 0x3D IDEN_UP                      
+[ 134] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 135] 0x0B UNKNOWN(0x0B)                
+[ 136] 0x16 DENY_RSP                     
+[ 137] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 138] 0x09 EMERGENCY_ALRM               
+[ 139] 0x2B UNKNOWN(0x2B)                
+[ 140] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 141] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 142] 0x00 MOT_GRG_CMD                  
+[ 143] 0x00 MOT_GRG_CMD                  
+[ 144] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 145] 0x30 PWR_CTRL_BCST                
+[ 146] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 147] 0x3D IDEN_UP                      
+[ 148] 0x00 MOT_GRG_CMD                  
+[ 149] 0x3D IDEN_UP                      
+[ 150] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 151] 0x16 DENY_RSP                     
+[ 152] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 153] 0x09 EMERGENCY_ALRM               
+[ 154] 0x3C ADJ_STS_BCST                 
+[ 155] 0x00 MOT_GRG_CMD                  
+[ 156] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 157] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 158] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 159] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=32527 ch2=0x078C freq2_mhz=? tg2=5514
+[ 160] 0x00 MOT_GRG_CMD                  
+[ 161] 0x3D IDEN_UP                      
+[ 162] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=32527 ch2=0x078C freq2_mhz=? tg2=5514
+[ 163] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 164] 0x16 DENY_RSP                     
+[ 165] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 166] 0x2B UNKNOWN(0x2B)                
+[ 167] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 168] 0x09 EMERGENCY_ALRM               
+[ 169] 0x2B UNKNOWN(0x2B)                
+[ 170] 0x3C ADJ_STS_BCST                 
+[ 171] 0x00 MOT_GRG_CMD                  
+[ 172] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 173] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 174] 0x00 MOT_GRG_CMD                  
+[ 175] 0x00 MOT_GRG_CMD                  
+[ 176] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 177] 0x2B UNKNOWN(0x2B)                
+[ 178] 0x00 MOT_GRG_CMD                  
+[ 179] 0x3D IDEN_UP                      
+[ 180] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 181] 0x28 GRP_AFF_RSP                  
+[ 182] 0x00 MOT_GRG_CMD                  
+[ 183] 0x16 DENY_RSP                     
+[ 184] 0x28 GRP_AFF_RSP                  
+[ 185] 0x00 MOT_GRG_CMD                  
+[ 186] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 187] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 188] 0x00 MOT_GRG_CMD                  
+[ 189] 0x0B UNKNOWN(0x0B)                
+[ 190] 0x09 EMERGENCY_ALRM               
+[ 191] 0x3C ADJ_STS_BCST                 
+[ 192] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 193] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 194] 0x00 MOT_GRG_CMD                  
+[ 195] 0x00 MOT_GRG_CMD                  
+[ 196] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 197] 0x30 PWR_CTRL_BCST                
+[ 198] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 199] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 200] 0x20 IDENT_UP                     
+[ 201] 0x16 DENY_RSP                     
+[ 202] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 203] 0x00 MOT_GRG_CMD                  
+[ 204] 0x09 EMERGENCY_ALRM               
+[ 205] 0x3C ADJ_STS_BCST                 
+[ 206] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 207] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 208] 0x00 MOT_GRG_CMD                  
+[ 209] 0x00 MOT_GRG_CMD                  
+[ 210] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 211] 0x30 PWR_CTRL_BCST                
+[ 212] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 213] 0x3D IDEN_UP                      
+[ 214] 0x0B UNKNOWN(0x0B)                
+[ 215] 0x00 MOT_GRG_CMD                  
+[ 216] 0x3D IDEN_UP                      
+[ 217] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 218] 0x16 DENY_RSP                     
+[ 219] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 220] 0x00 MOT_GRG_CMD                  
+[ 221] 0x09 EMERGENCY_ALRM               
+[ 222] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 223] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 224] 0x00 MOT_GRG_CMD                  
+[ 225] 0x3D IDEN_UP                      
+[ 226] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 227] 0x16 DENY_RSP                     
+[ 228] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 229] 0x00 MOT_GRG_CMD                  
+[ 230] 0x09 EMERGENCY_ALRM               
+[ 231] 0x3C ADJ_STS_BCST                 
+[ 232] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 233] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 234] 0x0B UNKNOWN(0x0B)                
+[ 235] 0x00 MOT_GRG_CMD                  
+[ 236] 0x00 MOT_GRG_CMD                  
+[ 237] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 238] 0x30 PWR_CTRL_BCST                
+[ 239] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 240] 0x3D IDEN_UP                      
+[ 241] 0x00 MOT_GRG_CMD                  
+[ 242] 0x3D IDEN_UP                      
+[ 243] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 244] 0x16 DENY_RSP                     
+[ 245] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 246] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 247] 0x00 MOT_GRG_CMD                  
+[ 248] 0x00 MOT_GRG_CMD                  
+[ 249] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 250] 0x30 PWR_CTRL_BCST                
+[ 251] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 252] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 253] 0x00 MOT_GRG_CMD                  
+[ 254] 0x3D IDEN_UP                      
+[ 255] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 256] 0x16 DENY_RSP                     
+[ 257] 0x0B UNKNOWN(0x0B)                
+[ 258] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 259] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=25356 ch2=0xFF89 freq2_mhz=? tg2=53373
+[ 260] 0x00 MOT_GRG_CMD                  
+[ 261] 0x09 EMERGENCY_ALRM               
+[ 262] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=25356 ch2=0xFF89 freq2_mhz=? tg2=53373
+[ 263] 0x2F U_DE_REG_ACK                 
+[ 264] 0x3C ADJ_STS_BCST                 
+[ 265] 0x00 MOT_GRG_CMD                  
+[ 266] 0x3D IDEN_UP                      
+[ 267] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 268] 0x16 DENY_RSP                     
+[ 269] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 270] 0x00 MOT_GRG_CMD                  
+[ 271] 0x09 EMERGENCY_ALRM               
+[ 272] 0x3C ADJ_STS_BCST                 
+[ 273] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 274] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 275] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 276] 0x00 MOT_GRG_CMD                  
+[ 277] 0x00 MOT_GRG_CMD                  
+[ 278] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 279] 0x0B UNKNOWN(0x0B)                
+[ 280] 0x30 PWR_CTRL_BCST                
+[ 281] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 282] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 283] 0x00 MOT_GRG_CMD                  
+[ 284] 0x3D IDEN_UP                      
+[ 285] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 286] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 287] 0x14 SNDCP_DATA_CH_GRANT          
+[ 288] 0x00 MOT_GRG_CMD                  
+[ 289] 0x00 MOT_GRG_CMD                  
+[ 290] 0x14 SNDCP_DATA_CH_GRANT          
+[ 291] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 292] 0x30 PWR_CTRL_BCST                
+[ 293] 0x14 SNDCP_DATA_CH_GRANT          
+[ 294] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 295] 0x3D IDEN_UP                      
+[ 296] 0x00 MOT_GRG_CMD                  
+[ 297] 0x3D IDEN_UP                      
+[ 298] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 299] 0x16 DENY_RSP                     
+[ 300] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 301] 0x00 MOT_GRG_CMD                  
+[ 302] 0x09 EMERGENCY_ALRM               
+[ 303] 0x0B UNKNOWN(0x0B)                
+[ 304] 0x3C ADJ_STS_BCST                 
+[ 305] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 306] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 307] 0x00 MOT_GRG_CMD                  
+[ 308] 0x3D IDEN_UP                      
+[ 309] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 310] 0x16 DENY_RSP                     
+[ 311] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 312] 0x00 MOT_GRG_CMD                  
+[ 313] 0x09 EMERGENCY_ALRM               
+[ 314] 0x3C ADJ_STS_BCST                 
+[ 315] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 316] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 317] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 318] 0x00 MOT_GRG_CMD                  
+[ 319] 0x00 MOT_GRG_CMD                  
+[ 320] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 321] 0x30 PWR_CTRL_BCST                
+[ 322] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 323] 0x3D IDEN_UP                      
+[ 324] 0x0B UNKNOWN(0x0B)                
+[ 325] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 326] 0x00 MOT_GRG_CMD                  
+[ 327] 0x09 EMERGENCY_ALRM               
+[ 328] 0x3C ADJ_STS_BCST                 
+[ 329] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 330] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 331] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 332] 0x00 MOT_GRG_CMD                  
+[ 333] 0x00 MOT_GRG_CMD                  
+[ 334] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 335] 0x30 PWR_CTRL_BCST                
+[ 336] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 337] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 338] 0x00 MOT_GRG_CMD                  
+[ 339] 0x3D IDEN_UP                      
+[ 340] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 341] 0x16 DENY_RSP                     
+[ 342] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 343] 0x00 MOT_GRG_CMD                  
+[ 344] 0x09 EMERGENCY_ALRM               
+[ 345] 0x2F U_DE_REG_ACK                 
+[ 346] 0x0B UNKNOWN(0x0B)                
+[ 347] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 348] 0x00 MOT_GRG_CMD                  
+[ 349] 0x00 MOT_GRG_CMD                  
+[ 350] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 351] 0x30 PWR_CTRL_BCST                
+[ 352] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 353] 0x3D IDEN_UP                      
+[ 354] 0x00 MOT_GRG_CMD                  
+[ 355] 0x3D IDEN_UP                      
+[ 356] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 357] 0x16 DENY_RSP                     
+[ 358] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 359] 0x00 MOT_GRG_CMD                  
+[ 360] 0x09 EMERGENCY_ALRM               
+[ 361] 0x3C ADJ_STS_BCST                 
+[ 362] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 363] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 364] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 365] 0x00 MOT_GRG_CMD                  
+[ 366] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 367] 0x30 PWR_CTRL_BCST                
+[ 368] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 369] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 370] 0x00 MOT_GRG_CMD                  
+[ 371] 0x3D IDEN_UP                      
+[ 372] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 373] 0x0B UNKNOWN(0x0B)                
+[ 374] 0x16 DENY_RSP                     
+[ 375] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 376] 0x00 MOT_GRG_CMD                  
+[ 377] 0x09 EMERGENCY_ALRM               
+[ 378] 0x3C ADJ_STS_BCST                 
+[ 379] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 380] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 381] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 382] 0x00 MOT_GRG_CMD                  
+[ 383] 0x00 MOT_GRG_CMD                  
+[ 384] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 385] 0x30 PWR_CTRL_BCST                
+[ 386] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 387] 0x3D IDEN_UP                      
+[ 388] 0x3D IDEN_UP                      
+[ 389] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 390] 0x00 MOT_GRG_CMD                  
+[ 391] 0x09 EMERGENCY_ALRM               
+[ 392] 0x3C ADJ_STS_BCST                 
+[ 393] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 394] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 395] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 396] 0x00 MOT_GRG_CMD                  
+[ 397] 0x00 MOT_GRG_CMD                  
+[ 398] 0x0B UNKNOWN(0x0B)                
+[ 399] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 400] 0x30 PWR_CTRL_BCST                
+[ 401] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 402] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 403] 0x00 MOT_GRG_CMD                  
+[ 404] 0x3D IDEN_UP                      
+[ 405] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 406] 0x16 DENY_RSP                     
+[ 407] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 408] 0x00 MOT_GRG_CMD                  
+[ 409] 0x00 MOT_GRG_CMD                  
+[ 410] 0x00 MOT_GRG_CMD                  
+[ 411] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 412] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=25356 ch2=0xFF8C freq2_mhz=? tg2=5412
+[ 413] 0x30 PWR_CTRL_BCST                
+[ 414] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 415] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=25356 ch2=0xFF8C freq2_mhz=? tg2=5412
+[ 416] 0x3D IDEN_UP                      
+[ 417] 0x00 MOT_GRG_CMD                  
+[ 418] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 419] 0x3D IDEN_UP                      
+[ 420] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 421] 0x16 DENY_RSP                     
+[ 422] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 423] 0x00 MOT_GRG_CMD                  
+[ 424] 0x0B UNKNOWN(0x0B)                
+[ 425] 0x09 EMERGENCY_ALRM               
+[ 426] 0x2B UNKNOWN(0x2B)                
+[ 427] 0x3C ADJ_STS_BCST                 
+[ 428] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 429] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 430] 0x30 PWR_CTRL_BCST                
+[ 431] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 432] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 433] 0x00 MOT_GRG_CMD                  
+[ 434] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 435] 0x3D IDEN_UP                      
+[ 436] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x01B1 freq1_mhz=? tg1=2821 ch2=0x01B1 freq2_mhz=? tg2=2821
+[ 437] 0x16 DENY_RSP                     
+[ 438] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 439] 0x00 MOT_GRG_CMD                  
+[ 440] 0x09 EMERGENCY_ALRM               
+[ 441] 0x3C ADJ_STS_BCST                 
+[ 442] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 443] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 444] 0x00 MOT_GRG_CMD                  
+[ 445] 0x00 MOT_GRG_CMD                  
+[ 446] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 447] 0x30 PWR_CTRL_BCST                
+[ 448] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 449] 0x3D IDEN_UP                      
+[ 450] 0x16 DENY_RSP                     
+[ 451] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 452] 0x00 MOT_GRG_CMD                  
+[ 453] 0x09 EMERGENCY_ALRM               
+[ 454] 0x2B UNKNOWN(0x2B)                
+[ 455] 0x3C ADJ_STS_BCST                 
+[ 456] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 457] 0x2B UNKNOWN(0x2B)                
+[ 458] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 459] 0x00 MOT_GRG_CMD                  
+[ 460] 0x00 MOT_GRG_CMD                  
+[ 461] 0x14 SNDCP_DATA_CH_GRANT          
+[ 462] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 463] 0x30 PWR_CTRL_BCST                
+[ 464] 0x14 SNDCP_DATA_CH_GRANT          
+[ 465] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 466] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 467] 0x14 SNDCP_DATA_CH_GRANT          
+[ 468] 0x00 MOT_GRG_CMD                  
+[ 469] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 470] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 471] 0x2B UNKNOWN(0x2B)                
+[ 472] 0x0B UNKNOWN(0x0B)                
+[ 473] 0x00 MOT_GRG_CMD                  
+[ 474] 0x2B UNKNOWN(0x2B)                
+[ 475] 0x2B UNKNOWN(0x2B)                
+[ 476] 0x00 MOT_GRG_CMD                  
+[ 477] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 478] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=25356 ch2=0xFF89 freq2_mhz=? tg2=52088
+[ 479] 0x2B UNKNOWN(0x2B)                
+[ 480] 0x30 PWR_CTRL_BCST                
+[ 481] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=25356 ch2=0xFF89 freq2_mhz=? tg2=52088
+[ 482] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 483] 0x3D IDEN_UP                      
+[ 484] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 485] 0x00 MOT_GRG_CMD                  
+[ 486] 0x3D IDEN_UP                      
+[ 487] 0x3C ADJ_STS_BCST                 
+[ 488] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 489] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 490] 0x00 MOT_GRG_CMD                  
+[ 491] 0x00 MOT_GRG_CMD                  
+[ 492] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 493] 0x30 PWR_CTRL_BCST                
+[ 494] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 495] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 496] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 497] 0x00 MOT_GRG_CMD                  
+[ 498] 0x3D IDEN_UP                      
+[ 499] 0x16 DENY_RSP                     
+[ 500] 0x0B UNKNOWN(0x0B)                
+[ 501] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 502] 0x00 MOT_GRG_CMD                  
+[ 503] 0x09 EMERGENCY_ALRM               
+[ 504] 0x3C ADJ_STS_BCST                 
+[ 505] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 506] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 507] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 508] 0x3D IDEN_UP                      
+[ 509] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 510] 0x00 MOT_GRG_CMD                  
+[ 511] 0x2B UNKNOWN(0x2B)                
+[ 512] 0x3D IDEN_UP                      
+[ 513] 0x16 DENY_RSP                     
+[ 514] 0x2B UNKNOWN(0x2B)                
+[ 515] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 516] 0x00 MOT_GRG_CMD                  
+[ 517] 0x09 EMERGENCY_ALRM               
+[ 518] 0x3C ADJ_STS_BCST                 
+[ 519] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 520] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 521] 0x00 MOT_GRG_CMD                  
+[ 522] 0x00 MOT_GRG_CMD                  
+[ 523] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 524] 0x30 PWR_CTRL_BCST                
+[ 525] 0x0B UNKNOWN(0x0B)                
+[ 526] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 527] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 528] 0x00 MOT_GRG_CMD                  
+[ 529] 0x3D IDEN_UP                      
+[ 530] 0x16 DENY_RSP                     
+[ 531] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 532] 0x00 MOT_GRG_CMD                  
+[ 533] 0x09 EMERGENCY_ALRM               
+[ 534] 0x3C ADJ_STS_BCST                 
+[ 535] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 536] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 537] 0x00 GRP_V_CH_GRANT               channel=0x0029 freq_mhz=? talkgroup=2821 source=9023221
+[ 538] 0x00 MOT_GRG_CMD                  
+[ 539] 0x00 MOT_GRG_CMD                  
+[ 540] 0x00 GRP_V_CH_GRANT               channel=0x0029 freq_mhz=? talkgroup=2821 source=9023221
+[ 541] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 542] 0x30 PWR_CTRL_BCST                
+[ 543] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 544] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 545] 0x3D IDEN_UP                      
+[ 546] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 547] 0x00 MOT_GRG_CMD                  
+[ 548] 0x09 EMERGENCY_ALRM               
+[ 549] 0x3C ADJ_STS_BCST                 
+[ 550] 0x0B UNKNOWN(0x0B)                
+[ 551] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 552] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 553] 0x00 MOT_GRG_CMD                  
+[ 554] 0x00 MOT_GRG_CMD                  
+[ 555] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 556] 0x30 PWR_CTRL_BCST                
+[ 557] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 558] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 559] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 560] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 561] 0x00 MOT_GRG_CMD                  
+[ 562] 0x3D IDEN_UP                      
+[ 563] 0x16 DENY_RSP                     
+[ 564] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 565] 0x00 MOT_GRG_CMD                  
+[ 566] 0x09 EMERGENCY_ALRM               
+[ 567] 0x2B UNKNOWN(0x2B)                
+[ 568] 0x00 MOT_GRG_CMD                  
+[ 569] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 570] 0x2B UNKNOWN(0x2B)                
+[ 571] 0x30 PWR_CTRL_BCST                
+[ 572] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 573] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 574] 0x3D IDEN_UP                      
+[ 575] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 576] 0x0B UNKNOWN(0x0B)                
+[ 577] 0x00 MOT_GRG_CMD                  
+[ 578] 0x3D IDEN_UP                      
+[ 579] 0x16 DENY_RSP                     
+[ 580] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 581] 0x00 MOT_GRG_CMD                  
+[ 582] 0x09 EMERGENCY_ALRM               
+[ 583] 0x3C ADJ_STS_BCST                 
+[ 584] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 585] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 586] 0x00 MOT_GRG_CMD                  
+[ 587] 0x00 MOT_GRG_CMD                  
+[ 588] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 589] 0x30 PWR_CTRL_BCST                
+[ 590] 0x00 MOT_GRG_CMD                  
+[ 591] 0x3D IDEN_UP                      
+[ 592] 0x16 DENY_RSP                     
+[ 593] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 594] 0x00 MOT_GRG_CMD                  
+[ 595] 0x09 EMERGENCY_ALRM               
+[ 596] 0x3C ADJ_STS_BCST                 
+[ 597] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 598] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 599] 0x00 MOT_GRG_CMD                  
+[ 600] 0x0B UNKNOWN(0x0B)                
+[ 601] 0x00 MOT_GRG_CMD                  
+[ 602] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 603] 0x30 PWR_CTRL_BCST                
+[ 604] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 605] 0x2B UNKNOWN(0x2B)                
+[ 606] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 607] 0x3D IDEN_UP                      
+[ 608] 0x2B UNKNOWN(0x2B)                
+[ 609] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 610] 0x3D IDEN_UP                      
+[ 611] 0x16 DENY_RSP                     
+[ 612] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 613] 0x00 MOT_GRG_CMD                  
+[ 614] 0x09 EMERGENCY_ALRM               
+[ 615] 0x3C ADJ_STS_BCST                 
+[ 616] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 617] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 618] 0x00 MOT_GRG_CMD                  
+[ 619] 0x00 MOT_GRG_CMD                  
+[ 620] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 621] 0x30 PWR_CTRL_BCST                
+[ 622] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=25356 ch2=0xFF8C freq2_mhz=? tg2=5412
+[ 623] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 624] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 625] 0x14 SNDCP_DATA_CH_GRANT          
+[ 626] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=25356 ch2=0xFF8C freq2_mhz=? tg2=5412
+[ 627] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 628] 0x14 SNDCP_DATA_CH_GRANT          
+[ 629] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 630] 0x09 EMERGENCY_ALRM               
+[ 631] 0x3C ADJ_STS_BCST                 
+[ 632] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 633] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 634] 0x00 MOT_GRG_CMD                  
+[ 635] 0x2B UNKNOWN(0x2B)                
+[ 636] 0x00 MOT_GRG_CMD                  
+[ 637] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 638] 0x2B UNKNOWN(0x2B)                
+[ 639] 0x30 PWR_CTRL_BCST                
+[ 640] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 641] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 642] 0x3D IDEN_UP                      
+[ 643] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 644] 0x00 MOT_GRG_CMD                  
+[ 645] 0x3D IDEN_UP                      
+[ 646] 0x16 DENY_RSP                     
+[ 647] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 648] 0x00 MOT_GRG_CMD                  
+[ 649] 0x09 EMERGENCY_ALRM               
+[ 650] 0x00 MOT_GRG_CMD                  
+[ 651] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 652] 0x2B UNKNOWN(0x2B)                
+[ 653] 0x30 PWR_CTRL_BCST                
+[ 654] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 655] 0x2B UNKNOWN(0x2B)                
+[ 656] 0x0B UNKNOWN(0x0B)                
+[ 657] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 658] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 659] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 660] 0x00 MOT_GRG_CMD                  
+[ 661] 0x3D IDEN_UP                      
+[ 662] 0x16 DENY_RSP                     
+[ 663] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 664] 0x00 MOT_GRG_CMD                  
+[ 665] 0x09 EMERGENCY_ALRM               
+[ 666] 0x3C ADJ_STS_BCST                 
+[ 667] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 668] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 669] 0x00 MOT_GRG_CMD                  
+[ 670] 0x30 PWR_CTRL_BCST                
+[ 671] 0x2B UNKNOWN(0x2B)                
+[ 672] 0x2B UNKNOWN(0x2B)                
+[ 673] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 674] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 675] 0x3D IDEN_UP                      
+[ 676] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 677] 0x00 MOT_GRG_CMD                  
+[ 678] 0x3D IDEN_UP                      
+[ 679] 0x16 DENY_RSP                     
+[ 680] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 681] 0x00 MOT_GRG_CMD                  
+[ 682] 0x09 EMERGENCY_ALRM               
+[ 683] 0x3C ADJ_STS_BCST                 
+[ 684] 0x0B UNKNOWN(0x0B)                
+[ 685] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 686] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 687] 0x00 MOT_GRG_CMD                  
+[ 688] 0x00 MOT_GRG_CMD                  
+[ 689] 0x3D IDEN_UP                      
+[ 690] 0x16 DENY_RSP                     
+[ 691] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 692] 0x00 MOT_GRG_CMD                  
+[ 693] 0x09 EMERGENCY_ALRM               
+[ 694] 0x3C ADJ_STS_BCST                 
+[ 695] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=25356 ch2=0xFF89 freq2_mhz=? tg2=52088
+[ 696] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 697] 0x2B UNKNOWN(0x2B)                
+[ 698] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=25356 ch2=0xFF89 freq2_mhz=? tg2=52088
+[ 699] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 700] 0x2B UNKNOWN(0x2B)                
+[ 701] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 702] 0x00 MOT_GRG_CMD                  
+[ 703] 0x00 MOT_GRG_CMD                  
+[ 704] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 705] 0x30 PWR_CTRL_BCST                
+[ 706] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 707] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 708] 0x16 DENY_RSP                     
+[ 709] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 710] 0x00 MOT_GRG_CMD                  
+[ 711] 0x09 EMERGENCY_ALRM               
+[ 712] 0x3C ADJ_STS_BCST                 
+[ 713] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 714] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 715] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 716] 0x00 MOT_GRG_CMD                  
+[ 717] 0x00 MOT_GRG_CMD                  
+[ 718] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 719] 0x30 PWR_CTRL_BCST                
+[ 720] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 721] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 722] 0x2C U_REG_RSP                    
+[ 723] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 724] 0x2B UNKNOWN(0x2B)                
+[ 725] 0x2C U_REG_RSP                    
+[ 726] 0x00 MOT_GRG_CMD                  
+[ 727] 0x00 MOT_GRG_CMD                  
+[ 728] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 729] 0x28 GRP_AFF_RSP                  
+[ 730] 0x00 GRP_V_CH_GRANT               channel=0x0029 freq_mhz=? talkgroup=2821 source=9180201
+[ 731] 0x00 MOT_GRG_CMD                  
+[ 732] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 733] 0x00 GRP_V_CH_GRANT               channel=0x0029 freq_mhz=? talkgroup=2821 source=9180201
+[ 734] 0x14 SNDCP_DATA_CH_GRANT          
+[ 735] 0x00 MOT_GRG_CMD                  
+[ 736] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 737] 0x14 SNDCP_DATA_CH_GRANT          
+[ 738] 0x09 EMERGENCY_ALRM               
+[ 739] 0x3C ADJ_STS_BCST                 
+[ 740] 0x14 SNDCP_DATA_CH_GRANT          
+[ 741] 0x20 IDENT_UP                     
+[ 742] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 743] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 744] 0x20 IDENT_UP                     
+[ 745] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 746] 0x00 MOT_GRG_CMD                  
+[ 747] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 748] 0x3D IDEN_UP                      
+[ 749] 0x00 MOT_GRG_CMD                  
+[ 750] 0x3D IDEN_UP                      
+[ 751] 0x16 DENY_RSP                     
+[ 752] 0x2B UNKNOWN(0x2B)                
+[ 753] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 754] 0x00 MOT_GRG_CMD                  
+[ 755] 0x2B UNKNOWN(0x2B)                
+[ 756] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 757] 0x09 EMERGENCY_ALRM               
+[ 758] 0x3C ADJ_STS_BCST                 
+[ 759] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 760] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 761] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 762] 0x00 MOT_GRG_CMD                  
+[ 763] 0x00 MOT_GRG_CMD                  
+[ 764] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 765] 0x30 PWR_CTRL_BCST                
+[ 766] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 767] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 768] 0x00 MOT_GRG_CMD                  
+[ 769] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 770] 0x0B UNKNOWN(0x0B)                
+[ 771] 0x09 EMERGENCY_ALRM               
+[ 772] 0x3C ADJ_STS_BCST                 
+[ 773] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 774] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 775] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 776] 0x00 MOT_GRG_CMD                  
+[ 777] 0x00 MOT_GRG_CMD                  
+[ 778] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 779] 0x30 PWR_CTRL_BCST                
+[ 780] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 781] 0x3D IDEN_UP                      
+[ 782] 0x00 MOT_GRG_CMD                  
+[ 783] 0x2B UNKNOWN(0x2B)                
+[ 784] 0x3D IDEN_UP                      
+[ 785] 0x16 DENY_RSP                     
+[ 786] 0x00 MOT_GRG_CMD                  
+[ 787] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 788] 0x09 EMERGENCY_ALRM               
+[ 789] 0x3C ADJ_STS_BCST                 
+[ 790] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 791] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 792] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 793] 0x00 MOT_GRG_CMD                  
+[ 794] 0x00 MOT_GRG_CMD                  
+[ 795] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 796] 0x30 PWR_CTRL_BCST                
+[ 797] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 798] 0x0B UNKNOWN(0x0B)                
+[ 799] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 800] 0x00 MOT_GRG_CMD                  
+[ 801] 0x3D IDEN_UP                      
+[ 802] 0x16 DENY_RSP                     
+[ 803] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 804] 0x00 MOT_GRG_CMD                  
+[ 805] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 freq1_mhz=? tg1=2821 ch2=0x0029 freq2_mhz=? tg2=2821
+[ 806] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 807] 0x30 PWR_CTRL_BCST                
+[ 808] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 809] 0x3D IDEN_UP                      
+[ 810] 0x20 IDENT_UP                     
+[ 811] 0x00 MOT_GRG_CMD                  
+[ 812] 0x3D IDEN_UP                      
+[ 813] 0x20 IDENT_UP                     
+[ 814] 0x16 DENY_RSP                     
+[ 815] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 816] 0x14 SNDCP_DATA_CH_GRANT          
+[ 817] 0x00 MOT_GRG_CMD                  
+[ 818] 0x09 EMERGENCY_ALRM               
+[ 819] 0x14 SNDCP_DATA_CH_GRANT          
+[ 820] 0x3C ADJ_STS_BCST                 
+[ 821] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 822] 0x14 SNDCP_DATA_CH_GRANT          
+[ 823] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 824] 0x0B UNKNOWN(0x0B)                
+[ 825] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 826] 0x00 MOT_GRG_CMD                  
+[ 827] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 828] 0x30 PWR_CTRL_BCST                
+[ 829] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 830] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 831] 0x00 MOT_GRG_CMD                  
+[ 832] 0x3D IDEN_UP                      
+[ 833] 0x16 DENY_RSP                     
+[ 834] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 835] 0x00 MOT_GRG_CMD                  
+[ 836] 0x09 EMERGENCY_ALRM               
+[ 837] 0x3C ADJ_STS_BCST                 
+[ 838] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 839] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 840] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 841] 0x00 MOT_GRG_CMD                  
+[ 842] 0x00 MOT_GRG_CMD                  
+[ 843] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 844] 0x30 PWR_CTRL_BCST                
+[ 845] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 846] 0x0B UNKNOWN(0x0B)                
+[ 847] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 848] 0x00 MOT_GRG_CMD                  
+[ 849] 0x09 EMERGENCY_ALRM               
+[ 850] 0x3C ADJ_STS_BCST                 
+[ 851] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 852] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 853] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 854] 0x00 MOT_GRG_CMD                  
+[ 855] 0x00 MOT_GRG_CMD                  
+[ 856] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 857] 0x30 PWR_CTRL_BCST                
+[ 858] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 859] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 860] 0x00 MOT_GRG_CMD                  
+[ 861] 0x3D IDEN_UP                      
+[ 862] 0x16 DENY_RSP                     
+[ 863] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 864] 0x00 MOT_GRG_CMD                  
+[ 865] 0x09 EMERGENCY_ALRM               
+[ 866] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 867] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 868] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 869] 0x00 MOT_GRG_CMD                  
+[ 870] 0x00 MOT_GRG_CMD                  
+[ 871] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 872] 0x0B UNKNOWN(0x0B)                
+[ 873] 0x30 PWR_CTRL_BCST                
+[ 874] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 875] 0x3D IDEN_UP                      
+[ 876] 0x00 MOT_GRG_CMD                  
+[ 877] 0x3D IDEN_UP                      
+[ 878] 0x16 DENY_RSP                     
+[ 879] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 880] 0x00 MOT_GRG_CMD                  
+[ 881] 0x09 EMERGENCY_ALRM               
+[ 882] 0x3C ADJ_STS_BCST                 
+[ 883] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 884] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 885] 0x00 MOT_GRG_CMD                  
+[ 886] 0x16 DENY_RSP                     
+[ 887] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 888] 0x00 MOT_GRG_CMD                  
+[ 889] 0x09 EMERGENCY_ALRM               
+[ 890] 0x3C ADJ_STS_BCST                 
+[ 891] 0x0B UNKNOWN(0x0B)                
+[ 892] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 893] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 894] 0x00 MOT_GRG_CMD                  
+[ 895] 0x00 MOT_GRG_CMD                  
+[ 896] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 897] 0x30 PWR_CTRL_BCST                
+[ 898] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 899] 0x3D IDEN_UP                      
+[ 900] 0x00 MOT_GRG_CMD                  
+[ 901] 0x3D IDEN_UP                      
+[ 902] 0x16 DENY_RSP                     
+[ 903] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 904] 0x00 MOT_GRG_CMD                  
+[ 905] 0x09 EMERGENCY_ALRM               
+[ 906] 0x00 MOT_GRG_CMD                  
+[ 907] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 908] 0x30 PWR_CTRL_BCST                
+[ 909] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 910] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 911] 0x00 MOT_GRG_CMD                  
+[ 912] 0x3D IDEN_UP                      
+[ 913] 0x0B UNKNOWN(0x0B)                
+[ 914] 0x16 DENY_RSP                     
+[ 915] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 916] 0x00 MOT_GRG_CMD                  
+[ 917] 0x09 EMERGENCY_ALRM               
+[ 918] 0x3C ADJ_STS_BCST                 
+[ 919] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 920] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 921] 0x00 MOT_GRG_CMD                  
+[ 922] 0x00 MOT_GRG_CMD                  
+[ 923] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 924] 0x30 PWR_CTRL_BCST                
+[ 925] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 926] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 927] 0x00 MOT_GRG_CMD                  
+[ 928] 0x09 EMERGENCY_ALRM               
+[ 929] 0x3C ADJ_STS_BCST                 
+[ 930] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 931] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 932] 0x00 MOT_GRG_CMD                  
+[ 933] 0x00 MOT_GRG_CMD                  
+[ 934] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 935] 0x0B UNKNOWN(0x0B)                
+[ 936] 0x30 PWR_CTRL_BCST                
+[ 937] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 938] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[ 939] 0x00 MOT_GRG_CMD                  
+[ 940] 0x3D IDEN_UP                      
+[ 941] 0x16 DENY_RSP                     
+[ 942] 0x33 IDEN_UP_TDMA                 ident=5 base_freq_mhz=935.01250 spacing_khz=12.5
+[ 943] 0x00 MOT_GRG_CMD                  
+[ 944] 0x09 EMERGENCY_ALRM               
+[ 945] 0x3C ADJ_STS_BCST                 
+[ 946] 0x39 NET_STS_BCST                 wacn=0x0C018 sysid=0x704 channel=0x01CB freq_mhz=?
+[ 947] 0x30 PWR_CTRL_BCST                
+[ 948] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 949] 0x3D IDEN_UP                      
+[ 950] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=59660 ch2=0xFF8C freq2_mhz=? tg2=5412
+[ 951] 0x00 MOT_GRG_CMD                  
+[ 952] 0x3D IDEN_UP                      
+[ 953] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0000 freq1_mhz=? tg1=59660 ch2=0xFF8C freq2_mhz=? tg2=5412
+[ 954] 0x16 DENY_RSP                     
+[ 955] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 956] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 957] 0x00 MOT_GRG_CMD                  
+[ 958] 0x09 EMERGENCY_ALRM               
+[ 959] 0x3C ADJ_STS_BCST                 
+[ 960] 0x0B UNKNOWN(0x0B)                
+[ 961] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 962] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 963] 0x00 MOT_GRG_CMD                  
+[ 964] 0x00 MOT_GRG_CMD                  
+[ 965] 0x39 NET_STS_BCST                 wacn=0x0C01C sysid=0xB04 channel=0x015D freq_mhz=?
+[ 966] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 967] 0x00 MOT_GRG_CMD                  
+[ 968] 0x09 EMERGENCY_ALRM               
+[ 969] 0x3C ADJ_STS_BCST                 
+[ 970] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 971] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 972] 0x00 MOT_GRG_CMD                  
+[ 973] 0x00 MOT_GRG_CMD                  
+[ 974] 0x39 NET_STS_BCST                 wacn=0x0C015 sysid=0xD04 channel=0x0187 freq_mhz=?
+[ 975] 0x30 PWR_CTRL_BCST                
+[ 976] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12 channel=0x00D7 freq_mhz=?
+[ 977] 0x3D IDEN_UP                      
+[ 978] 0x00 MOT_GRG_CMD                  
+[ 979] 0x2B UNKNOWN(0x2B)                
+[ 980] 0x3D IDEN_UP                      
+[ 981] 0x0B UNKNOWN(0x0B)                
+[ 982] 0x2B UNKNOWN(0x2B)                
+[ 983] 0x16 DENY_RSP                     
+[ 984] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[ 985] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[ 986] 0x09 EMERGENCY_ALRM               
+[ 987] 0x3C ADJ_STS_BCST                 
+[ 988] 0x3B NET_STS_BCST                 wacn=0xBEE00 sysid=0x5F2 channel=0x00D7 freq_mhz=?
+[ 989] 0x05 UNT_TO_UNT_ANS_REQ           
+[ 990] 0x00 MOT_GRG_CMD                  
+[ 991] 0x00 MOT_GRG_CMD                  
+
+==========================================================================================
+Demod type:          cqpsk
+Total TSBKs decoded: 991
+Ident table:         3 entries
+  [2] base=851.01250 MHz  spacing=12.5 kHz
+  [3] base=762.00625 MHz  spacing=12.5 kHz
+  [5] base=935.01250 MHz  spacing=12.5 kHz
+
+Opcode distribution:
+  0x00 GRP_V_CH_GRANT                217
+  0x02 GRP_V_CH_GRANT_UPDT            58
+  0x03 GRP_V_CH_GRANT_UPDT_EXP        47
+  0x05 UNT_TO_UNT_ANS_REQ             53
+  0x09 EMERGENCY_ALRM                 58
+  0x0B 0x0B                           34
+  0x14 SNDCP_DATA_CH_GRANT            14
+  0x16 DENY_RSP                       49
+  0x20 IDENT_UP                        7
+  0x28 GRP_AFF_RSP                     3
+  0x2B 0x2B                           36
+  0x2C U_REG_RSP                       2
+  0x2F U_DE_REG_ACK                    2
+  0x30 PWR_CTRL_BCST                  51
+  0x33 IDEN_UP_TDMA                   78
+  0x39 NET_STS_BCST                   50
+  0x3A RFSS_STS_BCST                  54
+  0x3B NET_STS_BCST                   53
+  0x3C ADJ_STS_BCST                   52
+  0x3D IDEN_UP                        73
+
+Saved summary to cqpsk_summary.json
+Saved 991 TSBKs to cqpsk_tsbks.json

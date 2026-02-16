@@ -1,0 +1,56 @@
+{
+  "description": "Gold reference comparison: OP25 vs trunker on SRRCS IQ recording",
+  "recording": "srrcs_cc_852350000_2400k_cf32.iq (562 MB, CF32, 852.350 MHz, 2.4 MS/s)",
+  "system": "SRRCS, WACN=0x0C018, System ID=0x704, NAC=0x5FC",
+  "date_generated": "2026-02-16",
+  "results": {
+    "op25_fsk4": {
+      "tool": "OP25 (GNU Radio 3.10.9)",
+      "demod_type": "fsk4 (C4FM via FM discriminator)",
+      "total_tsbks": 15,
+      "nac_0x5FC": 15,
+      "unique_opcodes": 10,
+      "notes": "OP25 C4FM mode struggles with this simulcast recording"
+    },
+    "op25_cqpsk": {
+      "tool": "OP25 (GNU Radio 3.10.9)",
+      "demod_type": "cqpsk (Gardner+Costas+diff phasor)",
+      "total_tsbks": 1224,
+      "nac_0x5FC": 1224,
+      "unique_opcodes": 20,
+      "notes": "CQPSK demod is 81x better than C4FM on this simulcast signal. All TSBKs have correct NAC."
+    },
+    "trunker_c4fm": {
+      "tool": "trunker (Rust, Gardner timing)",
+      "demod_type": "c4fm (FM discriminator + Gardner TED)",
+      "total_tsbks": 857,
+      "nac_0x5FC": 789,
+      "nac_accuracy_pct": 92.1,
+      "unique_opcodes": 20,
+      "notes": "Much better than OP25 C4FM (different filter/timing config). 92% correct NAC."
+    },
+    "trunker_cqpsk": {
+      "tool": "trunker (Rust, AGC+RRC+Gardner+DiffDec+Costas)",
+      "demod_type": "cqpsk (coherent I/Q demodulation)",
+      "total_tsbks": 872,
+      "nac_0x5FC": 684,
+      "nac_accuracy_pct": 78.4,
+      "unique_opcodes": 20,
+      "notes": "Similar TSBK count to C4FM but lower NAC accuracy. CQPSK chain needs tuning."
+    }
+  },
+  "target": {
+    "description": "OP25 CQPSK (1224 TSBKs, 100% correct NAC) is the gold standard to match",
+    "gap_trunker_cqpsk": "352 TSBKs short (71.2% of target), NAC accuracy needs improvement",
+    "likely_issues": [
+      "Gardner timing loop parameters may need tuning (gain_mu, gain_omega)",
+      "Costas loop alpha/beta may differ from OP25 defaults",
+      "FLL (frequency lock loop) not yet implemented in trunker",
+      "Slicer calibration from sync pattern may be suboptimal"
+    ]
+  },
+  "raw_symbol_files": {
+    "op25_fsk4": "op25_gold_fsk4.raw (147245 bytes, slicer output 0-3)",
+    "op25_cqpsk": "op25_gold_cqpsk.raw (147248 bytes, slicer output 0-3)"
+  }
+}

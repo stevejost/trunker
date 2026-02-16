@@ -1,0 +1,42 @@
+Using two-stage decimator for speed=2400000, decim=25/4 if1=96000 if2=24000
+p25_frame_assembler_impl: do_imbe[0], do_output[0], do_audio_output[0], do_phase2_tdma[0], do_nocrypt[0]
+C4FM (fsk4) Batch Decode: /home/fuzz/source/trunker/samples/iq/srrcs_cc_852350000_2400k_cf32.iq
+Sample rate: 2400000
+==========================================================================================
+[   1] 0x16 DENY_RSP                     
+[   2] 0x33 IDEN_UP_TDMA                 ident=2 base_freq_mhz=851.01250 spacing_khz=12.5
+[   3] 0x00 GRP_V_CH_GRANT               channel=0x01B1 freq_mhz=? talkgroup=2821 source=9180201
+[   4] 0x09 EMERGENCY_ALRM               
+[   5] 0x3C ADJ_STS_BCST                 
+[   6] 0x00 MOT_GRG_CMD                  
+[   7] 0x33 IDEN_UP_TDMA                 ident=3 base_freq_mhz=762.00625 spacing_khz=12.5
+[   8] 0x00 MOT_GRG_CMD                  
+[   9] 0x3D IDEN_UP                      
+[  10] 0x30 PWR_CTRL_BCST                
+[  11] 0x02 GRP_V_CH_GRANT_UPDT          ch1=0x0029 tg1=2821 ch2=0x0029 tg2=2821
+[  12] 0x3A RFSS_STS_BCST                sysid=0x5F2 rfss=1 site=12
+[  13] 0x3D IDEN_UP                      
+[  14] 0x03 GRP_V_CH_GRANT_UPDT_EXP      
+[  15] 0x00 MOT_GRG_CMD                  
+
+==========================================================================================
+Demod type:          fsk4 (C4FM)
+Total TSBKs decoded: 15
+Ident table:         2 entries
+  [2] base=851.01250 MHz  spacing=12.5 kHz
+  [3] base=762.00625 MHz  spacing=12.5 kHz
+
+Opcode distribution:
+  0x00 GRP_V_CH_GRANT                  4
+  0x02 GRP_V_CH_GRANT_UPDT             1
+  0x03 GRP_V_CH_GRANT_UPDT_EXP         1
+  0x09 EMERGENCY_ALRM                  1
+  0x16 DENY_RSP                        1
+  0x30 PWR_CTRL_BCST                   1
+  0x33 IDEN_UP_TDMA                    2
+  0x3A RFSS_STS_BCST                   1
+  0x3C ADJ_STS_BCST                    1
+  0x3D IDEN_UP                         2
+
+Saved summary to /home/fuzz/source/trunker/samples/op25_reference/c4fm_summary.json
+Saved 15 TSBKs to /home/fuzz/source/trunker/samples/op25_reference/c4fm_tsbks.json
