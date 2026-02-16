@@ -254,6 +254,14 @@ mod tests {
     }
 
     #[test]
+    fn dibit_values_above_3_are_masked() {
+        assert_eq!(Dibit::new(4).bits(), 0);
+        assert_eq!(Dibit::new(5).bits(), 1);
+        assert_eq!(Dibit::new(6).bits(), 2);
+        assert_eq!(Dibit::new(7).bits(), 3);
+    }
+
+    #[test]
     fn dibit_display() {
         assert_eq!(format!("{}", Dibit::new(0)), "00");
         assert_eq!(format!("{}", Dibit::new(1)), "01");
@@ -299,6 +307,11 @@ mod tests {
     }
 
     #[test]
+    fn source_id_display() {
+        assert_eq!(format!("{}", SourceId::new(123456)), "123456");
+    }
+
+    #[test]
     fn system_id_masks_to_12_bits() {
         assert_eq!(SystemId::new(0xFFFF).value(), 0x0FFF);
         assert_eq!(format!("{}", SystemId::new(0x2B9)), "0x2B9");
@@ -314,12 +327,14 @@ mod tests {
     fn rfss_id_roundtrip() {
         let rfss = RfssId::new(1);
         assert_eq!(rfss.value(), 1);
+        assert_eq!(format!("{}", rfss), "1");
     }
 
     #[test]
     fn site_id_roundtrip() {
         let site = SiteId::new(42);
         assert_eq!(site.value(), 42);
+        assert_eq!(format!("{}", site), "42");
     }
 
     #[test]
