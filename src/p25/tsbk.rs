@@ -16,8 +16,28 @@ pub enum TsbkOpcode {
     GroupVoiceChannelGrant,
     /// Group voice channel grant update (0x02).
     GroupVoiceChannelGrantUpdate,
+    /// Group voice channel grant update - explicit (0x03).
+    GroupVoiceChannelGrantUpdateExplicit,
+    /// Unit-to-unit answer request (0x05).
+    UnitToUnitAnswerRequest,
+    /// Emergency alarm (0x09).
+    EmergencyAlarm,
+    /// SNDCP data channel grant (0x14).
+    SndcpDataChannelGrant,
+    /// Deny response (0x16).
+    DenyResponse,
     /// Identifier update (0x20).
     IdentifierUpdate,
+    /// Group affiliation response (0x28).
+    GroupAffiliationResponse,
+    /// Unit registration response (0x2C).
+    UnitRegistrationResponse,
+    /// Unit deregistration acknowledgement (0x2F).
+    UnitDeregistrationAck,
+    /// Power control broadcast (0x30).
+    PowerControlBroadcast,
+    /// Identifier update TDMA (0x33).
+    IdentifierUpdateTdma,
     /// Identifier update VHF/UHF (0x34).
     IdentifierUpdateVu,
     /// Network status broadcast (0x39).
@@ -40,7 +60,17 @@ impl TsbkOpcode {
         match bits & 0x3F {
             0x00 => Self::GroupVoiceChannelGrant,
             0x02 => Self::GroupVoiceChannelGrantUpdate,
+            0x03 => Self::GroupVoiceChannelGrantUpdateExplicit,
+            0x05 => Self::UnitToUnitAnswerRequest,
+            0x09 => Self::EmergencyAlarm,
+            0x14 => Self::SndcpDataChannelGrant,
+            0x16 => Self::DenyResponse,
             0x20 => Self::IdentifierUpdate,
+            0x28 => Self::GroupAffiliationResponse,
+            0x2C => Self::UnitRegistrationResponse,
+            0x2F => Self::UnitDeregistrationAck,
+            0x30 => Self::PowerControlBroadcast,
+            0x33 => Self::IdentifierUpdateTdma,
             0x34 => Self::IdentifierUpdateVu,
             0x39 => Self::NetworkStatusBroadcast,
             0x3A => Self::RfssStatusBroadcast,
@@ -56,13 +86,23 @@ impl TsbkOpcode {
         match self {
             Self::GroupVoiceChannelGrant => "GRP_V_CH_GRANT",
             Self::GroupVoiceChannelGrantUpdate => "GRP_V_CH_GRANT_UPDT",
+            Self::GroupVoiceChannelGrantUpdateExplicit => "GRP_V_CH_GRANT_UPDT_EXP",
+            Self::UnitToUnitAnswerRequest => "UNT_TO_UNT_ANS_REQ",
+            Self::EmergencyAlarm => "EMERGENCY_ALRM",
+            Self::SndcpDataChannelGrant => "SNDCP_DATA_CH_GRANT",
+            Self::DenyResponse => "DENY_RSP",
             Self::IdentifierUpdate => "IDENT_UP",
+            Self::GroupAffiliationResponse => "GRP_AFF_RSP",
+            Self::UnitRegistrationResponse => "U_REG_RSP",
+            Self::UnitDeregistrationAck => "U_DE_REG_ACK",
+            Self::PowerControlBroadcast => "PWR_CTRL_BCST",
+            Self::IdentifierUpdateTdma => "IDEN_UP_TDMA",
             Self::IdentifierUpdateVu => "IDEN_UP_VU",
             Self::NetworkStatusBroadcast => "NET_STS_BCST",
             Self::RfssStatusBroadcast => "RFSS_STS_BCST",
             Self::NetworkStatusBroadcastAlt => "NET2_STS_BCST",
             Self::AdjacentStatusBroadcast => "ADJ_STS_BCST",
-            Self::ChannelParametersUpdate => "IDEN_UP_TDMA",
+            Self::ChannelParametersUpdate => "CH_PARAMS_UPDT",
             Self::Unknown(_) => "UNKNOWN",
         }
     }
@@ -72,7 +112,17 @@ impl TsbkOpcode {
         match self {
             Self::GroupVoiceChannelGrant => 0x00,
             Self::GroupVoiceChannelGrantUpdate => 0x02,
+            Self::GroupVoiceChannelGrantUpdateExplicit => 0x03,
+            Self::UnitToUnitAnswerRequest => 0x05,
+            Self::EmergencyAlarm => 0x09,
+            Self::SndcpDataChannelGrant => 0x14,
+            Self::DenyResponse => 0x16,
             Self::IdentifierUpdate => 0x20,
+            Self::GroupAffiliationResponse => 0x28,
+            Self::UnitRegistrationResponse => 0x2C,
+            Self::UnitDeregistrationAck => 0x2F,
+            Self::PowerControlBroadcast => 0x30,
+            Self::IdentifierUpdateTdma => 0x33,
             Self::IdentifierUpdateVu => 0x34,
             Self::NetworkStatusBroadcast => 0x39,
             Self::RfssStatusBroadcast => 0x3A,
@@ -129,6 +179,51 @@ pub enum TsbkPayload {
         /// Second talkgroup.
         talkgroup_b: TalkgroupId,
     },
+    /// Group voice channel grant update - explicit (transmit and receive channels).
+    GroupVoiceChannelGrantUpdateExplicit {
+        /// Service options.
+        service_options: u8,
+        /// Transmit channel.
+        transmit_channel: ChannelNumber,
+        /// Receive channel.
+        receive_channel: ChannelNumber,
+        /// Talkgroup.
+        talkgroup: TalkgroupId,
+    },
+    /// Unit-to-unit answer request.
+    UnitToUnitAnswerRequest {
+        /// Service options.
+        service_options: u8,
+        /// Target (destination) unit.
+        target: SourceId,
+        /// Source unit.
+        source: SourceId,
+    },
+    /// Emergency alarm from a unit.
+    EmergencyAlarm {
+        /// Target unit or talkgroup.
+        target: SourceId,
+        /// Source unit that triggered the alarm.
+        source: SourceId,
+    },
+    /// SNDCP data channel grant.
+    SndcpDataChannelGrant {
+        /// Data channel.
+        data_channel: ChannelNumber,
+        /// Target unit.
+        target: SourceId,
+    },
+    /// Deny response.
+    DenyResponse {
+        /// Service type being denied.
+        service_type: u8,
+        /// Deny reason.
+        reason: u8,
+        /// Additional information.
+        additional: SourceId,
+        /// Target unit.
+        target: SourceId,
+    },
     /// Identifier table update.
     IdentifierUpdate {
         /// 4-bit identifier.
@@ -141,6 +236,44 @@ pub enum TsbkPayload {
         channel_spacing: u32,
         /// Base frequency in hertz.
         base_frequency: u64,
+    },
+    /// Group affiliation response.
+    GroupAffiliationResponse {
+        /// Local/global flag (0=local, 1=global).
+        local_global: u8,
+        /// Group affiliation value.
+        group_affiliation_value: u8,
+        /// Announcement group address.
+        announcement_group: TalkgroupId,
+        /// Group address.
+        group: TalkgroupId,
+        /// Target unit.
+        target: SourceId,
+    },
+    /// Unit registration response.
+    UnitRegistrationResponse {
+        /// Response value (0=accept, 1=fail, 2=deny, 3=refuse).
+        response: u8,
+        /// System identifier.
+        system_id: SystemId,
+        /// Source identifier.
+        source_id: SourceId,
+        /// Source address.
+        source_address: SourceId,
+    },
+    /// Unit deregistration acknowledgement.
+    UnitDeregistrationAck {
+        /// WACN identifier.
+        wacn: Wacn,
+        /// System identifier.
+        system_id: SystemId,
+        /// Source unit.
+        source: SourceId,
+    },
+    /// Power control broadcast.
+    PowerControlBroadcast {
+        /// Raw payload bytes (manufacturer-specific).
+        data: [u8; 8],
     },
     /// Network status broadcast.
     NetworkStatusBroadcast {
@@ -222,10 +355,23 @@ fn parse_payload(header: &TsbkHeader, data: &[u8; 12]) -> TsbkPayload {
     match header.opcode {
         TsbkOpcode::GroupVoiceChannelGrant => parse_group_voice_grant(data),
         TsbkOpcode::GroupVoiceChannelGrantUpdate => parse_group_voice_grant_update(data),
+        TsbkOpcode::GroupVoiceChannelGrantUpdateExplicit => {
+            parse_group_voice_grant_update_explicit(data)
+        }
+        TsbkOpcode::UnitToUnitAnswerRequest => parse_unit_to_unit_answer_request(data),
+        TsbkOpcode::EmergencyAlarm => parse_emergency_alarm(data),
+        TsbkOpcode::SndcpDataChannelGrant => parse_sndcp_data_channel_grant(data),
+        TsbkOpcode::DenyResponse => parse_deny_response(data),
         TsbkOpcode::IdentifierUpdate | TsbkOpcode::ChannelParametersUpdate => {
             parse_identifier_update(data)
         }
-        TsbkOpcode::IdentifierUpdateVu => parse_identifier_update(data),
+        TsbkOpcode::GroupAffiliationResponse => parse_group_affiliation_response(data),
+        TsbkOpcode::UnitRegistrationResponse => parse_unit_registration_response(data),
+        TsbkOpcode::UnitDeregistrationAck => parse_unit_deregistration_ack(data),
+        TsbkOpcode::PowerControlBroadcast => parse_power_control_broadcast(data),
+        TsbkOpcode::IdentifierUpdateTdma | TsbkOpcode::IdentifierUpdateVu => {
+            parse_identifier_update_vu(data)
+        }
         TsbkOpcode::NetworkStatusBroadcast | TsbkOpcode::NetworkStatusBroadcastAlt => {
             parse_network_status_broadcast(data)
         }
@@ -344,6 +490,161 @@ fn parse_adjacent_status_broadcast(data: &[u8; 12]) -> TsbkPayload {
     }
 }
 
+/// Parse group voice channel grant update - explicit (opcode 0x03).
+///
+/// Layout (mfrid=0x00): [opts(1), reserved(1), ch_t(2), ch_r(2), tg(2)]
+fn parse_group_voice_grant_update_explicit(data: &[u8; 12]) -> TsbkPayload {
+    TsbkPayload::GroupVoiceChannelGrantUpdateExplicit {
+        service_options: data[2],
+        transmit_channel: ChannelNumber::new(u16::from_be_bytes([data[4], data[5]])),
+        receive_channel: ChannelNumber::new(u16::from_be_bytes([data[6], data[7]])),
+        talkgroup: TalkgroupId::new(u16::from_be_bytes([data[8], data[9]])),
+    }
+}
+
+/// Parse unit-to-unit answer request (opcode 0x05).
+///
+/// Layout: [opts(1), reserved(1), target(3), source(3)]
+fn parse_unit_to_unit_answer_request(data: &[u8; 12]) -> TsbkPayload {
+    TsbkPayload::UnitToUnitAnswerRequest {
+        service_options: data[2],
+        target: SourceId::new(u32::from_be_bytes([0, data[4], data[5], data[6]])),
+        source: SourceId::new(u32::from_be_bytes([0, data[7], data[8], data[9]])),
+    }
+}
+
+/// Parse emergency alarm (opcode 0x09).
+///
+/// Layout: [reserved(2), target(3), source(3)]
+fn parse_emergency_alarm(data: &[u8; 12]) -> TsbkPayload {
+    TsbkPayload::EmergencyAlarm {
+        target: SourceId::new(u32::from_be_bytes([0, data[4], data[5], data[6]])),
+        source: SourceId::new(u32::from_be_bytes([0, data[7], data[8], data[9]])),
+    }
+}
+
+/// Parse SNDCP data channel grant (opcode 0x14).
+///
+/// Layout: [opts(1), reserved(1), ch(2), reserved(2), target(3)]
+fn parse_sndcp_data_channel_grant(data: &[u8; 12]) -> TsbkPayload {
+    TsbkPayload::SndcpDataChannelGrant {
+        data_channel: ChannelNumber::new(u16::from_be_bytes([data[4], data[5]])),
+        target: SourceId::new(u32::from_be_bytes([0, data[7], data[8], data[9]])),
+    }
+}
+
+/// Parse deny response (opcode 0x16).
+///
+/// Layout: [svc_type(1), reason(1), additional(3), target(3)]
+fn parse_deny_response(data: &[u8; 12]) -> TsbkPayload {
+    TsbkPayload::DenyResponse {
+        service_type: data[2],
+        reason: data[3],
+        additional: SourceId::new(u32::from_be_bytes([0, data[4], data[5], data[6]])),
+        target: SourceId::new(u32::from_be_bytes([0, data[7], data[8], data[9]])),
+    }
+}
+
+/// Parse group affiliation response (opcode 0x28).
+///
+/// Layout: [lg(1 bit), gav(2 bits), reserved, aga(2), ga(2), ta(3)]
+fn parse_group_affiliation_response(data: &[u8; 12]) -> TsbkPayload {
+    let lg = (data[2] >> 7) & 0x01;
+    let gav = (data[2] >> 4) & 0x03;
+
+    TsbkPayload::GroupAffiliationResponse {
+        local_global: lg,
+        group_affiliation_value: gav,
+        announcement_group: TalkgroupId::new(u16::from_be_bytes([data[3], data[4]])),
+        group: TalkgroupId::new(u16::from_be_bytes([data[5], data[6]])),
+        target: SourceId::new(u32::from_be_bytes([0, data[7], data[8], data[9]])),
+    }
+}
+
+/// Parse unit registration response (opcode 0x2C).
+///
+/// Layout: [rv(2 bits) + syid(12 bits) + reserved(2 bits), sid(3), sa(3)]
+fn parse_unit_registration_response(data: &[u8; 12]) -> TsbkPayload {
+    let rv = (data[2] >> 4) & 0x03;
+    let system_id_raw = (((data[2] & 0x0F) as u16) << 8) | data[3] as u16;
+
+    TsbkPayload::UnitRegistrationResponse {
+        response: rv,
+        system_id: SystemId::new(system_id_raw),
+        source_id: SourceId::new(u32::from_be_bytes([0, data[4], data[5], data[6]])),
+        source_address: SourceId::new(u32::from_be_bytes([0, data[7], data[8], data[9]])),
+    }
+}
+
+/// Parse unit deregistration acknowledgement (opcode 0x2F).
+///
+/// Layout: [reserved(1), wacn(2.5), syid(1.5), sid(3)]
+fn parse_unit_deregistration_ack(data: &[u8; 12]) -> TsbkPayload {
+    let wacn_raw =
+        ((data[3] as u32) << 12) | ((data[4] as u32) << 4) | ((data[5] >> 4) as u32);
+    let system_id_raw = (((data[5] & 0x0F) as u16) << 8) | data[6] as u16;
+
+    TsbkPayload::UnitDeregistrationAck {
+        wacn: Wacn::new(wacn_raw),
+        system_id: SystemId::new(system_id_raw),
+        source: SourceId::new(u32::from_be_bytes([0, data[7], data[8], data[9]])),
+    }
+}
+
+/// Parse power control broadcast (opcode 0x30).
+///
+/// Manufacturer-specific; store raw payload.
+fn parse_power_control_broadcast(data: &[u8; 12]) -> TsbkPayload {
+    let mut payload_data = [0u8; 8];
+    payload_data.copy_from_slice(&data[2..10]);
+    TsbkPayload::PowerControlBroadcast { data: payload_data }
+}
+
+/// Parse identifier update VHF/UHF (opcodes 0x33, 0x34).
+///
+/// Layout (bytes 2-9, 64 bits total):
+///   Identifier: 4 bits
+///   Channel type/BW: 4 bits
+///   Transmit Offset: 14 bits (MSB=sign, lower 13 = magnitude * spacing * 125 Hz)
+///   Channel Spacing: 10 bits (x 125 Hz)
+///   Base Frequency: 32 bits (x 5 Hz)
+fn parse_identifier_update_vu(data: &[u8; 12]) -> TsbkPayload {
+    let word = u64::from_be_bytes([
+        data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9],
+    ]);
+
+    let identifier = ((word >> 60) & 0x0F) as u8;
+    // 4-bit channel type (0x33) or bandwidth type (0x34) -- not used in frequency calc.
+    let _channel_type = ((word >> 56) & 0x0F) as u8;
+
+    // Offset: 14 bits. MSB is sign, lower 13 are magnitude.
+    // toff_sign=0 means negative offset, toff_sign=1 means positive.
+    let toff_raw = ((word >> 42) & 0x3FFF) as u16;
+    let toff_sign = (toff_raw >> 13) & 1;
+    let toff_magnitude = (toff_raw & 0x1FFF) as i64;
+
+    let channel_spacing_raw = ((word >> 32) & 0x3FF) as u32;
+    let channel_spacing = channel_spacing_raw * 125;
+
+    // Offset = magnitude * spacing * 125 (already incorporated in channel_spacing).
+    // Per OP25: self.freq_table[iden]['offset'] = toff * spac * 125
+    let transmit_offset = if toff_sign == 0 {
+        -(toff_magnitude * channel_spacing as i64)
+    } else {
+        toff_magnitude * channel_spacing as i64
+    };
+
+    let base_frequency = (word & 0xFFFF_FFFF) * 5;
+
+    TsbkPayload::IdentifierUpdate {
+        identifier,
+        bandwidth: channel_spacing, // VU format doesn't have a separate bandwidth field
+        transmit_offset,
+        channel_spacing,
+        base_frequency,
+    }
+}
+
 /// Parse unknown or unhandled opcode.
 fn parse_unknown(data: &[u8; 12]) -> TsbkPayload {
     let mut payload_data = [0u8; 8];
@@ -432,7 +733,41 @@ mod tests {
             TsbkOpcode::from_bits(0x02),
             TsbkOpcode::GroupVoiceChannelGrantUpdate
         );
+        assert_eq!(
+            TsbkOpcode::from_bits(0x03),
+            TsbkOpcode::GroupVoiceChannelGrantUpdateExplicit
+        );
+        assert_eq!(
+            TsbkOpcode::from_bits(0x05),
+            TsbkOpcode::UnitToUnitAnswerRequest
+        );
+        assert_eq!(TsbkOpcode::from_bits(0x09), TsbkOpcode::EmergencyAlarm);
+        assert_eq!(
+            TsbkOpcode::from_bits(0x14),
+            TsbkOpcode::SndcpDataChannelGrant
+        );
+        assert_eq!(TsbkOpcode::from_bits(0x16), TsbkOpcode::DenyResponse);
         assert_eq!(TsbkOpcode::from_bits(0x20), TsbkOpcode::IdentifierUpdate);
+        assert_eq!(
+            TsbkOpcode::from_bits(0x28),
+            TsbkOpcode::GroupAffiliationResponse
+        );
+        assert_eq!(
+            TsbkOpcode::from_bits(0x2C),
+            TsbkOpcode::UnitRegistrationResponse
+        );
+        assert_eq!(
+            TsbkOpcode::from_bits(0x2F),
+            TsbkOpcode::UnitDeregistrationAck
+        );
+        assert_eq!(
+            TsbkOpcode::from_bits(0x30),
+            TsbkOpcode::PowerControlBroadcast
+        );
+        assert_eq!(
+            TsbkOpcode::from_bits(0x33),
+            TsbkOpcode::IdentifierUpdateTdma
+        );
         assert_eq!(TsbkOpcode::from_bits(0x34), TsbkOpcode::IdentifierUpdateVu);
         assert_eq!(
             TsbkOpcode::from_bits(0x39),

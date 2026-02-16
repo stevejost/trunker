@@ -58,6 +58,57 @@ pub enum TsbkFields {
         /// Second talkgroup.
         talkgroup_b: u16,
     },
+    /// Group voice channel grant update - explicit.
+    GroupVoiceGrantUpdateExplicit {
+        /// Service options byte.
+        service_options: u8,
+        /// Transmit channel number.
+        transmit_channel: u16,
+        /// Transmit frequency in MHz, or null.
+        transmit_frequency: Option<f64>,
+        /// Receive channel number.
+        receive_channel: u16,
+        /// Receive frequency in MHz, or null.
+        receive_frequency: Option<f64>,
+        /// Talkgroup ID.
+        talkgroup: u16,
+    },
+    /// Unit-to-unit answer request.
+    UnitToUnitAnswerRequest {
+        /// Service options byte.
+        service_options: u8,
+        /// Target unit ID.
+        target: u32,
+        /// Source unit ID.
+        source: u32,
+    },
+    /// Emergency alarm.
+    EmergencyAlarm {
+        /// Target unit or talkgroup ID.
+        target: u32,
+        /// Source unit ID.
+        source: u32,
+    },
+    /// SNDCP data channel grant.
+    SndcpDataChannelGrant {
+        /// Data channel number.
+        data_channel: u16,
+        /// Data channel frequency in MHz, or null.
+        frequency: Option<f64>,
+        /// Target unit ID.
+        target: u32,
+    },
+    /// Deny response.
+    DenyResponse {
+        /// Denied service type.
+        service_type: u8,
+        /// Deny reason code.
+        reason: u8,
+        /// Additional info (unit or talkgroup).
+        additional: u32,
+        /// Target unit ID.
+        target: u32,
+    },
     /// Identifier update.
     IdentifierUpdate {
         /// 4-bit identifier.
@@ -70,6 +121,44 @@ pub enum TsbkFields {
         channel_spacing: u32,
         /// Base frequency in hertz.
         base_frequency: u64,
+    },
+    /// Group affiliation response.
+    GroupAffiliationResponse {
+        /// Local/global flag.
+        local_global: u8,
+        /// Group affiliation value.
+        group_affiliation_value: u8,
+        /// Announcement group.
+        announcement_group: u16,
+        /// Group address (talkgroup).
+        group: u16,
+        /// Target unit ID.
+        target: u32,
+    },
+    /// Unit registration response.
+    UnitRegistrationResponse {
+        /// Response code (0=accept, 1=fail, 2=deny, 3=refuse).
+        response: u8,
+        /// System ID (hex string).
+        system_id: String,
+        /// Source identifier.
+        source_id: u32,
+        /// Source address.
+        source_address: u32,
+    },
+    /// Unit deregistration acknowledgement.
+    UnitDeregistrationAck {
+        /// WACN (hex string).
+        wacn: String,
+        /// System ID (hex string).
+        system_id: String,
+        /// Source unit ID.
+        source: u32,
+    },
+    /// Power control broadcast (raw payload).
+    PowerControlBroadcast {
+        /// Raw payload as hex string.
+        data: String,
     },
     /// Network status broadcast.
     NetworkStatusBroadcast {
@@ -154,6 +243,56 @@ pub fn to_json_value(nac: Nac, tsbk: &Tsbk, ident_table: &IdentTable) -> TsbkJso
             talkgroup_b: talkgroup_b.value(),
         },
 
+        TsbkPayload::GroupVoiceChannelGrantUpdateExplicit {
+            service_options,
+            transmit_channel,
+            receive_channel,
+            talkgroup,
+        } => TsbkFields::GroupVoiceGrantUpdateExplicit {
+            service_options: *service_options,
+            transmit_channel: transmit_channel.value(),
+            transmit_frequency: resolve_mhz(ident_table, *transmit_channel),
+            receive_channel: receive_channel.value(),
+            receive_frequency: resolve_mhz(ident_table, *receive_channel),
+            talkgroup: talkgroup.value(),
+        },
+
+        TsbkPayload::UnitToUnitAnswerRequest {
+            service_options,
+            target,
+            source,
+        } => TsbkFields::UnitToUnitAnswerRequest {
+            service_options: *service_options,
+            target: target.value(),
+            source: source.value(),
+        },
+
+        TsbkPayload::EmergencyAlarm { target, source } => TsbkFields::EmergencyAlarm {
+            target: target.value(),
+            source: source.value(),
+        },
+
+        TsbkPayload::SndcpDataChannelGrant {
+            data_channel,
+            target,
+        } => TsbkFields::SndcpDataChannelGrant {
+            data_channel: data_channel.value(),
+            frequency: resolve_mhz(ident_table, *data_channel),
+            target: target.value(),
+        },
+
+        TsbkPayload::DenyResponse {
+            service_type,
+            reason,
+            additional,
+            target,
+        } => TsbkFields::DenyResponse {
+            service_type: *service_type,
+            reason: *reason,
+            additional: additional.value(),
+            target: target.value(),
+        },
+
         TsbkPayload::IdentifierUpdate {
             identifier,
             bandwidth,
@@ -166,6 +305,46 @@ pub fn to_json_value(nac: Nac, tsbk: &Tsbk, ident_table: &IdentTable) -> TsbkJso
             transmit_offset: *transmit_offset,
             channel_spacing: *channel_spacing,
             base_frequency: *base_frequency,
+        },
+
+        TsbkPayload::GroupAffiliationResponse {
+            local_global,
+            group_affiliation_value,
+            announcement_group,
+            group,
+            target,
+        } => TsbkFields::GroupAffiliationResponse {
+            local_global: *local_global,
+            group_affiliation_value: *group_affiliation_value,
+            announcement_group: announcement_group.value(),
+            group: group.value(),
+            target: target.value(),
+        },
+
+        TsbkPayload::UnitRegistrationResponse {
+            response,
+            system_id,
+            source_id,
+            source_address,
+        } => TsbkFields::UnitRegistrationResponse {
+            response: *response,
+            system_id: format!("0x{:03X}", system_id.value()),
+            source_id: source_id.value(),
+            source_address: source_address.value(),
+        },
+
+        TsbkPayload::UnitDeregistrationAck {
+            wacn,
+            system_id,
+            source,
+        } => TsbkFields::UnitDeregistrationAck {
+            wacn: format!("0x{:05X}", wacn.value()),
+            system_id: format!("0x{:03X}", system_id.value()),
+            source: source.value(),
+        },
+
+        TsbkPayload::PowerControlBroadcast { data } => TsbkFields::PowerControlBroadcast {
+            data: data.iter().map(|b| format!("{b:02X}")).collect::<String>(),
         },
 
         TsbkPayload::NetworkStatusBroadcast {
@@ -305,7 +484,7 @@ mod tests {
         let json = to_json_line(nac, &parsed, &table);
         let v: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(v["name"], "IDEN_UP_TDMA");
+        assert_eq!(v["name"], "CH_PARAMS_UPDT");
         assert_eq!(v["identifier"], 6);
         assert_eq!(v["bandwidth"], 12_500);
         assert_eq!(v["channel_spacing"], 6_250);

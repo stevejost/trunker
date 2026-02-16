@@ -36,8 +36,8 @@ impl IdentEntry {
 
 /// Table mapping 4-bit identifier IDs to frequency band parameters.
 ///
-/// Populated by IDENT_UP (0x20), IDEN_UP_VU (0x34), and channel
-/// parameters update (0x3D) messages.
+/// Populated by IDENT_UP (0x20), IDEN_UP_TDMA (0x33), IDEN_UP_VU (0x34),
+/// and channel parameters update (0x3D) messages.
 #[derive(Debug, Clone, Default)]
 pub struct IdentTable {
     entries: [Option<IdentEntry>; 16],
