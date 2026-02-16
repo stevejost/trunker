@@ -4,6 +4,7 @@
 //! APCO Project 25 control channel messages into structured data.
 
 pub mod dsp;
+pub mod monitor;
 pub mod output;
 pub mod p25;
 pub mod sdr;
