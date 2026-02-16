@@ -74,7 +74,7 @@ impl GardnerSymbolTiming {
             sync_detector: SyncDetector::new(),
             delay_line: [0.0; DELAY_LINE_SIZE],
             write_index: 0,
-            mu: 0.0,
+            mu: NOMINAL_OMEGA,
             omega: NOMINAL_OMEGA,
             omega_mid: NOMINAL_OMEGA,
             last_sample: 0.0,
@@ -111,9 +111,13 @@ impl GardnerSymbolTiming {
         }
 
         // Interpolate on-time and mid-point samples.
+        // The on-time point must be at least 2 samples back from the
+        // write pointer so the Lagrange interpolator has valid samples
+        // on both sides (x[-1], x[0], x[1], x[2]).
+        let frac_mu = self.fractional_mu();
+        let on_time = self.interpolate_at(2, frac_mu);
         let (half_whole, half_frac) = self.half_omega_offset();
-        let on_time = self.interpolate_at(half_whole, half_frac);
-        let midpoint = self.interpolate_at(0, self.fractional_mu());
+        let midpoint = self.interpolate_at(2 + half_whole, half_frac);
 
         // Gardner timing error (real-valued).
         let error = self.compute_error(on_time, midpoint);
@@ -165,13 +169,20 @@ impl GardnerSymbolTiming {
     }
 
     /// Interpolate from the delay line using Lagrange 4-point.
+    ///
+    /// `offset` is the number of samples back from the newest sample.
+    /// Lagrange needs 4 samples: x[-1], x[0], x[1], x[2] centered at
+    /// the interpolation point. We place x[0] at `offset` samples back,
+    /// so x[-1] is one sample older and x[1], x[2] are more recent.
     fn interpolate_at(&self, offset: usize, mu: f32) -> f32 {
-        let base = (self.write_index + DELAY_LINE_SIZE - 1 - offset) % DELAY_LINE_SIZE;
+        // x[0] is at `offset` positions back from the newest written sample.
+        // newest is at (write_index - 1). x[0] is at (newest - offset).
+        let x0 = (self.write_index + DELAY_LINE_SIZE - 1 - offset) % DELAY_LINE_SIZE;
         let samples = [
-            self.delay_line[(base + DELAY_LINE_SIZE - 1) % DELAY_LINE_SIZE],
-            self.delay_line[base],
-            self.delay_line[(base + 1) % DELAY_LINE_SIZE],
-            self.delay_line[(base + 2) % DELAY_LINE_SIZE],
+            self.delay_line[(x0 + DELAY_LINE_SIZE - 1) % DELAY_LINE_SIZE], // x[-1]: older
+            self.delay_line[x0],                                           // x[0]
+            self.delay_line[(x0 + 1) % DELAY_LINE_SIZE],                   // x[1]: newer
+            self.delay_line[(x0 + 2) % DELAY_LINE_SIZE],                   // x[2]: newest
         ];
         lagrange4_real(samples, mu)
     }

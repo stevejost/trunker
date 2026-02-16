@@ -58,7 +58,7 @@ impl GardnerTed {
         Self {
             delay_line: [Complex::new(0.0, 0.0); DELAY_LINE_SIZE],
             write_index: 0,
-            mu: 0.0,
+            mu: omega,
             omega,
             omega_mid: omega,
             last_sample: Complex::new(0.0, 0.0),
@@ -78,8 +78,11 @@ impl GardnerTed {
         }
 
         // Compute on-time and mid-point interpolated samples.
-        let on_time = self.interpolate_at(self.half_omega_whole(), self.half_omega_frac());
-        let midpoint = self.interpolate_at(0, self.mu + self.mu.floor().abs());
+        // Offset by 2 so the Lagrange 4-point interpolator has valid
+        // samples on both sides of the interpolation point.
+        let frac_mu = self.mu + self.mu.floor().abs();
+        let on_time = self.interpolate_at(2, frac_mu);
+        let midpoint = self.interpolate_at(2 + self.half_omega_whole(), self.half_omega_frac());
 
         // Gardner timing error: e = Re{(last - current) * conj(mid)}
         // Computed per-component and summed, matching OP25.
@@ -285,6 +288,39 @@ mod tests {
         assert!(
             (gardner.omega - 5.0).abs() < 0.02,
             "omega drifted: expected ~5.0, got {}",
+            gardner.omega
+        );
+    }
+
+    #[test]
+    fn tracks_with_fractional_timing_offset() {
+        // Fractional offset (1.7 samples) forces the Lagrange interpolator
+        // to evaluate between samples, exercising sub-sample recovery.
+        // An integer offset trivially aligns to sample boundaries.
+        let symbols = qpsk_symbols();
+        let signal = generate_qpsk_signal(&symbols, 5.0, 1.7);
+        let mut gardner = GardnerTed::new();
+
+        let mut outputs = Vec::new();
+        for &sample in &signal {
+            if let Some(sym) = gardner.process(sample) {
+                outputs.push(sym);
+            }
+        }
+
+        // After convergence, output symbols should have magnitude ~1.0.
+        let settled = &outputs[outputs.len() / 2..];
+        let avg_magnitude: f32 =
+            settled.iter().map(|s| s.norm()).sum::<f32>() / settled.len() as f32;
+        assert!(
+            (avg_magnitude - 1.0).abs() < 0.3,
+            "expected magnitude ~1.0 after convergence with fractional offset, got {avg_magnitude}"
+        );
+
+        // Omega should remain stable near nominal.
+        assert!(
+            (gardner.omega - 5.0).abs() < 0.02,
+            "omega drifted with fractional offset: expected ~5.0, got {}",
             gardner.omega
         );
     }
