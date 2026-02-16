@@ -185,13 +185,7 @@ impl MonitorState {
                 frequency,
                 talkgroup,
                 source,
-            } => {
-                self.upsert_grant(*channel, *frequency, *talkgroup, Some(*source));
-                self.add_activity(
-                    format!("Grant: TG {talkgroup} on CH {channel} (src {source})"),
-                    false,
-                );
-            }
+            } => self.apply_grant(*channel, *frequency, *talkgroup, *source),
             ParsedMessage::GroupVoiceGrantUpdate {
                 channel_a,
                 frequency_a,
@@ -199,27 +193,19 @@ impl MonitorState {
                 channel_b,
                 frequency_b,
                 talkgroup_b,
-            } => {
-                self.upsert_grant(*channel_a, *frequency_a, *talkgroup_a, None);
-                self.upsert_grant(*channel_b, *frequency_b, *talkgroup_b, None);
-                self.add_activity(
-                    format!(
-                        "Update: TG {talkgroup_a} CH {channel_a}, TG {talkgroup_b} CH {channel_b}"
-                    ),
-                    false,
-                );
-            }
+            } => self.apply_grant_update(
+                *channel_a,
+                *frequency_a,
+                *talkgroup_a,
+                *channel_b,
+                *frequency_b,
+                *talkgroup_b,
+            ),
             ParsedMessage::GroupVoiceGrantUpdateExplicit {
                 receive_channel,
                 receive_frequency,
                 talkgroup,
-            } => {
-                self.upsert_grant(*receive_channel, *receive_frequency, *talkgroup, None);
-                self.add_activity(
-                    format!("Explicit update: TG {talkgroup} on CH {receive_channel}"),
-                    false,
-                );
-            }
+            } => self.apply_grant_explicit(*receive_channel, *receive_frequency, *talkgroup),
             ParsedMessage::IdentifierUpdate {
                 identifier,
                 base_frequency,
@@ -231,50 +217,96 @@ impl MonitorState {
                 base_frequency,
                 channel_spacing,
                 transmit_offset,
-            } => {
-                self.update_identifier(
-                    *identifier,
-                    *base_frequency,
-                    *channel_spacing,
-                    *transmit_offset,
-                );
-            }
+            } => self.update_identifier(
+                *identifier,
+                *base_frequency,
+                *channel_spacing,
+                *transmit_offset,
+            ),
             ParsedMessage::NetworkStatusBroadcast {
                 wacn,
                 system_id,
                 channel,
                 frequency,
-            } => {
-                self.system_info.wacn = Some(wacn.clone());
-                self.system_info.system_id = Some(system_id.clone());
-                self.system_info.control_channel = Some(*channel);
-                self.system_info.control_frequency =
-                    frequency.or_else(|| self.resolve_frequency(*channel));
-            }
+            } => self.apply_network_status(wacn, system_id, *channel, *frequency),
             ParsedMessage::RfssStatusBroadcast {
                 system_id,
                 rfss_id,
                 site_id,
                 channel,
                 frequency,
-            } => {
-                self.system_info.system_id = Some(system_id.clone());
-                self.system_info.rfss_id = Some(*rfss_id);
-                self.system_info.site_id = Some(*site_id);
-                self.system_info.control_channel = Some(*channel);
-                self.system_info.control_frequency =
-                    frequency.or_else(|| self.resolve_frequency(*channel));
-            }
+            } => self.apply_rfss_status(system_id, *rfss_id, *site_id, *channel, *frequency),
             ParsedMessage::EmergencyAlarm { target, source } => {
                 self.add_activity(format!("EMERGENCY: src {source} target {target}"), true);
             }
-            ParsedMessage::AdjacentStatusBroadcast { .. }
-            | ParsedMessage::UnitRegistrationResponse { .. }
-            | ParsedMessage::UnitDeregistrationAck { .. }
-            | ParsedMessage::DenyResponse { .. }
-            | ParsedMessage::GroupAffiliationResponse { .. }
-            | ParsedMessage::Other { .. } => {}
+            _ => {}
         }
+    }
+
+    /// Apply a group voice channel grant.
+    fn apply_grant(&mut self, channel: u16, frequency: Option<f64>, talkgroup: u16, source: u32) {
+        self.upsert_grant(channel, frequency, talkgroup, Some(source));
+        self.add_activity(
+            format!("Grant: TG {talkgroup} on CH {channel} (src {source})"),
+            false,
+        );
+    }
+
+    /// Apply a group voice channel grant update (two channels).
+    fn apply_grant_update(
+        &mut self,
+        channel_a: u16,
+        frequency_a: Option<f64>,
+        talkgroup_a: u16,
+        channel_b: u16,
+        frequency_b: Option<f64>,
+        talkgroup_b: u16,
+    ) {
+        self.upsert_grant(channel_a, frequency_a, talkgroup_a, None);
+        self.upsert_grant(channel_b, frequency_b, talkgroup_b, None);
+        self.add_activity(
+            format!("Update: TG {talkgroup_a} CH {channel_a}, TG {talkgroup_b} CH {channel_b}"),
+            false,
+        );
+    }
+
+    /// Apply an explicit grant update.
+    fn apply_grant_explicit(&mut self, channel: u16, frequency: Option<f64>, talkgroup: u16) {
+        self.upsert_grant(channel, frequency, talkgroup, None);
+        self.add_activity(
+            format!("Explicit update: TG {talkgroup} on CH {channel}"),
+            false,
+        );
+    }
+
+    /// Apply a network status broadcast.
+    fn apply_network_status(
+        &mut self,
+        wacn: &str,
+        system_id: &str,
+        channel: u16,
+        frequency: Option<f64>,
+    ) {
+        self.system_info.wacn = Some(wacn.to_string());
+        self.system_info.system_id = Some(system_id.to_string());
+        self.system_info.control_channel = Some(channel);
+        self.system_info.control_frequency = frequency.or(self.resolve_frequency(channel));
+    }
+
+    /// Apply an RFSS status broadcast.
+    fn apply_rfss_status(
+        &mut self,
+        system_id: &str,
+        rfss_id: u8,
+        site_id: u8,
+        channel: u16,
+        frequency: Option<f64>,
+    ) {
+        self.system_info.system_id = Some(system_id.to_string());
+        self.system_info.rfss_id = Some(rfss_id);
+        self.system_info.site_id = Some(site_id);
+        self.system_info.control_channel = Some(channel);
+        self.system_info.control_frequency = frequency.or(self.resolve_frequency(channel));
     }
 
     /// Insert or update a grant, tracking the channel in known_channels.
