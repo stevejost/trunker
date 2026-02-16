@@ -128,48 +128,50 @@ pub fn decode(received: &[Dibit]) -> Result<Vec<Dibit>, P25Error> {
         });
     }
 
-    // Initialize paths: state 0 starts with distance 0, others with max
+    let best_path = viterbi_forward(received)?;
+    extract_decoded_dibits(&best_path)
+}
+
+/// Run the Viterbi forward pass over 49 dibit pairs.
+///
+/// Returns the surviving path with the minimum accumulated distance.
+fn viterbi_forward(received: &[Dibit]) -> Result<Path, P25Error> {
     let mut paths: Vec<Path> = (0..NUM_STATES)
         .map(|s| Path::new(s, if s == 0 { 0 } else { usize::MAX / 2 }))
         .collect();
 
-    // Process 49 pairs of received dibits
     for pair_idx in 0..49 {
         let received_edge = pack_pair(received[pair_idx * 2], received[pair_idx * 2 + 1]);
 
         let mut new_paths: Vec<Path> = Vec::with_capacity(NUM_STATES);
-
         for next_state in 0..NUM_STATES {
             let best = find_best_predecessor(&paths, next_state, received_edge);
             new_paths.push(best);
         }
-
         paths = new_paths;
     }
 
-    // Find the path with minimum distance
-    let best_path =
-        paths
-            .iter()
-            .min_by_key(|p| p.distance)
-            .ok_or_else(|| P25Error::TrellisDecode {
-                reason: "no valid path found".to_string(),
-            })?;
+    paths
+        .into_iter()
+        .min_by_key(|p| p.distance)
+        .ok_or_else(|| P25Error::TrellisDecode {
+            reason: "no valid path found".to_string(),
+        })
+}
 
-    // Extract decoded dibits from state transitions in history.
-    // The history contains states [s0, s1, s2, ...].
-    // The input dibit at step i is the state s_{i+1} (since input = next_state).
-    // Skip the first entry (initial state) and the last (flush).
-    let history = &best_path.history;
-    if history.len() < 2 {
+/// Extract 48 decoded dibits from the Viterbi path history.
+///
+/// The history contains states [s0, s1, ..., s49]. Each s_{i+1} is the
+/// decoded input dibit at step i. The first entry is the initial state
+/// and the last is the flush symbol; both are excluded.
+fn extract_decoded_dibits(path: &Path) -> Result<Vec<Dibit>, P25Error> {
+    if path.history.len() < 2 {
         return Err(P25Error::TrellisDecode {
             reason: "path history too short".to_string(),
         });
     }
 
-    // history[1..] gives us 49 decoded symbols (the next_state at each step).
-    // The last one is the flush symbol (always 0), so take history[1..49].
-    let decoded: Vec<Dibit> = history[1..history.len() - 1]
+    let decoded: Vec<Dibit> = path.history[1..path.history.len() - 1]
         .iter()
         .map(|&state| Dibit::new(state as u8))
         .collect();
