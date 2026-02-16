@@ -1,7 +1,10 @@
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use anyhow::Result;
-use clap::{Parser, Subcommand, ValueEnum};
+use anyhow::{Result, bail};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use num_complex::Complex;
 
 use trunker::dsp::cqpsk_demod::CqpskDemodulator;
 use trunker::dsp::dc_block::DcBlocker;
@@ -16,6 +19,7 @@ use trunker::p25::status::{StatusDeinterleaver, StreamSymbol};
 use trunker::p25::tsbk::TsbkPayload;
 use trunker::p25::types::{Dibit, Nac};
 use trunker::sdr::cf32_reader::Cf32Reader;
+use trunker::sdr::soapy_source::{self, SoapySource};
 
 /// P25 trunked radio decoder — RF in, JSON out.
 #[derive(Parser)]
@@ -34,20 +38,48 @@ enum Modulation {
     Cqpsk,
 }
 
+/// Input source selection: file or live SDR device (mutually exclusive).
+#[derive(Args)]
+#[group(required = true, multiple = false)]
+struct InputSource {
+    /// Path to an IQ sample file (CF32 format).
+    #[arg(short, long)]
+    input: Option<String>,
+
+    /// SoapySDR device argument string (e.g. "driver=rtlsdr").
+    #[arg(short, long)]
+    device: Option<String>,
+}
+
+/// Gain control for live SDR mode (mutually exclusive).
+#[derive(Args)]
+#[group(required = false, multiple = false)]
+struct GainControl {
+    /// Manual gain in dB for live SDR mode.
+    #[arg(long)]
+    gain: Option<f64>,
+
+    /// Enable automatic gain control for live SDR mode.
+    #[arg(long)]
+    auto_gain: bool,
+}
+
 /// Available subcommands.
 #[derive(Subcommand)]
 enum Command {
     /// Decode a P25 control channel from IQ samples.
     Cc {
-        /// Path to an IQ sample file (CF32 format).
-        #[arg(short, long)]
-        input: String,
+        #[command(flatten)]
+        source: InputSource,
+
+        #[command(flatten)]
+        gain_control: GainControl,
 
         /// Sample rate in Hz.
         #[arg(short, long, default_value_t = 2_400_000)]
         sample_rate: u32,
 
-        /// Center frequency in Hz (informational only).
+        /// Center frequency in Hz (required for live SDR mode).
         #[arg(short, long, default_value_t = 0)]
         frequency: u64,
 
@@ -55,6 +87,9 @@ enum Command {
         #[arg(short, long, default_value = "c4fm")]
         modulation: Modulation,
     },
+
+    /// List available SoapySDR devices.
+    Devices,
 }
 
 /// Two-stage decimation filter parameters.
@@ -86,23 +121,106 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Cc {
-            input,
+            source,
+            gain_control,
             sample_rate,
             frequency,
             modulation,
         } => {
+            let running = setup_signal_handler()?;
+            let sample_source = open_sample_source(
+                source,
+                &gain_control,
+                sample_rate,
+                frequency,
+                running.clone(),
+            )?;
+
             tracing::info!(
-                input = %input,
                 sample_rate,
                 frequency,
                 modulation = ?modulation,
                 "starting control channel decoder"
             );
-            decode_control_channel(&input, sample_rate, modulation)?;
+            decode_control_channel(sample_source, sample_rate, modulation, &running)?;
+        }
+        Command::Devices => {
+            soapy_source::list_devices();
         }
     }
 
     Ok(())
+}
+
+/// IQ sample source: file or live SDR hardware.
+enum SampleSource {
+    /// Read from a CF32 IQ file.
+    File(Cf32Reader),
+    /// Stream from a SoapySDR device.
+    Soapy(SoapySource),
+}
+
+impl Iterator for SampleSource {
+    type Item = Complex<f32>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            SampleSource::File(reader) => reader.next(),
+            SampleSource::Soapy(source) => source.next(),
+        }
+    }
+}
+
+/// Install a Ctrl-C handler that sets the returned flag to `false`.
+fn setup_signal_handler() -> Result<Arc<AtomicBool>> {
+    let running = Arc::new(AtomicBool::new(true));
+    let running_clone = running.clone();
+    ctrlc::set_handler(move || {
+        running_clone.store(false, Ordering::SeqCst);
+    })?;
+    Ok(running)
+}
+
+/// Open the appropriate sample source based on CLI arguments.
+fn open_sample_source(
+    source: InputSource,
+    gain_control: &GainControl,
+    sample_rate: u32,
+    frequency: u64,
+    running: Arc<AtomicBool>,
+) -> Result<SampleSource> {
+    if let Some(input_path) = source.input {
+        let reader = Cf32Reader::open(Path::new(&input_path), sample_rate)?;
+        Ok(SampleSource::File(reader))
+    } else if let Some(device_args) = source.device {
+        validate_device_args(frequency, gain_control)?;
+        let gain = resolve_gain(gain_control);
+        let soapy = SoapySource::open(&device_args, frequency, sample_rate, gain, running)?;
+        Ok(SampleSource::Soapy(soapy))
+    } else {
+        // clap's required group ensures we never reach here.
+        bail!("specify --input or --device")
+    }
+}
+
+/// Validate that required args are present for live SDR mode.
+fn validate_device_args(frequency: u64, gain_control: &GainControl) -> Result<()> {
+    if frequency == 0 {
+        bail!("frequency is required for live SDR mode (use --frequency)");
+    }
+    if gain_control.gain.is_none() && !gain_control.auto_gain {
+        bail!("specify --gain or --auto-gain for live SDR mode");
+    }
+    Ok(())
+}
+
+/// Convert GainControl args into the Option<f64> that SoapySource expects.
+fn resolve_gain(gain_control: &GainControl) -> Option<f64> {
+    if gain_control.auto_gain {
+        None
+    } else {
+        gain_control.gain
+    }
 }
 
 /// Demodulation path — holds the DSP blocks specific to each modulation type.
@@ -192,14 +310,19 @@ impl Pipeline {
 
 /// Run the control channel decode pipeline.
 fn decode_control_channel(
-    input_path: &str,
+    source: SampleSource,
     sample_rate: u32,
     modulation: Modulation,
+    running: &Arc<AtomicBool>,
 ) -> Result<()> {
-    let reader = Cf32Reader::open(Path::new(input_path), sample_rate)?;
     let mut p = Pipeline::new(sample_rate, modulation);
 
-    for iq_sample in reader {
+    for iq_sample in source {
+        if !running.load(Ordering::SeqCst) {
+            tracing::info!("interrupted by signal");
+            break;
+        }
+
         p.sample_count += 1;
 
         // Two-stage decimation: 2.4 MS/s -> 240 kHz -> 24 kHz.
@@ -320,4 +443,200 @@ fn log_summary(p: &Pipeline) {
         baseband_max = p.baseband_max,
         "decode complete"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // -- CLI parsing tests --
+
+    #[test]
+    fn cli_file_mode_parses() {
+        let cli = Cli::try_parse_from(["p25", "cc", "--input", "test.iq"]);
+        assert!(cli.is_ok(), "file mode should parse: {:?}", cli.err());
+    }
+
+    #[test]
+    fn cli_file_mode_with_modulation_parses() {
+        let cli = Cli::try_parse_from([
+            "p25", "cc", "--input", "test.iq", "--modulation", "cqpsk",
+        ]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn cli_device_mode_with_gain_parses() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "cc",
+            "--device",
+            "driver=rtlsdr",
+            "--frequency",
+            "852350000",
+            "--gain",
+            "40",
+        ]);
+        assert!(cli.is_ok(), "device mode with gain should parse: {:?}", cli.err());
+    }
+
+    #[test]
+    fn cli_device_mode_with_auto_gain_parses() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "cc",
+            "--device",
+            "driver=rtlsdr",
+            "--frequency",
+            "852350000",
+            "--auto-gain",
+        ]);
+        assert!(cli.is_ok(), "device mode with auto-gain should parse: {:?}", cli.err());
+    }
+
+    #[test]
+    fn cli_devices_subcommand_parses() {
+        let cli = Cli::try_parse_from(["p25", "devices"]);
+        assert!(cli.is_ok());
+    }
+
+    #[test]
+    fn cli_rejects_input_and_device_together() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "cc",
+            "--input",
+            "test.iq",
+            "--device",
+            "driver=rtlsdr",
+        ]);
+        assert!(cli.is_err(), "should reject --input and --device together");
+    }
+
+    #[test]
+    fn cli_rejects_gain_and_auto_gain_together() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "cc",
+            "--device",
+            "driver=rtlsdr",
+            "--gain",
+            "40",
+            "--auto-gain",
+        ]);
+        assert!(cli.is_err(), "should reject --gain and --auto-gain together");
+    }
+
+    #[test]
+    fn cli_requires_input_or_device() {
+        let cli = Cli::try_parse_from(["p25", "cc"]);
+        assert!(cli.is_err(), "should require --input or --device");
+    }
+
+    // -- Validation tests --
+
+    #[test]
+    fn validate_device_args_requires_frequency() {
+        let gain = GainControl {
+            gain: Some(40.0),
+            auto_gain: false,
+        };
+        let result = validate_device_args(0, &gain);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("frequency"), "error should mention frequency: {msg}");
+    }
+
+    #[test]
+    fn validate_device_args_requires_gain() {
+        let gain = GainControl {
+            gain: None,
+            auto_gain: false,
+        };
+        let result = validate_device_args(852_350_000, &gain);
+        assert!(result.is_err());
+        let msg = format!("{}", result.unwrap_err());
+        assert!(msg.contains("gain"), "error should mention gain: {msg}");
+    }
+
+    #[test]
+    fn validate_device_args_accepts_manual_gain() {
+        let gain = GainControl {
+            gain: Some(40.0),
+            auto_gain: false,
+        };
+        assert!(validate_device_args(852_350_000, &gain).is_ok());
+    }
+
+    #[test]
+    fn validate_device_args_accepts_auto_gain() {
+        let gain = GainControl {
+            gain: None,
+            auto_gain: true,
+        };
+        assert!(validate_device_args(852_350_000, &gain).is_ok());
+    }
+
+    // -- resolve_gain tests --
+
+    #[test]
+    fn resolve_gain_returns_manual_value() {
+        let gain = GainControl {
+            gain: Some(42.5),
+            auto_gain: false,
+        };
+        assert_eq!(resolve_gain(&gain), Some(42.5));
+    }
+
+    #[test]
+    fn resolve_gain_returns_none_for_auto() {
+        let gain = GainControl {
+            gain: None,
+            auto_gain: true,
+        };
+        assert_eq!(resolve_gain(&gain), None);
+    }
+
+    // -- SampleSource::File delegation test --
+
+    fn write_test_cf32(samples: &[Complex<f32>]) -> NamedTempFile {
+        let mut file = NamedTempFile::new().expect("create temp file");
+        for s in samples {
+            file.write_all(&s.re.to_ne_bytes()).expect("write real");
+            file.write_all(&s.im.to_ne_bytes()).expect("write imag");
+        }
+        file.flush().expect("flush");
+        file
+    }
+
+    #[test]
+    fn sample_source_file_delegates_to_cf32_reader() {
+        let expected = vec![
+            Complex::new(1.0, 2.0),
+            Complex::new(3.0, 4.0),
+            Complex::new(-0.5, 0.25),
+        ];
+        let temp = write_test_cf32(&expected);
+
+        let reader = Cf32Reader::open(temp.path(), 2_400_000).unwrap();
+        let source = SampleSource::File(reader);
+        let samples: Vec<_> = source.collect();
+
+        assert_eq!(samples.len(), 3);
+        for (got, want) in samples.iter().zip(expected.iter()) {
+            assert_eq!(got.re, want.re);
+            assert_eq!(got.im, want.im);
+        }
+    }
+
+    #[test]
+    fn sample_source_file_empty_yields_none() {
+        let temp = write_test_cf32(&[]);
+        let reader = Cf32Reader::open(temp.path(), 48_000).unwrap();
+        let source = SampleSource::File(reader);
+        let samples: Vec<_> = source.collect();
+        assert!(samples.is_empty());
+    }
 }

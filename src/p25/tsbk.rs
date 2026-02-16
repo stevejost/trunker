@@ -580,8 +580,7 @@ fn parse_unit_registration_response(data: &[u8; 12]) -> TsbkPayload {
 ///
 /// Layout: [reserved(1), wacn(2.5), syid(1.5), sid(3)]
 fn parse_unit_deregistration_ack(data: &[u8; 12]) -> TsbkPayload {
-    let wacn_raw =
-        ((data[3] as u32) << 12) | ((data[4] as u32) << 4) | ((data[5] >> 4) as u32);
+    let wacn_raw = ((data[3] as u32) << 12) | ((data[4] as u32) << 4) | ((data[5] >> 4) as u32);
     let system_id_raw = (((data[5] & 0x0F) as u16) << 8) | data[6] as u16;
 
     TsbkPayload::UnitDeregistrationAck {
@@ -1166,10 +1165,7 @@ mod tests {
         let tsbk = make_tsbk_with_crc(&data);
         let parsed = parse(&tsbk).unwrap();
 
-        assert_eq!(
-            parsed.header.opcode,
-            TsbkOpcode::GroupAffiliationResponse
-        );
+        assert_eq!(parsed.header.opcode, TsbkOpcode::GroupAffiliationResponse);
         match parsed.payload {
             TsbkPayload::GroupAffiliationResponse {
                 local_global,
@@ -1205,10 +1201,7 @@ mod tests {
         let tsbk = make_tsbk_with_crc(&data);
         let parsed = parse(&tsbk).unwrap();
 
-        assert_eq!(
-            parsed.header.opcode,
-            TsbkOpcode::UnitRegistrationResponse
-        );
+        assert_eq!(parsed.header.opcode, TsbkOpcode::UnitRegistrationResponse);
         match parsed.payload {
             TsbkPayload::UnitRegistrationResponse {
                 response,

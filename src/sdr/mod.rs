@@ -2,3 +2,4 @@
 
 pub mod cf32_reader;
 pub mod error;
+pub mod soapy_source;
