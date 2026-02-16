@@ -20,7 +20,9 @@ const NOMINAL_OMEGA: f32 = 5.0;
 const GAIN_MU: f32 = 0.025;
 
 /// Integral gain for the timing loop (controls omega).
-const GAIN_OMEGA: f32 = GAIN_MU * GAIN_MU / 4.0; // 0.000_156_25
+///
+/// OP25 CQPSK path uses `0.1 * gain_mu^2` = 0.0000625.
+const GAIN_OMEGA: f32 = 0.1 * GAIN_MU * GAIN_MU; // 0.000_062_5
 
 /// Maximum relative deviation of omega from nominal.
 const OMEGA_RELATIVE_LIMIT: f32 = 0.002;
