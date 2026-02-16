@@ -7,6 +7,7 @@ pub mod diff_decoder;
 pub mod filter;
 pub mod fm_demod;
 pub mod gardner;
+pub mod gardner_timing;
 pub mod interpolator;
 pub mod rrc_filter;
 pub mod slicer;
