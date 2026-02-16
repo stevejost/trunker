@@ -17,8 +17,8 @@ const MAX_SYNC_ERRORS: usize = 3;
 /// Derived from FRAME_SYNC (0x5575F5FF77FF):
 /// 01 01 01 01 01 11 01 01 11 11 01 01 11 11 11 11 01 11 01 11 11 11 11 11
 const SYNC_DIBITS_PATTERN: [u8; SYNC_DIBITS] = [
-    0b01, 0b01, 0b01, 0b01, 0b01, 0b11, 0b01, 0b01, 0b11, 0b11, 0b01, 0b01,
-    0b11, 0b11, 0b11, 0b11, 0b01, 0b11, 0b01, 0b11, 0b11, 0b11, 0b11, 0b11,
+    0b01, 0b01, 0b01, 0b01, 0b01, 0b11, 0b01, 0b01, 0b11, 0b11, 0b01, 0b01, 0b11, 0b11, 0b11, 0b11,
+    0b01, 0b11, 0b01, 0b11, 0b11, 0b11, 0b11, 0b11,
 ];
 
 /// Frame sync detector using a dibit sliding window.

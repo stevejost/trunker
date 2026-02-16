@@ -129,14 +129,8 @@ impl SymbolTiming {
         let start = self.sync_samples.len() - SYNC_DIBITS;
         let sync_slice = &self.sync_samples[start..];
 
-        let positive_sum: f32 = SYNC_POSITIVE_INDICES
-            .iter()
-            .map(|&i| sync_slice[i])
-            .sum();
-        let negative_sum: f32 = SYNC_NEGATIVE_INDICES
-            .iter()
-            .map(|&i| sync_slice[i])
-            .sum();
+        let positive_sum: f32 = SYNC_POSITIVE_INDICES.iter().map(|&i| sync_slice[i]).sum();
+        let negative_sum: f32 = SYNC_NEGATIVE_INDICES.iter().map(|&i| sync_slice[i]).sum();
 
         let positive_avg = positive_sum / SYNC_POSITIVE_INDICES.len() as f32;
         let negative_avg = negative_sum / SYNC_NEGATIVE_INDICES.len() as f32;

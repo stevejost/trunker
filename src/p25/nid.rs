@@ -86,11 +86,7 @@ pub struct NetworkId {
 pub fn decode_nid(dibits: &[Dibit]) -> Result<NetworkId, P25Error> {
     if dibits.len() != NID_DIBITS {
         return Err(P25Error::NidDecode {
-            reason: format!(
-                "expected {} dibits, got {}",
-                NID_DIBITS,
-                dibits.len()
-            ),
+            reason: format!("expected {} dibits, got {}", NID_DIBITS, dibits.len()),
         });
     }
 
