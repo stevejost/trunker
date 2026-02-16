@@ -161,6 +161,11 @@ impl DataUnitReceiver {
             }
         };
 
+        tracing::trace!(
+            bytes = %format!("{:02X?}", bytes),
+            "TSBK raw bytes"
+        );
+
         // Parse and CRC-verify the TSBK.
         match tsbk::parse(&bytes) {
             Ok(tsbk_msg) => {
@@ -196,8 +201,9 @@ mod tests {
     use crate::p25::tsbk::TsbkOpcode;
     use crate::p25::types::Nac;
 
-    /// Interleave permutation table (inverse of deinterleave).
-    /// Maps original position to transmitted position.
+    /// Interleave permutation table (from p25.rs reference).
+    /// `transmitted[i] = original[INTERLEAVE_TABLE[i]]` — output position i
+    /// gets the value from input position INTERLEAVE_TABLE[i].
     const INTERLEAVE_TABLE: [usize; CODING_DIBITS] = [
         0, 1, 8, 9, 16, 17, 24, 25, 32, 33, 40, 41, 48, 49, 56, 57, 64, 65, 72, 73, 80, 81, 88, 89,
         96, 97, 2, 3, 10, 11, 18, 19, 26, 27, 34, 35, 42, 43, 50, 51, 58, 59, 66, 67, 74, 75, 82,
@@ -209,8 +215,8 @@ mod tests {
     /// Interleave 98 coded dibits for test construction.
     fn interleave_for_test(original: &[Dibit; CODING_DIBITS]) -> [Dibit; CODING_DIBITS] {
         let mut output = [Dibit::new(0); CODING_DIBITS];
-        for (original_index, &transmitted_index) in INTERLEAVE_TABLE.iter().enumerate() {
-            output[transmitted_index] = original[original_index];
+        for (output_index, &input_index) in INTERLEAVE_TABLE.iter().enumerate() {
+            output[output_index] = original[input_index];
         }
         output
     }

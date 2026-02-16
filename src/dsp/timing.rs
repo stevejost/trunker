@@ -78,6 +78,11 @@ impl SymbolTiming {
         self.locked
     }
 
+    /// Return the current slicer thresholds as (upper, mid, lower).
+    pub fn slicer_thresholds(&self) -> (f32, f32, f32) {
+        self.slicer.thresholds()
+    }
+
     /// Process one baseband sample.
     ///
     /// Returns `Some(SymbolEvent)` when a symbol is extracted or

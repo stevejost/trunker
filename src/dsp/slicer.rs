@@ -56,6 +56,11 @@ impl DibitSlicer {
         self.lower = self.mid + (negative_avg - self.mid) * 2.0 / 3.0;
     }
 
+    /// Return the current thresholds as (upper, mid, lower).
+    pub fn thresholds(&self) -> (f32, f32, f32) {
+        (self.upper, self.mid, self.lower)
+    }
+
     /// Slice a single baseband sample into a dibit.
     pub fn slice(&self, sample: f32) -> Dibit {
         if sample > self.upper {

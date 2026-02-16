@@ -21,10 +21,13 @@ const DEINTERLEAVE_TABLE: [usize; CODING_DIBITS] = [
 ///
 /// Takes dibits in the order they were received (after status symbol removal)
 /// and returns them in the order expected by the trellis decoder.
+///
+/// The table maps output position to input position: output[i] comes from
+/// received[DEINTERLEAVE_TABLE[i]].
 pub fn deinterleave(received: &[Dibit; CODING_DIBITS]) -> [Dibit; CODING_DIBITS] {
     let mut output = [Dibit::new(0); CODING_DIBITS];
-    for (received_index, &original_index) in DEINTERLEAVE_TABLE.iter().enumerate() {
-        output[original_index] = received[received_index];
+    for (output_index, &input_index) in DEINTERLEAVE_TABLE.iter().enumerate() {
+        output[output_index] = received[input_index];
     }
     output
 }
@@ -58,13 +61,13 @@ mod tests {
     #[test]
     fn deinterleave_specific_positions() {
         // Verify specific position mappings from the table.
-        // Transmitted position 0 -> original position 0
+        // Output position 0 comes from input position 0.
         assert_eq!(DEINTERLEAVE_TABLE[0], 0);
-        // Transmitted position 2 -> original position 26
+        // Output position 2 comes from input position 26.
         assert_eq!(DEINTERLEAVE_TABLE[2], 26);
-        // Transmitted position 96 -> original position 24
+        // Output position 96 comes from input position 24.
         assert_eq!(DEINTERLEAVE_TABLE[96], 24);
-        // Last transmitted position 97 -> original position 25
+        // Output position 97 comes from input position 25.
         assert_eq!(DEINTERLEAVE_TABLE[97], 25);
     }
 

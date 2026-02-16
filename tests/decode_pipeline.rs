@@ -84,10 +84,13 @@ fn make_nid_word(nac: u16, duid: u8) -> u64 {
 }
 
 /// Interleave coded dibits for transmission order.
+///
+/// `transmitted[i] = original[INTERLEAVE_TABLE[i]]` — output position i
+/// gets the value from input position INTERLEAVE_TABLE[i].
 fn interleave(original: &[Dibit; CODING_DIBITS]) -> [Dibit; CODING_DIBITS] {
     let mut output = [Dibit::new(0); CODING_DIBITS];
-    for (original_index, &transmitted_index) in INTERLEAVE_TABLE.iter().enumerate() {
-        output[transmitted_index] = original[original_index];
+    for (output_index, &input_index) in INTERLEAVE_TABLE.iter().enumerate() {
+        output[output_index] = original[input_index];
     }
     output
 }
