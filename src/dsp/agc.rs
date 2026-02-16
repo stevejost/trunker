@@ -138,8 +138,16 @@ mod tests {
 
         for _ in 0..100 {
             let output = agc.process(Complex::new(0.0, 0.0));
-            assert!(output.re.is_finite(), "output.re is not finite: {}", output.re);
-            assert!(output.im.is_finite(), "output.im is not finite: {}", output.im);
+            assert!(
+                output.re.is_finite(),
+                "output.re is not finite: {}",
+                output.re
+            );
+            assert!(
+                output.im.is_finite(),
+                "output.im is not finite: {}",
+                output.im
+            );
         }
     }
 

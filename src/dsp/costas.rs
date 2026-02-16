@@ -124,10 +124,10 @@ mod tests {
     ) -> Vec<Complex<f32>> {
         let freq_offset_rad = 2.0 * PI * freq_offset_hz / sample_rate;
         let phases = [
-            PI / 4.0,       // 45 deg (QPSK point)
-            3.0 * PI / 4.0, // 135 deg
-            -3.0 * PI / 4.0,// -135 deg
-            -PI / 4.0,      // -45 deg
+            PI / 4.0,        // 45 deg (QPSK point)
+            3.0 * PI / 4.0,  // 135 deg
+            -3.0 * PI / 4.0, // -135 deg
+            -PI / 4.0,       // -45 deg
         ];
 
         let mut samples = Vec::with_capacity(num_symbols * samples_per_symbol);

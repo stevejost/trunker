@@ -207,9 +207,7 @@ mod tests {
         // Starting at state 0, information bits 11 -> state 5 (delta = -135/+225 deg).
         // Starting at state 0, information bits 10 -> state 7 (delta = -45/+315 deg).
 
-        let state_to_phase = |state: u8| -> f32 {
-            (state as f32) * FRAC_PI_4
-        };
+        let state_to_phase = |state: u8| -> f32 { (state as f32) * FRAC_PI_4 };
 
         let cases: [(u8, u8, u8, u8); 8] = [
             // (current_state, dibit, expected_next_state, _)

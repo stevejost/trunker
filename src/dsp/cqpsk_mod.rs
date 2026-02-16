@@ -36,14 +36,14 @@ const NEXT_STATE: [[u8; 4]; NUM_PHASE_STATES] = [
 /// Indexed as `IQ_LEVELS[current_state][dibit_bits]` -> (I, Q).
 /// Values are exact: 1/sqrt(2) for diagonal points, 0.0/1.0 for axis points.
 const IQ_LEVELS: [[(f32, f32); 4]; NUM_PHASE_STATES] = [
-    [( S,  S), (-S,  S), ( S, -S), (-S, -S)], // state 0
-    [( 0.0,  1.0), (-1.0,  0.0), ( 1.0,  0.0), ( 0.0, -1.0)], // state 1
-    [(-S,  S), (-S, -S), ( S,  S), ( S, -S)], // state 2
-    [(-1.0,  0.0), ( 0.0, -1.0), ( 0.0,  1.0), ( 1.0,  0.0)], // state 3
-    [(-S, -S), ( S, -S), (-S,  S), ( S,  S)], // state 4
-    [( 0.0, -1.0), ( 1.0,  0.0), (-1.0,  0.0), ( 0.0,  1.0)], // state 5
-    [( S, -S), ( S,  S), (-S, -S), (-S,  S)], // state 6
-    [( 1.0,  0.0), ( 0.0,  1.0), ( 0.0, -1.0), (-1.0,  0.0)], // state 7
+    [(S, S), (-S, S), (S, -S), (-S, -S)],               // state 0
+    [(0.0, 1.0), (-1.0, 0.0), (1.0, 0.0), (0.0, -1.0)], // state 1
+    [(-S, S), (-S, -S), (S, S), (S, -S)],               // state 2
+    [(-1.0, 0.0), (0.0, -1.0), (0.0, 1.0), (1.0, 0.0)], // state 3
+    [(-S, -S), (S, -S), (-S, S), (S, S)],               // state 4
+    [(0.0, -1.0), (1.0, 0.0), (-1.0, 0.0), (0.0, 1.0)], // state 5
+    [(S, -S), (S, S), (-S, -S), (-S, S)],               // state 6
+    [(1.0, 0.0), (0.0, 1.0), (0.0, -1.0), (-1.0, 0.0)], // state 7
 ];
 
 /// Modulate a dibit sequence into CQPSK complex baseband samples.
@@ -164,8 +164,8 @@ mod tests {
         3.0 * PI / 4.0,
         PI,
         -3.0 * PI / 4.0, // 5*pi/4 = -3*pi/4
-        -PI / 2.0,        // 6*pi/4 = -pi/2
-        -PI / 4.0,        // 7*pi/4 = -pi/4
+        -PI / 2.0,       // 6*pi/4 = -pi/2
+        -PI / 4.0,       // 7*pi/4 = -pi/4
     ];
 
     #[test]
@@ -236,12 +236,8 @@ mod tests {
     fn phase_transitions_match_table_20() {
         // Table 20: dibit 01 -> +135 deg, 00 -> +45 deg,
         //           10 -> -45 deg, 11 -> -135 deg.
-        let expected_deltas: [(u8, f32); 4] = [
-            (0b01, 135.0),
-            (0b00, 45.0),
-            (0b10, -45.0),
-            (0b11, -135.0),
-        ];
+        let expected_deltas: [(u8, f32); 4] =
+            [(0b01, 135.0), (0b00, 45.0), (0b10, -45.0), (0b11, -135.0)];
 
         // Check from every starting state.
         for state in 0..NUM_PHASE_STATES {
@@ -334,10 +330,9 @@ mod tests {
 
         // Longer sequence to let the filter settle.
         let input_dibits: Vec<Dibit> = [
-            0b01, 0b00, 0b10, 0b11, 0b00, 0b01, 0b11, 0b10,
-            0b01, 0b00, 0b10, 0b11, 0b00, 0b01, 0b11, 0b10,
-            0b01, 0b00, 0b10, 0b11, 0b00, 0b01, 0b11, 0b10,
-            0b01, 0b00, 0b10, 0b11, 0b00, 0b01, 0b11, 0b10,
+            0b01, 0b00, 0b10, 0b11, 0b00, 0b01, 0b11, 0b10, 0b01, 0b00, 0b10, 0b11, 0b00, 0b01,
+            0b11, 0b10, 0b01, 0b00, 0b10, 0b11, 0b00, 0b01, 0b11, 0b10, 0b01, 0b00, 0b10, 0b11,
+            0b00, 0b01, 0b11, 0b10,
         ]
         .iter()
         .map(|&b| Dibit::new(b))
