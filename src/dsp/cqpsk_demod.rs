@@ -1,14 +1,17 @@
 //! CQPSK demodulation pipeline for P25 simulcast.
 //!
 //! Assembles the CQPSK sub-blocks into a complete demodulation path:
-//! AGC -> ComplexRRC -> Gardner -> DiffDecoder -> rescale -> slicer
+//! AGC -> ComplexRRC -> Gardner -> DiffDecoder -> Costas -> arg -> rescale -> slicer
 //!
 //! Input: complex IQ samples at the IF rate (24 kHz).
 //! Output: frame sync events and dibits (same `SymbolEvent` as C4FM).
 
+use std::f32::consts::FRAC_PI_4;
+
 use num_complex::Complex;
 
 use super::agc::Agc;
+use super::costas::CostasLoop;
 use super::diff_decoder::DifferentialDecoder;
 use super::gardner::GardnerTed;
 use super::rrc_filter::ComplexRrcFilter;
@@ -25,6 +28,16 @@ const SYNC_POSITIVE_INDICES: [usize; 11] = [0, 1, 2, 3, 4, 6, 7, 10, 11, 16, 18]
 /// Indices of dibit 11 (-3 deviation) positions in the sync pattern.
 const SYNC_NEGATIVE_INDICES: [usize; 13] = [5, 8, 9, 12, 13, 14, 15, 17, 19, 20, 21, 22, 23];
 
+/// Costas loop alpha for CQPSK, matching OP25 default.
+const COSTAS_ALPHA: f32 = 0.008;
+
+/// Costas loop beta derived from alpha (alpha^2 / 4).
+const COSTAS_BETA: f32 = COSTAS_ALPHA * COSTAS_ALPHA / 4.0;
+
+/// Rescale factor: converts arg() output (radians) to 4-level deviation.
+/// At +/-pi/4 and +/-3pi/4, this maps to +/-1 and +/-3.
+const RESCALE: f32 = 1.0 / FRAC_PI_4;
+
 /// CQPSK demodulator for P25 simulcast signals.
 ///
 /// Processes complex IQ samples at the IF rate and produces
@@ -35,6 +48,7 @@ pub struct CqpskDemodulator {
     rrc: ComplexRrcFilter,
     gardner: GardnerTed,
     diff_decoder: DifferentialDecoder,
+    costas: CostasLoop,
     slicer: DibitSlicer,
     sync_detector: SyncDetector,
     locked: bool,
@@ -55,6 +69,7 @@ impl CqpskDemodulator {
             rrc: ComplexRrcFilter::new(4800.0, 24_000.0, 0.2, 5),
             gardner: GardnerTed::new(),
             diff_decoder: DifferentialDecoder::new(),
+            costas: CostasLoop::new(COSTAS_ALPHA, COSTAS_BETA),
             slicer,
             sync_detector: SyncDetector::new(),
             locked: false,
@@ -82,19 +97,17 @@ impl CqpskDemodulator {
         let filtered = self.rrc.process(normalized);
         let symbol = self.gardner.process(filtered)?;
 
-        // DiffDecoder -> rescale to 4-level.
-        let diff = self.diff_decoder.process(symbol);
-        let phase_dibit = diff.bits();
+        // DiffDecoder(complex) -> Costas -> arg -> rescale.
+        let diff_complex = self.diff_decoder.process_complex(symbol);
+        let corrected = self.costas.process(diff_complex);
+        let level = corrected.arg() * RESCALE;
 
-        // The differential decoder already gives us dibits.
-        // But we also need the 4-level value for slicer calibration
-        // from the sync pattern. Map dibit to level:
-        let level = dibit_to_level(phase_dibit);
-
+        // Slice the rescaled level to a dibit.
+        let dibit = self.slicer.slice(level);
         self.sync_samples.push(level);
 
         // Feed to sync detector.
-        if self.sync_detector.feed(diff) {
+        if self.sync_detector.feed(dibit) {
             self.locked = true;
             self.calibrate_from_sync();
             return Some(SymbolEvent::SyncDetected);
@@ -105,7 +118,7 @@ impl CqpskDemodulator {
                 self.sync_samples
                     .drain(..self.sync_samples.len() - SYNC_DIBITS);
             }
-            return Some(SymbolEvent::Symbol(diff));
+            return Some(SymbolEvent::Symbol(dibit));
         }
 
         None
@@ -136,19 +149,6 @@ impl Default for CqpskDemodulator {
     }
 }
 
-/// Map a dibit to its corresponding 4-level deviation value.
-///
-/// Matches C4FM deviation mapping for compatibility with the slicer
-/// and sync calibration.
-fn dibit_to_level(dibit_bits: u8) -> f32 {
-    match dibit_bits {
-        0b01 => 3.0,
-        0b00 => 1.0,
-        0b10 => -1.0,
-        _ => -3.0, // 0b11
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,11 +175,16 @@ mod tests {
     }
 
     #[test]
-    fn dibit_to_level_mapping() {
-        assert!((dibit_to_level(0b01) - 3.0).abs() < 1e-6);
-        assert!((dibit_to_level(0b00) - 1.0).abs() < 1e-6);
-        assert!((dibit_to_level(0b10) - (-1.0)).abs() < 1e-6);
-        assert!((dibit_to_level(0b11) - (-3.0)).abs() < 1e-6);
+    fn rescale_maps_constellation_to_four_levels() {
+        use std::f32::consts::PI;
+        // +3pi/4 (135 deg) * RESCALE = 3.0
+        assert!((3.0 * PI / 4.0 * RESCALE - 3.0).abs() < 1e-5);
+        // +pi/4 (45 deg) * RESCALE = 1.0
+        assert!((PI / 4.0 * RESCALE - 1.0).abs() < 1e-5);
+        // -pi/4 (-45 deg) * RESCALE = -1.0
+        assert!((-PI / 4.0 * RESCALE - (-1.0)).abs() < 1e-5);
+        // -3pi/4 (-135 deg) * RESCALE = -3.0
+        assert!((-3.0 * PI / 4.0 * RESCALE - (-3.0)).abs() < 1e-5);
     }
 
     #[test]
@@ -190,5 +195,13 @@ mod tests {
         assert!((mid - 0.0).abs() < 1e-6, "mid should be 0: got {mid}");
         assert!(upper > 0.0, "upper should be positive: got {upper}");
         assert!(lower < 0.0, "lower should be negative: got {lower}");
+    }
+
+    #[test]
+    fn costas_constants_match_op25() {
+        // OP25 default: costas_alpha = 0.008
+        assert!((COSTAS_ALPHA - 0.008).abs() < 1e-6);
+        // beta = alpha^2 / 4
+        assert!((COSTAS_BETA - 0.000016).abs() < 1e-7);
     }
 }

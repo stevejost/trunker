@@ -34,11 +34,21 @@ impl DifferentialDecoder {
         }
     }
 
+    /// Compute the complex phase difference from the previous symbol.
+    ///
+    /// Returns `x[n] * conj(x[n-1])` — the raw differential product.
+    /// Use this when you need to insert further processing (e.g. Costas
+    /// loop) before final dibit decision.
+    pub fn process_complex(&mut self, sample: Complex<f32>) -> Complex<f32> {
+        let product = sample * self.previous.conj();
+        self.previous = sample;
+        product
+    }
+
     /// Decode one complex symbol, returning the dibit encoded in the
     /// phase transition from the previous symbol.
     pub fn process(&mut self, sample: Complex<f32>) -> Dibit {
-        let product = sample * self.previous.conj();
-        self.previous = sample;
+        let product = self.process_complex(sample);
         phase_to_dibit(product.arg())
     }
 }
@@ -53,7 +63,7 @@ impl Default for DifferentialDecoder {
 ///
 /// Decision boundaries are at 0, +/-90, and +/-180 degrees, placing
 /// each of the four constellation points at the center of its region.
-fn phase_to_dibit(phase: f32) -> Dibit {
+pub fn phase_to_dibit(phase: f32) -> Dibit {
     if phase > PI / 2.0 {
         // +90 to +180: center at +135 deg
         Dibit::new(0b01)
