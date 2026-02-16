@@ -11,7 +11,6 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
-bitvec = "1"
 clap = { version = "4", features = ["derive"] }
 num-complex = "0.4"
 serde = { version = "1", features = ["derive"] }
@@ -19,6 +18,3 @@ serde_json = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-[dev-dependencies]
-proptest = "1"
