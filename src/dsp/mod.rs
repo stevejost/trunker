@@ -2,6 +2,7 @@
 
 pub mod agc;
 pub mod costas;
+pub mod cqpsk_demod;
 pub mod cqpsk_mod;
 pub mod dc_block;
 pub mod diff_decoder;
