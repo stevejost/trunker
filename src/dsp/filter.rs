@@ -168,4 +168,93 @@ mod tests {
             "imaginary should be ~0: got {last_output}"
         );
     }
+
+    #[test]
+    fn two_stage_decimation_preserves_tone_rejects_noise() {
+        // Generate test signal at 2.4 MS/s:
+        //   - 4800 Hz tone (P25 symbol rate, within passband)
+        //   - 100 kHz tone (out-of-band interference, should be rejected)
+        let input_rate = 2_400_000.0_f32;
+        let tone_hz = 4_800.0_f32;
+        let noise_hz = 100_000.0_f32;
+        let num_samples = 240_000; // 100 ms of data
+
+        let input: Vec<Complex<f32>> = (0..num_samples)
+            .map(|i| {
+                let t = i as f32 / input_rate;
+                let tone = (2.0 * PI * tone_hz * t).cos();
+                let noise = (2.0 * PI * noise_hz * t).cos();
+                Complex::new(tone + noise, 0.0)
+            })
+            .collect();
+
+        // Stage 1: 2.4 MS/s -> 240 kS/s, cutoff 12 kHz, 51 taps
+        let mut stage1 = DecimatingFilter::new(12_000.0, 2_400_000.0, 51, 10);
+        let mut intermediate = Vec::new();
+        for &sample in &input {
+            if let Some(out) = stage1.process(sample) {
+                intermediate.push(out);
+            }
+        }
+        assert_eq!(intermediate.len(), num_samples / 10);
+
+        // Stage 2: 240 kS/s -> 24 kS/s, cutoff 6.25 kHz, 61 taps
+        let mut stage2 = DecimatingFilter::new(6_250.0, 240_000.0, 61, 10);
+        let mut output = Vec::new();
+        for &sample in &intermediate {
+            if let Some(out) = stage2.process(sample) {
+                output.push(out);
+            }
+        }
+        assert_eq!(output.len(), num_samples / 100);
+
+        // Skip the transient at the start (filter settling time).
+        // Use the last half of the output for measurement.
+        let output_rate = 24_000.0_f32;
+        let measure_start = output.len() / 2;
+        let steady_state = &output[measure_start..];
+        let n = steady_state.len() as f32;
+
+        // Measure power at 4800 Hz using a matched filter (DFT bin).
+        let mut tone_acc = Complex::new(0.0, 0.0);
+        for (i, &sample) in steady_state.iter().enumerate() {
+            let t = i as f32 / output_rate;
+            let basis = Complex::new(
+                (2.0 * PI * tone_hz * t).cos(),
+                -(2.0 * PI * tone_hz * t).sin(),
+            );
+            tone_acc += sample * basis;
+        }
+        let tone_power = (tone_acc / n).norm();
+
+        // Measure power at 100 kHz. At 24 kS/s output rate, 100 kHz is
+        // above Nyquist (12 kHz), so it aliases. Regardless, any residual
+        // energy at the alias frequency should be negligible.
+        // Check the alias: 100 kHz mod 24 kHz = 4 kHz.
+        let alias_hz = 100_000.0_f32 % output_rate;
+        let mut noise_acc = Complex::new(0.0, 0.0);
+        for (i, &sample) in steady_state.iter().enumerate() {
+            let t = i as f32 / output_rate;
+            let basis = Complex::new(
+                (2.0 * PI * alias_hz * t).cos(),
+                -(2.0 * PI * alias_hz * t).sin(),
+            );
+            noise_acc += sample * basis;
+        }
+        let noise_power = (noise_acc / n).norm();
+
+        // The 4800 Hz tone should have significant power (> 0.1).
+        assert!(
+            tone_power > 0.1,
+            "4800 Hz tone was suppressed: power = {tone_power}"
+        );
+
+        // The 100 kHz noise (aliased to 4 kHz) should be heavily
+        // attenuated (at least 40 dB below the tone).
+        let rejection_ratio = tone_power / (noise_power + 1e-10);
+        assert!(
+            rejection_ratio > 100.0,
+            "100 kHz noise not sufficiently rejected: tone={tone_power}, noise={noise_power}, ratio={rejection_ratio}"
+        );
+    }
 }
