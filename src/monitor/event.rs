@@ -102,9 +102,7 @@ fn main_loop(
     receiver: &mpsc::Receiver<MonitorEvent>,
 ) -> Result<(), MonitorError> {
     loop {
-        drain_stdin_events(state, receiver);
-
-        if should_quit()? {
+        if drain_stdin_events(state, receiver) || should_quit()? {
             break;
         }
 
@@ -115,13 +113,17 @@ fn main_loop(
 }
 
 /// Process all pending stdin events without blocking.
-fn drain_stdin_events(state: &mut MonitorState, receiver: &mpsc::Receiver<MonitorEvent>) {
+///
+/// Returns `true` if stdin reached EOF.
+fn drain_stdin_events(state: &mut MonitorState, receiver: &mpsc::Receiver<MonitorEvent>) -> bool {
+    let mut eof = false;
     while let Ok(event) = receiver.try_recv() {
         match event {
             MonitorEvent::JsonLine(line) => state.process_message(&line),
-            MonitorEvent::InputClosed => {}
+            MonitorEvent::InputClosed => eof = true,
         }
     }
+    eof
 }
 
 /// Poll for crossterm key events and return true if the user wants to quit.
@@ -171,8 +173,9 @@ mod tests {
             .unwrap();
         drop(sender);
 
-        drain_stdin_events(&mut state, &receiver);
+        let eof = drain_stdin_events(&mut state, &receiver);
 
+        assert!(!eof);
         assert_eq!(state.message_count, 2);
         assert_eq!(state.system_info.wacn.as_deref(), Some("0x0C018"));
         assert!(state.active_grants.contains_key(&100));
@@ -186,7 +189,8 @@ mod tests {
         sender.send(MonitorEvent::InputClosed).unwrap();
         drop(sender);
 
-        drain_stdin_events(&mut state, &receiver);
+        let eof = drain_stdin_events(&mut state, &receiver);
+        assert!(eof);
         assert_eq!(state.message_count, 0);
     }
 
@@ -195,7 +199,8 @@ mod tests {
         let (_sender, receiver) = mpsc::channel();
         let mut state = MonitorState::new(Duration::from_secs(3));
 
-        drain_stdin_events(&mut state, &receiver);
+        let eof = drain_stdin_events(&mut state, &receiver);
+        assert!(!eof);
         assert_eq!(state.message_count, 0);
     }
 
