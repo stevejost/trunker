@@ -46,7 +46,7 @@ pub enum ParsedMessage {
         /// Talkgroup ID.
         talkgroup: u16,
     },
-    /// Identifier update (opcode 0x20 or 0x3D).
+    /// Identifier update (opcode 0x20, 0x34, or 0x3D).
     IdentifierUpdate {
         /// 4-bit band identifier.
         identifier: u8,
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn parse_identifier_update_tdma() {
-        let json = r#"{"nac":"0x5FC","opcode":"0x3D","name":"IDEN_UP_TDMA","last_block":false,"manufacturer_id":0,"identifier":4,"bandwidth":12500,"transmit_offset":-39000000,"channel_spacing":12500,"base_frequency":935012500}"#;
+        let json = r#"{"nac":"0x5FC","opcode":"0x33","name":"IDEN_UP_TDMA","last_block":false,"manufacturer_id":0,"identifier":4,"bandwidth":12500,"transmit_offset":-39000000,"channel_spacing":12500,"base_frequency":935012500}"#;
         let msg = parse_json_line(json).unwrap();
         assert_eq!(
             msg,
