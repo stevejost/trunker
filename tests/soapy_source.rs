@@ -18,14 +18,8 @@ use trunker::sdr::soapy_source::SoapySource;
 #[ignore]
 fn rtlsdr_reads_nonzero_samples() {
     let running = Arc::new(AtomicBool::new(true));
-    let source = SoapySource::open(
-        "driver=rtlsdr",
-        852_350_000,
-        2_400_000,
-        Some(40.0),
-        running,
-    )
-    .expect("failed to open RTL-SDR device");
+    let source = SoapySource::open("driver=rtlsdr", 852_350_000, 2_400_000, Some(40.0), running)
+        .expect("failed to open RTL-SDR device");
 
     let samples: Vec<_> = source.take(8192).collect();
 

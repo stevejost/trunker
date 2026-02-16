@@ -90,6 +90,13 @@ enum Command {
 
     /// List available SoapySDR devices.
     Devices,
+
+    /// Monitor P25 control channel activity from JSON lines on stdin.
+    Monitor {
+        /// Grant expiry timeout in seconds.
+        #[arg(long, default_value_t = 3)]
+        grant_timeout: u64,
+    },
 }
 
 /// Two-stage decimation filter parameters.
@@ -146,6 +153,12 @@ fn main() -> Result<()> {
         }
         Command::Devices => {
             soapy_source::list_devices();
+        }
+        Command::Monitor { grant_timeout } => {
+            let config = trunker::monitor::MonitorConfig {
+                grant_timeout: std::time::Duration::from_secs(grant_timeout),
+            };
+            trunker::monitor::run(config)?;
         }
     }
 
@@ -461,9 +474,7 @@ mod tests {
 
     #[test]
     fn cli_file_mode_with_modulation_parses() {
-        let cli = Cli::try_parse_from([
-            "p25", "cc", "--input", "test.iq", "--modulation", "cqpsk",
-        ]);
+        let cli = Cli::try_parse_from(["p25", "cc", "--input", "test.iq", "--modulation", "cqpsk"]);
         assert!(cli.is_ok());
     }
 
@@ -479,7 +490,11 @@ mod tests {
             "--gain",
             "40",
         ]);
-        assert!(cli.is_ok(), "device mode with gain should parse: {:?}", cli.err());
+        assert!(
+            cli.is_ok(),
+            "device mode with gain should parse: {:?}",
+            cli.err()
+        );
     }
 
     #[test]
@@ -493,7 +508,11 @@ mod tests {
             "852350000",
             "--auto-gain",
         ]);
-        assert!(cli.is_ok(), "device mode with auto-gain should parse: {:?}", cli.err());
+        assert!(
+            cli.is_ok(),
+            "device mode with auto-gain should parse: {:?}",
+            cli.err()
+        );
     }
 
     #[test]
@@ -526,7 +545,10 @@ mod tests {
             "40",
             "--auto-gain",
         ]);
-        assert!(cli.is_err(), "should reject --gain and --auto-gain together");
+        assert!(
+            cli.is_err(),
+            "should reject --gain and --auto-gain together"
+        );
     }
 
     #[test]
@@ -546,7 +568,10 @@ mod tests {
         let result = validate_device_args(0, &gain);
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());
-        assert!(msg.contains("frequency"), "error should mention frequency: {msg}");
+        assert!(
+            msg.contains("frequency"),
+            "error should mention frequency: {msg}"
+        );
     }
 
     #[test]

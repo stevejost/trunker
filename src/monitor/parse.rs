@@ -203,10 +203,7 @@ fn get_u8(value: &Value, field: &str) -> u8 {
 
 /// Extract a string field, defaulting to empty string.
 fn get_string(value: &Value, field: &str) -> String {
-    value[field]
-        .as_str()
-        .unwrap_or("")
-        .to_string()
+    value[field].as_str().unwrap_or("").to_string()
 }
 
 fn parse_group_voice_grant(value: &Value) -> ParsedMessage {
@@ -400,7 +397,10 @@ mod tests {
     fn parse_ch_params_updt_as_identifier_update() {
         let json = r#"{"name":"CH_PARAMS_UPDT","identifier":3,"bandwidth":12500,"transmit_offset":0,"channel_spacing":12500,"base_frequency":866000000}"#;
         let msg = parse_json_line(json).unwrap();
-        assert!(matches!(msg, ParsedMessage::IdentifierUpdate { identifier: 3, .. }));
+        assert!(matches!(
+            msg,
+            ParsedMessage::IdentifierUpdate { identifier: 3, .. }
+        ));
     }
 
     #[test]
@@ -502,15 +502,13 @@ mod tests {
     fn parse_unit_deregistration_ack() {
         let json = r#"{"name":"U_DE_REG_ACK","wacn":"0x0C018","system_id":"0x704","source":99999}"#;
         let msg = parse_json_line(json).unwrap();
-        assert_eq!(
-            msg,
-            ParsedMessage::UnitDeregistrationAck { source: 99999 }
-        );
+        assert_eq!(msg, ParsedMessage::UnitDeregistrationAck { source: 99999 });
     }
 
     #[test]
     fn parse_deny_response() {
-        let json = r#"{"name":"DENY_RSP","service_type":4,"reason":2,"additional":0,"target":12345}"#;
+        let json =
+            r#"{"name":"DENY_RSP","service_type":4,"reason":2,"additional":0,"target":12345}"#;
         let msg = parse_json_line(json).unwrap();
         assert_eq!(
             msg,
