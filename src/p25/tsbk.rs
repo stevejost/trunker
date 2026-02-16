@@ -1038,4 +1038,357 @@ mod tests {
             other => panic!("expected IdentifierUpdate, got {other:?}"),
         }
     }
+
+    #[test]
+    fn parse_emergency_alarm() {
+        let data: [u8; 10] = [
+            0x89, // last_block=1, opcode=0x09
+            0x00, // mfid
+            0x00, 0x00, // reserved
+            0x00, 0x01, 0x00, // target 0x000100
+            0x0A, 0x0B, 0x0C, // source 0x0A0B0C
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert_eq!(parsed.header.opcode, TsbkOpcode::EmergencyAlarm);
+        match parsed.payload {
+            TsbkPayload::EmergencyAlarm { target, source } => {
+                assert_eq!(target.value(), 0x000100);
+                assert_eq!(source.value(), 0x0A0B0C);
+            }
+            other => panic!("expected EmergencyAlarm, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_deny_response() {
+        let data: [u8; 10] = [
+            0x96, // last_block=1, opcode=0x16
+            0x00, // mfid
+            0x20, // service type
+            0x05, // reason
+            0x00, 0x01, 0x00, // additional
+            0x0A, 0x0B, 0x0C, // target
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert_eq!(parsed.header.opcode, TsbkOpcode::DenyResponse);
+        match parsed.payload {
+            TsbkPayload::DenyResponse {
+                service_type,
+                reason,
+                additional,
+                target,
+            } => {
+                assert_eq!(service_type, 0x20);
+                assert_eq!(reason, 0x05);
+                assert_eq!(additional.value(), 0x000100);
+                assert_eq!(target.value(), 0x0A0B0C);
+            }
+            other => panic!("expected DenyResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_unit_to_unit_answer_request() {
+        let data: [u8; 10] = [
+            0x85, // last_block=1, opcode=0x05
+            0x00, // mfid
+            0xA3, // service options
+            0x00, // reserved
+            0x11, 0x22, 0x33, // target
+            0x44, 0x55, 0x66, // source
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert_eq!(parsed.header.opcode, TsbkOpcode::UnitToUnitAnswerRequest);
+        match parsed.payload {
+            TsbkPayload::UnitToUnitAnswerRequest {
+                service_options,
+                target,
+                source,
+            } => {
+                assert_eq!(service_options, 0xA3);
+                assert_eq!(target.value(), 0x112233);
+                assert_eq!(source.value(), 0x445566);
+            }
+            other => panic!("expected UnitToUnitAnswerRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_group_voice_grant_update_explicit() {
+        let data: [u8; 10] = [
+            0x83, // last_block=1, opcode=0x03
+            0x00, // mfid=0 (standard)
+            0xA3, // service options
+            0x00, // reserved
+            0x61, 0x23, // transmit channel
+            0x71, 0x45, // receive channel
+            0x00, 0x42, // talkgroup 66
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert_eq!(
+            parsed.header.opcode,
+            TsbkOpcode::GroupVoiceChannelGrantUpdateExplicit
+        );
+        match parsed.payload {
+            TsbkPayload::GroupVoiceChannelGrantUpdateExplicit {
+                service_options,
+                transmit_channel,
+                receive_channel,
+                talkgroup,
+            } => {
+                assert_eq!(service_options, 0xA3);
+                assert_eq!(transmit_channel.value(), 0x6123);
+                assert_eq!(receive_channel.value(), 0x7145);
+                assert_eq!(talkgroup.value(), 66);
+            }
+            other => panic!("expected GroupVoiceChannelGrantUpdateExplicit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_group_affiliation_response() {
+        let data: [u8; 10] = [
+            0xA8, // last_block=1, opcode=0x28
+            0x00, // mfid
+            0x90, // lg=1, reserved, gav=1
+            0x01, 0x00, // announcement group 0x0100
+            0x02, 0x00, // group 0x0200
+            0xAA, 0xBB, 0xCC, // target
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert_eq!(
+            parsed.header.opcode,
+            TsbkOpcode::GroupAffiliationResponse
+        );
+        match parsed.payload {
+            TsbkPayload::GroupAffiliationResponse {
+                local_global,
+                group_affiliation_value,
+                announcement_group,
+                group,
+                target,
+            } => {
+                assert_eq!(local_global, 1);
+                assert_eq!(group_affiliation_value, 1);
+                assert_eq!(announcement_group.value(), 0x0100);
+                assert_eq!(group.value(), 0x0200);
+                assert_eq!(target.value(), 0xAABBCC);
+            }
+            other => panic!("expected GroupAffiliationResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_unit_registration_response() {
+        // rv=2 (deny), syid=0xABC
+        // Byte 2: rv(2 bits)=10, syid_hi(4 bits)=1010 -> 0b10_0000_1010 but:
+        // rv goes into bits 5:4, syid is lower 12 bits across bytes 2-3
+        // rv = (data[2] >> 4) & 0x03, syid = (data[2] & 0x0F)<<8 | data[3]
+        // For rv=2, syid=0xABC: data[2] = (2<<4) | 0x0A = 0x2A, data[3] = 0xBC
+        let data: [u8; 10] = [
+            0xAC, // last_block=1, opcode=0x2C
+            0x00, // mfid
+            0x2A, 0xBC, // rv=2, syid=0xABC
+            0x11, 0x22, 0x33, // source_id
+            0x44, 0x55, 0x66, // source_address
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert_eq!(
+            parsed.header.opcode,
+            TsbkOpcode::UnitRegistrationResponse
+        );
+        match parsed.payload {
+            TsbkPayload::UnitRegistrationResponse {
+                response,
+                system_id,
+                source_id,
+                source_address,
+            } => {
+                assert_eq!(response, 2);
+                assert_eq!(system_id.value(), 0xABC);
+                assert_eq!(source_id.value(), 0x112233);
+                assert_eq!(source_address.value(), 0x445566);
+            }
+            other => panic!("expected UnitRegistrationResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_unit_deregistration_ack() {
+        // wacn=0xFC2BC, syid=0xF5B (same as network status test)
+        let data: [u8; 10] = [
+            0xAF, // last_block=1, opcode=0x2F
+            0x00, // mfid
+            0xFF, // reserved
+            0xFC, 0x2B, // wacn hi
+            0xCF, // wacn lo | sys hi
+            0x5B, // sys lo
+            0xAA, 0xBB, 0xCC, // source
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert_eq!(parsed.header.opcode, TsbkOpcode::UnitDeregistrationAck);
+        match parsed.payload {
+            TsbkPayload::UnitDeregistrationAck {
+                wacn,
+                system_id,
+                source,
+            } => {
+                assert_eq!(wacn.value(), 0xFC2BC);
+                assert_eq!(system_id.value(), 0xF5B);
+                assert_eq!(source.value(), 0xAABBCC);
+            }
+            other => panic!("expected UnitDeregistrationAck, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_identifier_update_tdma() {
+        // opcode 0x33 should use VU-style parser (4+4+14+10+32 bit fields)
+        // Same freq table entry as OP25: iden=6, spacing=6250, base=851006250
+        // Construct word: iden(4)=6, ch_type(4)=3, toff(14)=0x00B4 sign=0 (negative),
+        // spac(10)=50 (50*125=6250), freq(32)=170201250 (170201250*5=851006250)
+        //
+        // Actually let's match OP25 reference more carefully.
+        // toff_sign=0 means negative. toff magnitude=180 (180*6250=1125000).
+        // toff raw 14 bits: sign=0, mag=180=0x0B4 -> raw = 0x00B4
+        // spac raw = 50 (50*125=6250)
+        // base raw = 170201250 (x5 = 851006250)
+        //
+        // Word (64 bits):
+        // [6:4][3:4][0x00B4:14][50:10][170201250:32]
+        // iden=6 -> 0110
+        // ch_type=3 -> 0011
+        // toff=0x00B4=180 -> 00 0000 1011 0100
+        // spac=50 -> 00 0011 0010
+        // freq=170201250=0x0A251082 (but let's compute: 851006250/5=170201250=0x0A251082)
+
+        // Build from bytes:
+        // bits 63-60: iden=6 = 0110
+        // bits 59-56: ch_type=3 = 0011
+        // bits 55-42: toff=180 = 00_0000_1011_0100
+        // bits 41-32: spac=50 = 00_0011_0010
+        // bits 31-0: freq=0x0A251082
+
+        // Byte 0 (bits 63-56): 0110_0011 = 0x63
+        // Byte 1 (bits 55-48): 0000_0010 = 0x02
+        //   wait, toff is 14 bits starting at bit 55:
+        //   bits 55..42: 00_0000_1011_01|00
+        //   Byte 1 = bits[55:48] = 0000_0010 = nope, let me be more careful.
+        //
+        // 64-bit word:
+        //   [63:60] = iden = 0110
+        //   [59:56] = ch_type = 0011
+        //   [55:42] = toff = 00_0000_1011_0100  (14 bits)
+        //   [41:32] = spac = 00_0011_0010       (10 bits)
+        //   [31:0]  = freq = 0x0A251082         (32 bits)
+        //
+        // Binary layout:
+        //   0110 0011 | 0000 0010 | 1101 0000 | 0011 0010 | 0000 1010 | 0010 0101 | 0001 0000 | 1000 0010
+        //   0x63       0x02        0xD0        0x32        0x0A        0x25        0x10        0x82
+        //
+        // Hmm let me recompute. Actually this is getting complex. Let me use the known
+        // OP25 test vector for opcode 0x3D which we already have, but change opcode to 0x33.
+        // The VU parser should produce the same frequency calculation.
+        //
+        // Simpler: construct a known test vector manually.
+        // iden=6, ch_type=3 (TDMA 2-slot), negative offset magnitude=0, spac=50, freq=170201250
+        //
+        // With zero offset:
+        // toff raw = 0 (14 bits) = 0b00_0000_0000_0000
+        //
+        // Word = 0110_0011_0000_0000_0000_0000_0011_0010_0000_1010_0010_0101_0001_0000_1000_0010
+        // Hmm that's hard to verify. Let me just use a simple approach:
+
+        // 170201250 = 0x0A2510A2
+        // Word layout: iden(4)=6, ch_type(4)=3, toff(14)=0, spac(10)=50, freq(32)=0x0A2510A2
+        // Byte 0 (bits 63-56): 0110_0011 = 0x63
+        // Byte 1 (bits 55-48): 0000_0000 = 0x00
+        // Byte 2 (bits 47-40): 0000_0000 = 0x00
+        // Byte 3 (bits 39-32): 0011_0010 = 0x32
+        // Bytes 4-7 (bits 31-0): 0x0A, 0x25, 0x10, 0xA2
+        let data: [u8; 10] = [
+            0xB3, // last_block=1, opcode=0x33
+            0x00, // mfid=0
+            0x63, 0x00, 0x00, 0x32, 0x0A, 0x25, 0x10, 0xA2,
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert_eq!(parsed.header.opcode, TsbkOpcode::IdentifierUpdateTdma);
+        match parsed.payload {
+            TsbkPayload::IdentifierUpdate {
+                identifier,
+                channel_spacing,
+                base_frequency,
+                transmit_offset,
+                ..
+            } => {
+                assert_eq!(identifier, 6);
+                assert_eq!(channel_spacing, 6250);
+                assert_eq!(base_frequency, 851_006_250);
+                assert_eq!(transmit_offset, 0); // zero offset
+            }
+            other => panic!("expected IdentifierUpdate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_power_control_broadcast() {
+        let data: [u8; 10] = [
+            0xB0, // last_block=1, opcode=0x30
+            0x00, // mfid
+            0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert_eq!(parsed.header.opcode, TsbkOpcode::PowerControlBroadcast);
+        match parsed.payload {
+            TsbkPayload::PowerControlBroadcast { data } => {
+                assert_eq!(data, [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88]);
+            }
+            other => panic!("expected PowerControlBroadcast, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_sndcp_data_channel_grant() {
+        let data2: [u8; 10] = [
+            0x94, // last_block=1, opcode=0x14
+            0x00, // mfid
+            0x00, // opts
+            0x00, // reserved
+            0x61, 0x23, // data channel 0x6123
+            0x00, // reserved
+            0xAA, 0xBB, 0xCC, // target 0xAABBCC
+        ];
+        let tsbk = make_tsbk_with_crc(&data2);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert_eq!(parsed.header.opcode, TsbkOpcode::SndcpDataChannelGrant);
+        match parsed.payload {
+            TsbkPayload::SndcpDataChannelGrant {
+                data_channel,
+                target,
+            } => {
+                assert_eq!(data_channel.value(), 0x6123);
+                assert_eq!(target.value(), 0xAABBCC);
+            }
+            other => panic!("expected SndcpDataChannelGrant, got {other:?}"),
+        }
+    }
 }
