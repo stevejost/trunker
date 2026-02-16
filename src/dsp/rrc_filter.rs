@@ -7,6 +7,8 @@
 
 use std::f32::consts::PI;
 
+use num_complex::Complex;
+
 /// FIR root-raised-cosine matched filter.
 ///
 /// Operates on real-valued baseband samples (post FM demodulation).
@@ -102,6 +104,39 @@ fn design_rrc(samples_per_symbol: usize, alpha: f32, num_taps: usize) -> Vec<f32
     coefficients
 }
 
+/// RRC matched filter for complex (I/Q) samples.
+///
+/// Applies the same real-valued RRC coefficients independently to
+/// the in-phase and quadrature channels. This is mathematically
+/// equivalent to complex convolution with a real-valued kernel.
+/// Used in the CQPSK demodulation path where the signal remains
+/// in the complex domain until after carrier recovery.
+#[derive(Debug)]
+pub struct ComplexRrcFilter {
+    filter_i: RrcFilter,
+    filter_q: RrcFilter,
+}
+
+impl ComplexRrcFilter {
+    /// Design a complex RRC filter with the given parameters.
+    ///
+    /// Parameters are identical to [`RrcFilter::new`].
+    pub fn new(symbol_rate: f32, sample_rate: f32, excess_bw: f32, num_symbols: usize) -> Self {
+        Self {
+            filter_i: RrcFilter::new(symbol_rate, sample_rate, excess_bw, num_symbols),
+            filter_q: RrcFilter::new(symbol_rate, sample_rate, excess_bw, num_symbols),
+        }
+    }
+
+    /// Process one complex sample through the matched filter.
+    pub fn process(&mut self, sample: Complex<f32>) -> Complex<f32> {
+        Complex::new(
+            self.filter_i.process(sample.re),
+            self.filter_q.process(sample.im),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,6 +230,94 @@ mod tests {
                 "alternating symbols should produce alternating output: {} and {}",
                 val1,
                 val2
+            );
+        }
+    }
+
+    #[test]
+    fn complex_rrc_passes_dc() {
+        let mut filter = ComplexRrcFilter::new(4800.0, 24_000.0, 0.2, 5);
+        let dc = Complex::new(1.0, 0.5);
+
+        for _ in 0..200 {
+            filter.process(dc);
+        }
+
+        let out = filter.process(dc);
+        assert!(
+            out.re.abs() > 0.01,
+            "I channel DC should pass through: got {}",
+            out.re
+        );
+        assert!(
+            out.im.abs() > 0.01,
+            "Q channel DC should pass through: got {}",
+            out.im
+        );
+    }
+
+    #[test]
+    fn complex_rrc_filters_channels_independently() {
+        let mut filter = ComplexRrcFilter::new(4800.0, 24_000.0, 0.2, 5);
+        let mut filter_i = RrcFilter::new(4800.0, 24_000.0, 0.2, 5);
+        let mut filter_q = RrcFilter::new(4800.0, 24_000.0, 0.2, 5);
+
+        let sample_rate = 24_000.0;
+        let tone_i = 2400.0_f32;
+        let tone_q = 1200.0_f32;
+
+        for n in 0..500 {
+            let t = n as f32 / sample_rate;
+            let i_val = (2.0 * PI * tone_i * t).sin();
+            let q_val = (2.0 * PI * tone_q * t).cos();
+
+            let complex_out = filter.process(Complex::new(i_val, q_val));
+            let real_i = filter_i.process(i_val);
+            let real_q = filter_q.process(q_val);
+
+            assert!(
+                (complex_out.re - real_i).abs() < 1e-6,
+                "I channel mismatch at sample {n}: {} vs {}",
+                complex_out.re,
+                real_i
+            );
+            assert!(
+                (complex_out.im - real_q).abs() < 1e-6,
+                "Q channel mismatch at sample {n}: {} vs {}",
+                complex_out.im,
+                real_q
+            );
+        }
+    }
+
+    #[test]
+    fn complex_rrc_preserves_phase_of_passband_tone() {
+        let mut filter = ComplexRrcFilter::new(4800.0, 24_000.0, 0.2, 5);
+        let sample_rate = 24_000.0;
+        let tone_hz = 2400.0; // Within passband (< 2880 Hz)
+
+        // Let the filter settle.
+        for n in 0..500 {
+            let t = n as f32 / sample_rate;
+            let sample = Complex::from_polar(1.0, 2.0 * PI * tone_hz * t);
+            filter.process(sample);
+        }
+
+        // Measure output phase relationship over a few samples.
+        let mut outputs = Vec::new();
+        for n in 500..510 {
+            let t = n as f32 / sample_rate;
+            let sample = Complex::from_polar(1.0, 2.0 * PI * tone_hz * t);
+            outputs.push(filter.process(sample));
+        }
+
+        // Output should have consistent phase progression (not scrambled).
+        for i in 1..outputs.len() {
+            let phase_diff = (outputs[i] * outputs[i - 1].conj()).arg();
+            let expected = 2.0 * PI * tone_hz / sample_rate;
+            assert!(
+                (phase_diff - expected).abs() < 0.1,
+                "phase progression should be consistent: got {phase_diff:.3}, expected {expected:.3}"
             );
         }
     }
