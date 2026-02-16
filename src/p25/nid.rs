@@ -5,11 +5,9 @@
 //! (DUID) using direct bit extraction (MVP approach without full
 //! BCH error correction).
 
+use crate::p25::consts::NID_DIBITS;
 use crate::p25::error::P25Error;
 use crate::p25::types::{Dibit, Nac};
-
-/// Number of data dibits in the NID word.
-pub const NID_DIBITS: usize = 32;
 
 /// Data Unit Identifier — identifies the type of P25 data unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,14 +92,11 @@ pub fn decode_nid(dibits: &[Dibit]) -> Result<NetworkId, P25Error> {
 
     let nac_bits = ((word >> 52) & 0x0FFF) as u16;
     let duid_bits = ((word >> 48) & 0x0F) as u8;
-    let parity_bit = (word & 1) as u8;
 
     // Check overall parity: XOR of all 64 bits should be 0.
+    // The parity bit at position 0 is included in count_ones,
+    // so even popcount means parity is correct.
     let parity_ok = word.count_ones().is_multiple_of(2);
-
-    // Sanity check: parity_bit itself is included in count_ones,
-    // so if the total popcount is even, parity is correct.
-    let _ = parity_bit;
 
     Ok(NetworkId {
         access_code: Nac::new(nac_bits),
