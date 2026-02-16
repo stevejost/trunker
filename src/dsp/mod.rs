@@ -1,6 +1,7 @@
 //! DSP pipeline: channel filtering, FM demodulation, and signal processing.
 
 pub mod agc;
+pub mod costas;
 pub mod dc_block;
 pub mod diff_decoder;
 pub mod filter;
