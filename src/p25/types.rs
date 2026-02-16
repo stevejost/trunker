@@ -3,6 +3,7 @@
 //! All types are newtypes wrapping primitives to ensure type safety
 //! and prevent mixing up bare integers.
 
+use serde::Serialize;
 use std::fmt;
 
 /// A two-bit symbol (dibit) from C4FM demodulation.
@@ -14,14 +15,6 @@ pub struct Dibit(u8);
 impl Dibit {
     /// Create a new dibit from the two least significant bits of the input.
     pub const fn new(value: u8) -> Self {
-        Self(value & 0x03)
-    }
-
-    /// Create a dibit from a raw 2-bit value (const-compatible).
-    ///
-    /// This is equivalent to `new` but the name clarifies intent when
-    /// used in const contexts. The value is still masked to 2 bits.
-    pub const fn from_raw(value: u8) -> Self {
         Self(value & 0x03)
     }
 
@@ -38,7 +31,8 @@ impl fmt::Display for Dibit {
 }
 
 /// A frequency in hertz.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
 pub struct Frequency(u64);
 
 impl Frequency {
@@ -65,7 +59,8 @@ impl fmt::Display for Frequency {
 }
 
 /// A P25 talkgroup identifier (16 bits).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
 pub struct TalkgroupId(u16);
 
 impl TalkgroupId {
@@ -87,7 +82,8 @@ impl fmt::Display for TalkgroupId {
 }
 
 /// A P25 Network Access Code (12 bits).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
 pub struct Nac(u16);
 
 impl Nac {
@@ -109,7 +105,8 @@ impl fmt::Display for Nac {
 }
 
 /// A P25 unit (subscriber radio) identifier (24 bits).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
 pub struct SourceId(u32);
 
 impl SourceId {
@@ -131,7 +128,8 @@ impl fmt::Display for SourceId {
 }
 
 /// A P25 system identifier (12 bits).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
 pub struct SystemId(u16);
 
 impl SystemId {
@@ -153,7 +151,8 @@ impl fmt::Display for SystemId {
 }
 
 /// A P25 Wide Area Communication Network identifier (20 bits).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
 pub struct Wacn(u32);
 
 impl Wacn {
@@ -175,7 +174,8 @@ impl fmt::Display for Wacn {
 }
 
 /// An RF subsystem identifier (8 bits).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
 pub struct RfssId(u8);
 
 impl RfssId {
@@ -197,7 +197,8 @@ impl fmt::Display for RfssId {
 }
 
 /// A site identifier (8 bits).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
 pub struct SiteId(u8);
 
 impl SiteId {
@@ -219,7 +220,8 @@ impl fmt::Display for SiteId {
 }
 
 /// A 16-bit channel number used in TSBK channel grants and identifier tables.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
 pub struct ChannelNumber(u16);
 
 impl ChannelNumber {
