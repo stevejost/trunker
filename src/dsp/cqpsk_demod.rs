@@ -23,8 +23,7 @@ const SYNC_DIBITS: usize = 24;
 const SYNC_POSITIVE_INDICES: [usize; 11] = [0, 1, 2, 3, 4, 6, 7, 10, 11, 16, 18];
 
 /// Indices of dibit 11 (-3 deviation) positions in the sync pattern.
-const SYNC_NEGATIVE_INDICES: [usize; 13] =
-    [5, 8, 9, 12, 13, 14, 15, 17, 19, 20, 21, 22, 23];
+const SYNC_NEGATIVE_INDICES: [usize; 13] = [5, 8, 9, 12, 13, 14, 15, 17, 19, 20, 21, 22, 23];
 
 /// CQPSK demodulator for P25 simulcast signals.
 ///

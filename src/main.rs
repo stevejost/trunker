@@ -1,8 +1,9 @@
 use std::path::Path;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
+use trunker::dsp::cqpsk_demod::CqpskDemodulator;
 use trunker::dsp::dc_block::DcBlocker;
 use trunker::dsp::filter::DecimatingFilter;
 use trunker::dsp::fm_demod::FmDemodulator;
@@ -24,6 +25,15 @@ struct Cli {
     command: Command,
 }
 
+/// Modulation type for demodulation path selection.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Modulation {
+    /// C4FM (continuous 4-level FM) — standard P25 modulation.
+    C4fm,
+    /// CQPSK (compatible quadrature phase shift keying) — P25 simulcast.
+    Cqpsk,
+}
+
 /// Available subcommands.
 #[derive(Subcommand)]
 enum Command {
@@ -40,6 +50,10 @@ enum Command {
         /// Center frequency in Hz (informational only).
         #[arg(short, long, default_value_t = 0)]
         frequency: u64,
+
+        /// Modulation type: c4fm (default) or cqpsk (simulcast).
+        #[arg(short, long, default_value = "c4fm")]
+        modulation: Modulation,
     },
 }
 
@@ -75,28 +89,40 @@ fn main() -> Result<()> {
             input,
             sample_rate,
             frequency,
+            modulation,
         } => {
             tracing::info!(
                 input = %input,
                 sample_rate,
                 frequency,
+                modulation = ?modulation,
                 "starting control channel decoder"
             );
-            decode_control_channel(&input, sample_rate)?;
+            decode_control_channel(&input, sample_rate, modulation)?;
         }
     }
 
     Ok(())
 }
 
+/// Demodulation path — holds the DSP blocks specific to each modulation type.
+enum DemodPath {
+    /// C4FM: FM discriminator -> DC block -> RRC matched filter -> symbol timing.
+    C4fm {
+        demod: FmDemodulator,
+        dc_block: DcBlocker,
+        rrc: RrcFilter,
+        timing: SymbolTiming,
+    },
+    /// CQPSK: coherent demodulation (AGC, RRC, Gardner, diff decoder).
+    Cqpsk { demod: CqpskDemodulator },
+}
+
 /// DSP and protocol state for the control channel decode pipeline.
 struct Pipeline {
     filter_stage1: DecimatingFilter,
     filter_stage2: DecimatingFilter,
-    demod: FmDemodulator,
-    dc_block: DcBlocker,
-    rrc: RrcFilter,
-    timing: SymbolTiming,
+    demod_path: DemodPath,
     status_deinterleaver: StatusDeinterleaver,
     receiver: DataUnitReceiver,
     ident_table: IdentTable,
@@ -110,16 +136,31 @@ struct Pipeline {
 }
 
 impl Pipeline {
-    /// Build a new pipeline for the given sample rate.
-    fn new(sample_rate: u32) -> Self {
+    /// Build a new pipeline for the given sample rate and modulation.
+    fn new(sample_rate: u32, modulation: Modulation) -> Self {
         let output_rate = sample_rate as f32 / TOTAL_DECIMATION as f32;
-        let mut timing = SymbolTiming::new();
 
-        // Bootstrap slicer with expected FM demod output levels.
-        // At 24 kHz sample rate, outer deviation (+/- 1800 Hz) produces
-        // approximately +/- 0.47 radians/sample from atan2 discriminator.
-        let expected_outer = 2.0 * std::f32::consts::PI * 1800.0 / output_rate;
-        timing.set_initial_thresholds(expected_outer, -expected_outer);
+        let demod_path = match modulation {
+            Modulation::C4fm => {
+                let mut timing = SymbolTiming::new();
+
+                // Bootstrap slicer with expected FM demod output levels.
+                // At 24 kHz sample rate, outer deviation (+/- 1800 Hz) produces
+                // approximately +/- 0.47 radians/sample from atan2 discriminator.
+                let expected_outer = 2.0 * std::f32::consts::PI * 1800.0 / output_rate;
+                timing.set_initial_thresholds(expected_outer, -expected_outer);
+
+                DemodPath::C4fm {
+                    demod: FmDemodulator::new(),
+                    dc_block: DcBlocker::new(0.999),
+                    rrc: RrcFilter::new(4800.0, output_rate, 0.2, 5),
+                    timing,
+                }
+            }
+            Modulation::Cqpsk => DemodPath::Cqpsk {
+                demod: CqpskDemodulator::new(),
+            },
+        };
 
         Self {
             filter_stage1: DecimatingFilter::new(
@@ -134,10 +175,7 @@ impl Pipeline {
                 STAGE2_TAPS,
                 STAGE2_DECIMATION,
             ),
-            demod: FmDemodulator::new(),
-            dc_block: DcBlocker::new(0.999),
-            rrc: RrcFilter::new(4800.0, output_rate, 0.2, 5),
-            timing,
+            demod_path,
             status_deinterleaver: StatusDeinterleaver::new(),
             receiver: DataUnitReceiver::new(),
             ident_table: IdentTable::new(),
@@ -153,9 +191,13 @@ impl Pipeline {
 }
 
 /// Run the control channel decode pipeline.
-fn decode_control_channel(input_path: &str, sample_rate: u32) -> Result<()> {
+fn decode_control_channel(
+    input_path: &str,
+    sample_rate: u32,
+    modulation: Modulation,
+) -> Result<()> {
     let reader = Cf32Reader::open(Path::new(input_path), sample_rate)?;
-    let mut p = Pipeline::new(sample_rate);
+    let mut p = Pipeline::new(sample_rate, modulation);
 
     for iq_sample in reader {
         p.sample_count += 1;
@@ -170,14 +212,23 @@ fn decode_control_channel(input_path: &str, sample_rate: u32) -> Result<()> {
             None => continue,
         };
 
-        // FM discriminator -> DC block -> matched filter.
-        let baseband = p.rrc.process(p.dc_block.process(p.demod.process(filtered)));
+        // Demodulate through the selected path.
+        let event = match &mut p.demod_path {
+            DemodPath::C4fm {
+                demod,
+                dc_block,
+                rrc,
+                timing,
+            } => {
+                let baseband = rrc.process(dc_block.process(demod.process(filtered)));
+                p.baseband_min = p.baseband_min.min(baseband);
+                p.baseband_max = p.baseband_max.max(baseband);
+                timing.process(baseband)
+            }
+            DemodPath::Cqpsk { demod } => demod.process(filtered),
+        };
 
-        p.baseband_min = p.baseband_min.min(baseband);
-        p.baseband_max = p.baseband_max.max(baseband);
-
-        // Symbol timing + frame sync detection.
-        match p.timing.process(baseband) {
+        match event {
             Some(SymbolEvent::SyncDetected) => handle_sync(&mut p),
             Some(SymbolEvent::Symbol(dibit)) => handle_symbol(&mut p, dibit),
             None => {}
@@ -193,7 +244,10 @@ fn handle_sync(p: &mut Pipeline) {
     p.status_deinterleaver = StatusDeinterleaver::new();
     p.receiver.reset();
     p.synced = true;
-    let (upper, mid, lower) = p.timing.slicer_thresholds();
+    let (upper, mid, lower) = match &p.demod_path {
+        DemodPath::C4fm { timing, .. } => timing.slicer_thresholds(),
+        DemodPath::Cqpsk { demod } => demod.slicer_thresholds(),
+    };
     tracing::debug!(
         sample = p.sample_count,
         baseband_sample = p.sample_count / TOTAL_DECIMATION as u64,
