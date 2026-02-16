@@ -13,12 +13,20 @@ pub struct Dibit(u8);
 
 impl Dibit {
     /// Create a new dibit from the two least significant bits of the input.
-    pub fn new(value: u8) -> Self {
+    pub const fn new(value: u8) -> Self {
+        Self(value & 0x03)
+    }
+
+    /// Create a dibit from a raw 2-bit value (const-compatible).
+    ///
+    /// This is equivalent to `new` but the name clarifies intent when
+    /// used in const contexts. The value is still masked to 2 bits.
+    pub const fn from_raw(value: u8) -> Self {
         Self(value & 0x03)
     }
 
     /// Return the 2-bit value as a u8.
-    pub fn bits(self) -> u8 {
+    pub const fn bits(self) -> u8 {
         self.0
     }
 }
