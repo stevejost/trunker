@@ -9,3 +9,8 @@ samples/iq/*.iq
 samples/iq/*.raw
 samples/iq/*.cf32
 !samples/iq/.gitkeep
+
+# Debug/runtime artifacts
+debug.log
+output.jsonl
+stderr.log
