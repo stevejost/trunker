@@ -59,6 +59,18 @@ pub enum P25Error {
         /// Which chunk (4..=6) failed.
         chunk: usize,
     },
+
+    /// Reed-Solomon short (24,12,13) decode failed (link control).
+    #[error("Reed-Solomon short decode failed: unrecoverable errors in link control")]
+    RsShortUnrecoverable,
+
+    /// Reed-Solomon medium (24,16,9) decode failed (crypto control).
+    #[error("Reed-Solomon medium decode failed: unrecoverable errors in crypto control")]
+    RsMediumUnrecoverable,
+
+    /// Cyclic (16,8,5) decode failed (low-speed data fragment).
+    #[error("cyclic decode failed: unrecoverable errors in low-speed data")]
+    CyclicUnrecoverable,
 }
 
 #[cfg(test)]

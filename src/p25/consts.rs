@@ -21,6 +21,31 @@ pub const TSBK_BYTES: usize = 12;
 /// Interval between status symbols in dibits.
 pub const DIBITS_PER_STATUS_UPDATE: usize = 36;
 
+/// Number of dibits in a single IMBE voice frame.
+pub const VOICE_FRAME_DIBITS: usize = 72;
+
+/// Number of dibits in each LC/CC "extra" piece.
+///
+/// Each LDU frame group carries 6 extra pieces (one between each of frames
+/// 2-7), totaling 120 dibits.
+pub const EXTRA_PIECE_DIBITS: usize = 20;
+
+/// Number of hexbits in a complete LC/CC "extra" packet.
+///
+/// 6 pieces x 4 hexbits per piece = 24 hexbits (after Hamming decode of
+/// each 5-dibit word within the piece).
+pub const EXTRA_HEXBITS: usize = 24;
+
+/// Number of dibits in each coded word within an extra piece.
+///
+/// Each 5-dibit word encodes a 6-bit hexbit via shortened Hamming(10,6,3).
+pub const EXTRA_WORD_DIBITS: usize = 5;
+
+/// Number of dibits in the low-speed data fragment.
+///
+/// One 8-dibit fragment appears between frames 8 and 9 in each frame group.
+pub const DATA_FRAG_DIBITS: usize = 8;
+
 /// Frame sync pattern for HDU/TDU/LDU/TSDU data units (48 bits).
 pub const FRAME_SYNC: u64 = 0x5575_F5FF_77FF;
 
