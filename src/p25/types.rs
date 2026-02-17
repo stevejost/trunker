@@ -30,6 +30,31 @@ impl fmt::Display for Dibit {
     }
 }
 
+/// A six-bit symbol (hexbit) used in Reed-Solomon coding.
+///
+/// Values are constrained to 0..=63 (6 bits). Reed-Solomon codes in P25
+/// operate over GF(2^6), where each symbol is a hexbit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Hexbit(u8);
+
+impl Hexbit {
+    /// Create a new hexbit from the six least significant bits of the input.
+    pub const fn new(value: u8) -> Self {
+        Self(value & 0x3F)
+    }
+
+    /// Return the 6-bit value as a u8.
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+}
+
+impl fmt::Display for Hexbit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "0o{:02o}", self.0)
+    }
+}
+
 /// A frequency in hertz.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
@@ -255,6 +280,24 @@ impl fmt::Display for ChannelNumber {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hexbit_masks_to_six_bits() {
+        assert_eq!(Hexbit::new(0xFF).bits(), 0x3F);
+        assert_eq!(Hexbit::new(0).bits(), 0);
+        assert_eq!(Hexbit::new(63).bits(), 63);
+    }
+
+    #[test]
+    fn hexbit_display() {
+        assert_eq!(format!("{}", Hexbit::new(0o77)), "0o77");
+        assert_eq!(format!("{}", Hexbit::new(0)), "0o00");
+    }
+
+    #[test]
+    fn hexbit_default_is_zero() {
+        assert_eq!(Hexbit::default().bits(), 0);
+    }
 
     #[test]
     fn dibit_masks_to_two_bits() {
