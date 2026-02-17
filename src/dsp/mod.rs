@@ -11,6 +11,7 @@ pub mod fm_demod;
 pub mod gardner;
 pub mod gardner_timing;
 pub mod interpolator;
+pub mod nco;
 pub mod rrc_filter;
 pub mod slicer;
 pub mod sync;

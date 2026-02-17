@@ -7,18 +7,13 @@ use anyhow::{Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use num_complex::Complex;
 
-use trunker::dsp::cqpsk_demod::CqpskDemodulator;
-use trunker::dsp::dc_block::DcBlocker;
-use trunker::dsp::filter::DecimatingFilter;
-use trunker::dsp::fm_demod::FmDemodulator;
-use trunker::dsp::rrc_filter::RrcFilter;
-use trunker::dsp::timing::{SymbolEvent, SymbolTiming};
+use trunker::channel_manager::{ChannelManager, ChannelManagerConfig, VoiceChannelEvent};
 use trunker::output::json;
 use trunker::p25::ident::IdentTable;
-use trunker::p25::receiver::{DataUnitReceiver, ReceiverEvent};
-use trunker::p25::status::{StatusDeinterleaver, StreamSymbol};
-use trunker::p25::tsbk::TsbkPayload;
-use trunker::p25::types::{Dibit, Nac};
+use trunker::p25::receiver::ReceiverEvent;
+use trunker::p25::tsbk::{TsbkOpcode, TsbkPayload};
+use trunker::p25::types::Frequency;
+use trunker::pipeline::{self, ChannelPipeline, PipelineConfig};
 use trunker::sdr::cf32_reader::Cf32Reader;
 use trunker::sdr::soapy_source::{self, SoapySource};
 
@@ -30,13 +25,22 @@ struct Cli {
     command: Command,
 }
 
-/// Modulation type for demodulation path selection.
+/// Modulation type for CLI argument parsing.
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum Modulation {
-    /// C4FM (continuous 4-level FM) — standard P25 modulation.
+enum CliModulation {
+    /// C4FM (continuous 4-level FM) -- standard P25 modulation.
     C4fm,
-    /// CQPSK (compatible quadrature phase shift keying) — P25 simulcast.
+    /// CQPSK (compatible quadrature phase shift keying) -- P25 simulcast.
     Cqpsk,
+}
+
+impl From<CliModulation> for pipeline::Modulation {
+    fn from(m: CliModulation) -> Self {
+        match m {
+            CliModulation::C4fm => Self::C4fm,
+            CliModulation::Cqpsk => Self::Cqpsk,
+        }
+    }
 }
 
 /// Input source selection: file or live SDR device (mutually exclusive).
@@ -86,7 +90,32 @@ enum Command {
 
         /// Modulation type: c4fm (default) or cqpsk (simulcast).
         #[arg(short, long, default_value = "c4fm")]
-        modulation: Modulation,
+        modulation: CliModulation,
+    },
+
+    /// Decode a wideband P25 trunked system (control + voice channels).
+    Trunk {
+        #[command(flatten)]
+        source: InputSource,
+
+        #[command(flatten)]
+        gain_control: GainControl,
+
+        /// Sample rate in Hz.
+        #[arg(short, long, default_value_t = 2_400_000)]
+        sample_rate: u32,
+
+        /// Center frequency of the capture in Hz.
+        #[arg(short = 'f', long)]
+        center_freq: u64,
+
+        /// Modulation type: c4fm or cqpsk (default cqpsk for trunking).
+        #[arg(short, long, default_value = "cqpsk")]
+        modulation: CliModulation,
+
+        /// Seconds before tearing down an idle voice channel.
+        #[arg(long, default_value_t = 3.0)]
+        call_timeout: f64,
     },
 
     /// List available SoapySDR devices.
@@ -100,21 +129,6 @@ enum Command {
     },
 }
 
-/// Two-stage decimation filter parameters.
-/// Stage 1: 2.4 MS/s -> 240 kHz (decimate by 10).
-/// Cutoff at 12 kHz with enough taps for >60 dB alias rejection at 120 kHz.
-const STAGE1_CUTOFF_HZ: f32 = 12_000.0;
-const STAGE1_TAPS: usize = 201;
-const STAGE1_DECIMATION: usize = 10;
-
-/// Stage 2: 240 kHz -> 24 kHz (decimate by 10).
-/// Channel isolation; 6.25 kHz cutoff rejects out-of-band noise before FM demod.
-const STAGE2_CUTOFF_HZ: f32 = 6_250.0;
-const STAGE2_TAPS: usize = 61;
-const STAGE2_DECIMATION: usize = 10;
-
-/// Total decimation factor (stage 1 * stage 2).
-const TOTAL_DECIMATION: usize = STAGE1_DECIMATION * STAGE2_DECIMATION;
 
 fn main() -> Result<()> {
     // When stdout is piped (e.g., `p25 cc ... | p25 monitor`), suppress all
@@ -152,13 +166,48 @@ fn main() -> Result<()> {
                 running.clone(),
             )?;
 
+            let pipeline_modulation: pipeline::Modulation = modulation.into();
             tracing::info!(
                 sample_rate,
                 frequency,
                 modulation = ?modulation,
                 "starting control channel decoder"
             );
-            decode_control_channel(sample_source, sample_rate, modulation, &running)?;
+            decode_control_channel(sample_source, sample_rate, pipeline_modulation, &running)?;
+        }
+        Command::Trunk {
+            source,
+            gain_control,
+            sample_rate,
+            center_freq,
+            modulation,
+            call_timeout,
+        } => {
+            let running = setup_signal_handler()?;
+            let sample_source = open_sample_source(
+                source,
+                &gain_control,
+                sample_rate,
+                center_freq,
+                running.clone(),
+            )?;
+
+            let pipeline_modulation: pipeline::Modulation = modulation.into();
+            tracing::info!(
+                sample_rate,
+                center_freq,
+                modulation = ?modulation,
+                call_timeout,
+                "starting wideband trunked decoder"
+            );
+            decode_trunked(
+                sample_source,
+                sample_rate,
+                center_freq,
+                pipeline_modulation,
+                call_timeout,
+                &running,
+            )?;
         }
         Command::Devices => {
             soapy_source::list_devices();
@@ -259,99 +308,20 @@ fn resolve_gain(gain_control: &GainControl) -> Option<f64> {
     }
 }
 
-/// Demodulation path — holds the DSP blocks specific to each modulation type.
-enum DemodPath {
-    /// C4FM: FM discriminator -> DC block -> RRC matched filter -> symbol timing.
-    C4fm {
-        demod: FmDemodulator,
-        dc_block: DcBlocker,
-        rrc: RrcFilter,
-        timing: SymbolTiming,
-    },
-    /// CQPSK: coherent demodulation (AGC, RRC, Gardner, diff decoder).
-    Cqpsk { demod: CqpskDemodulator },
-}
-
-/// DSP and protocol state for the control channel decode pipeline.
-struct Pipeline {
-    filter_stage1: DecimatingFilter,
-    filter_stage2: DecimatingFilter,
-    demod_path: DemodPath,
-    status_deinterleaver: StatusDeinterleaver,
-    receiver: DataUnitReceiver,
-    ident_table: IdentTable,
-    current_nac: Nac,
-    synced: bool,
-    sample_count: u64,
-    tsbk_count: u64,
-    symbol_count: u64,
-    baseband_min: f32,
-    baseband_max: f32,
-}
-
-impl Pipeline {
-    /// Build a new pipeline for the given sample rate and modulation.
-    fn new(sample_rate: u32, modulation: Modulation) -> Self {
-        let output_rate = sample_rate as f32 / TOTAL_DECIMATION as f32;
-
-        let demod_path = match modulation {
-            Modulation::C4fm => {
-                let mut timing = SymbolTiming::new();
-
-                // Bootstrap slicer with expected FM demod output levels.
-                // At 24 kHz sample rate, outer deviation (+/- 1800 Hz) produces
-                // approximately +/- 0.47 radians/sample from atan2 discriminator.
-                let expected_outer = 2.0 * std::f32::consts::PI * 1800.0 / output_rate;
-                timing.set_initial_thresholds(expected_outer, -expected_outer);
-
-                DemodPath::C4fm {
-                    demod: FmDemodulator::new(),
-                    dc_block: DcBlocker::new(0.999),
-                    rrc: RrcFilter::new(4800.0, output_rate, 0.2, 5),
-                    timing,
-                }
-            }
-            Modulation::Cqpsk => DemodPath::Cqpsk {
-                demod: CqpskDemodulator::new(),
-            },
-        };
-
-        Self {
-            filter_stage1: DecimatingFilter::new(
-                STAGE1_CUTOFF_HZ,
-                sample_rate as f32,
-                STAGE1_TAPS,
-                STAGE1_DECIMATION,
-            ),
-            filter_stage2: DecimatingFilter::new(
-                STAGE2_CUTOFF_HZ,
-                sample_rate as f32 / STAGE1_DECIMATION as f32,
-                STAGE2_TAPS,
-                STAGE2_DECIMATION,
-            ),
-            demod_path,
-            status_deinterleaver: StatusDeinterleaver::new(),
-            receiver: DataUnitReceiver::new(),
-            ident_table: IdentTable::new(),
-            current_nac: Nac::new(0),
-            synced: false,
-            sample_count: 0,
-            tsbk_count: 0,
-            symbol_count: 0,
-            baseband_min: f32::MAX,
-            baseband_max: f32::MIN,
-        }
-    }
-}
-
 /// Run the control channel decode pipeline.
 fn decode_control_channel(
     source: SampleSource,
     sample_rate: u32,
-    modulation: Modulation,
+    modulation: pipeline::Modulation,
     running: &Arc<AtomicBool>,
 ) -> Result<()> {
-    let mut p = Pipeline::new(sample_rate, modulation);
+    let config = PipelineConfig {
+        sample_rate,
+        modulation,
+    };
+    let mut pipeline = ChannelPipeline::new(config);
+    let mut ident_table = IdentTable::new();
+    let mut tsbk_count: u64 = 0;
 
     for iq_sample in source {
         if !running.load(Ordering::SeqCst) {
@@ -359,95 +329,31 @@ fn decode_control_channel(
             break;
         }
 
-        p.sample_count += 1;
-
-        // Two-stage decimation: 2.4 MS/s -> 240 kHz -> 24 kHz.
-        let stage1_out = match p.filter_stage1.process(iq_sample) {
-            Some(s) => s,
-            None => continue,
-        };
-        let filtered = match p.filter_stage2.process(stage1_out) {
-            Some(s) => s,
-            None => continue,
-        };
-
-        // Demodulate through the selected path.
-        let event = match &mut p.demod_path {
-            DemodPath::C4fm {
-                demod,
-                dc_block,
-                rrc,
-                timing,
-            } => {
-                let baseband = rrc.process(dc_block.process(demod.process(filtered)));
-                p.baseband_min = p.baseband_min.min(baseband);
-                p.baseband_max = p.baseband_max.max(baseband);
-                timing.process(baseband)
-            }
-            DemodPath::Cqpsk { demod } => demod.process(filtered),
-        };
-
-        match event {
-            Some(SymbolEvent::SyncDetected) => handle_sync(&mut p),
-            Some(SymbolEvent::Symbol(dibit)) => handle_symbol(&mut p, dibit),
-            None => {}
+        if let Some(event) = pipeline.process_sample(iq_sample) {
+            let nac = pipeline.current_nac();
+            handle_receiver_event(nac, &mut ident_table, &mut tsbk_count, event);
         }
     }
 
-    log_summary(&p);
+    tracing::info!(
+        samples = pipeline.sample_count(),
+        tsbks = tsbk_count,
+        "decode complete"
+    );
     Ok(())
 }
 
-/// Reset protocol state when a new frame sync is detected.
-fn handle_sync(p: &mut Pipeline) {
-    p.status_deinterleaver = StatusDeinterleaver::new();
-    p.receiver.reset();
-    p.synced = true;
-    let (upper, mid, lower) = match &p.demod_path {
-        DemodPath::C4fm { timing, .. } => timing.slicer_thresholds(),
-        DemodPath::Cqpsk { demod } => demod.slicer_thresholds(),
-    };
-    tracing::debug!(
-        sample = p.sample_count,
-        baseband_sample = p.sample_count / TOTAL_DECIMATION as u64,
-        upper,
-        mid,
-        lower,
-        "frame sync detected"
-    );
-}
-
-/// Process a single decoded symbol through the protocol stack.
-fn handle_symbol(p: &mut Pipeline, dibit: Dibit) {
-    p.symbol_count += 1;
-    if !p.synced {
-        return;
-    }
-
-    // Strip status symbols.
-    let data_dibit = match p.status_deinterleaver.feed(dibit) {
-        StreamSymbol::Data(d) => d,
-        StreamSymbol::Status(_) => return,
-    };
-
-    // Feed to protocol receiver.
-    if let Some(event) = p.receiver.feed(data_dibit) {
-        handle_receiver_event(p, event);
-    }
-
-    // If receiver finished this data unit, wait for next sync.
-    if p.receiver.is_done() {
-        p.synced = false;
-    }
-}
-
 /// Dispatch a decoded protocol event (NID, TSBK, or error).
-fn handle_receiver_event(p: &mut Pipeline, event: ReceiverEvent) {
+fn handle_receiver_event(
+    nac: trunker::p25::types::Nac,
+    ident_table: &mut IdentTable,
+    tsbk_count: &mut u64,
+    event: ReceiverEvent,
+) {
     match event {
         ReceiverEvent::Nid(nid) => {
-            p.current_nac = nid.access_code;
             tracing::debug!(
-                nac = %p.current_nac,
+                nac = %nid.access_code,
                 duid = ?nid.data_unit,
                 parity_ok = nid.parity_ok,
                 "NID decoded"
@@ -455,31 +361,31 @@ fn handle_receiver_event(p: &mut Pipeline, event: ReceiverEvent) {
         }
         ReceiverEvent::Tsbk(tsbk) => {
             if matches!(tsbk.payload, TsbkPayload::IdentifierUpdate { .. }) {
-                p.ident_table.update(&tsbk);
+                ident_table.update(&tsbk);
             }
 
-            let line = json::to_json_line(p.current_nac, &tsbk, &p.ident_table);
+            let line = json::to_json_line(nac, &tsbk, ident_table);
             println!("{line}");
-            p.tsbk_count += 1;
+            *tsbk_count += 1;
         }
         ReceiverEvent::VoiceFrame(vf) => {
-            let line = json::voice_frame_json_line(p.current_nac, &vf);
+            let line = json::voice_frame_json_line(nac, &vf);
             println!("{line}");
         }
         ReceiverEvent::LinkControl(lc) => {
-            let line = json::link_control_json_line(p.current_nac, &lc);
+            let line = json::link_control_json_line(nac, &lc);
             println!("{line}");
         }
         ReceiverEvent::CryptoControl(cc) => {
-            let line = json::crypto_control_json_line(p.current_nac, &cc);
+            let line = json::crypto_control_json_line(nac, &cc);
             println!("{line}");
         }
         ReceiverEvent::VoiceHeader(hdr) => {
-            let line = json::voice_header_json_line(p.current_nac, &hdr);
+            let line = json::voice_header_json_line(nac, &hdr);
             println!("{line}");
         }
         ReceiverEvent::DataFragment(frag) => {
-            let line = json::data_fragment_json_line(p.current_nac, frag);
+            let line = json::data_fragment_json_line(nac, frag);
             println!("{line}");
         }
         ReceiverEvent::Error(err) => {
@@ -488,17 +394,158 @@ fn handle_receiver_event(p: &mut Pipeline, event: ReceiverEvent) {
     }
 }
 
-/// Log final decode statistics.
-fn log_summary(p: &Pipeline) {
+/// Run the wideband trunked decoder (CC + voice channels).
+fn decode_trunked(
+    source: SampleSource,
+    sample_rate: u32,
+    center_freq: u64,
+    modulation: pipeline::Modulation,
+    call_timeout: f64,
+    running: &Arc<AtomicBool>,
+) -> Result<()> {
+    let config = PipelineConfig {
+        sample_rate,
+        modulation,
+    };
+    let mut cc_pipeline = ChannelPipeline::new(config);
+    let mut ident_table = IdentTable::new();
+    let mut tsbk_count: u64 = 0;
+
+    let mut channel_manager = ChannelManager::new(ChannelManagerConfig {
+        center_frequency: Frequency::from_hz(center_freq),
+        sample_rate,
+        call_timeout_seconds: call_timeout,
+        modulation,
+    });
+
+    for iq_sample in source {
+        if !running.load(Ordering::SeqCst) {
+            tracing::info!("interrupted by signal");
+            break;
+        }
+
+        // Feed to CC pipeline (CC is at DC / center frequency).
+        if let Some(event) = cc_pipeline.process_sample(iq_sample) {
+            let nac = cc_pipeline.current_nac();
+            handle_cc_event(
+                nac,
+                &mut ident_table,
+                &mut tsbk_count,
+                &mut channel_manager,
+                event,
+            );
+        }
+
+        // Feed to all active voice channel pipelines.
+        for voice_event in channel_manager.process_sample(iq_sample) {
+            emit_voice_event(&voice_event);
+        }
+    }
+
     tracing::info!(
-        samples = p.sample_count,
-        baseband_samples = p.sample_count / TOTAL_DECIMATION as u64,
-        symbols = p.symbol_count,
-        tsbks = p.tsbk_count,
-        baseband_min = p.baseband_min,
-        baseband_max = p.baseband_max,
-        "decode complete"
+        samples = cc_pipeline.sample_count(),
+        tsbks = tsbk_count,
+        active_voice_channels = channel_manager.active_channel_count(),
+        "trunked decode complete"
     );
+    Ok(())
+}
+
+/// Handle a CC pipeline event: print JSON, update ident table, forward
+/// grant events to the channel manager.
+fn handle_cc_event(
+    nac: trunker::p25::types::Nac,
+    ident_table: &mut IdentTable,
+    tsbk_count: &mut u64,
+    channel_manager: &mut ChannelManager,
+    event: ReceiverEvent,
+) {
+    match event {
+        ReceiverEvent::Nid(nid) => {
+            tracing::debug!(
+                nac = %nid.access_code,
+                duid = ?nid.data_unit,
+                parity_ok = nid.parity_ok,
+                "CC NID decoded"
+            );
+        }
+        ReceiverEvent::Tsbk(tsbk) => {
+            if matches!(tsbk.payload, TsbkPayload::IdentifierUpdate { .. }) {
+                ident_table.update(&tsbk);
+            }
+
+            // Forward grant events to channel manager.
+            let is_grant = matches!(
+                tsbk.header.opcode,
+                TsbkOpcode::GroupVoiceChannelGrant
+                    | TsbkOpcode::GroupVoiceChannelGrantUpdate
+                    | TsbkOpcode::GroupVoiceChannelGrantUpdateExplicit
+            );
+            if is_grant {
+                channel_manager.handle_grant(&tsbk, ident_table);
+            }
+
+            let line = json::to_json_line(nac, &tsbk, ident_table);
+            println!("{line}");
+            *tsbk_count += 1;
+        }
+        ReceiverEvent::Error(err) => {
+            tracing::debug!(error = %err, "CC decode error");
+        }
+        // CC shouldn't produce voice events, but handle gracefully.
+        _ => {}
+    }
+}
+
+/// Emit a voice channel event as a JSON line with call context
+/// (frequency, talkgroup, source from the CC grant).
+fn emit_voice_event(voice_event: &VoiceChannelEvent) {
+    let nac = voice_event.nac;
+    let freq = voice_event.frequency;
+    let tg = voice_event.talkgroup;
+    let src = voice_event.source;
+
+    match &voice_event.event {
+        ReceiverEvent::VoiceFrame(vf) => {
+            let line = json::voice_frame_with_context(nac, vf, freq, tg, src);
+            println!("{line}");
+        }
+        ReceiverEvent::LinkControl(lc) => {
+            let line = json::link_control_with_context(nac, lc, freq, tg, src);
+            println!("{line}");
+        }
+        ReceiverEvent::CryptoControl(cc) => {
+            let line = json::crypto_control_with_context(nac, cc, freq, tg, src);
+            println!("{line}");
+        }
+        ReceiverEvent::VoiceHeader(hdr) => {
+            let line = json::voice_header_with_context(nac, hdr, freq, tg, src);
+            println!("{line}");
+        }
+        ReceiverEvent::DataFragment(frag) => {
+            let line = json::data_fragment_with_context(nac, *frag, freq, tg, src);
+            println!("{line}");
+        }
+        ReceiverEvent::Nid(nid) => {
+            tracing::debug!(
+                frequency = %voice_event.frequency,
+                talkgroup = %voice_event.talkgroup,
+                nac = %nid.access_code,
+                duid = ?nid.data_unit,
+                "voice channel NID"
+            );
+        }
+        ReceiverEvent::Tsbk(_) => {
+            // Voice channels shouldn't produce TSBKs; ignore.
+        }
+        ReceiverEvent::Error(err) => {
+            tracing::debug!(
+                frequency = %voice_event.frequency,
+                error = %err,
+                "voice channel decode error"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -706,5 +753,96 @@ mod tests {
         let source = SampleSource::File(reader);
         let samples: Vec<_> = source.collect();
         assert!(samples.is_empty());
+    }
+
+    // -- Trunk CLI parsing tests --
+
+    #[test]
+    fn cli_trunk_file_mode_parses() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "trunk",
+            "--input",
+            "wideband.iq",
+            "--center-freq",
+            "852350000",
+        ]);
+        assert!(cli.is_ok(), "trunk file mode should parse: {:?}", cli.err());
+    }
+
+    #[test]
+    fn cli_trunk_with_all_options_parses() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "trunk",
+            "--input",
+            "wideband.iq",
+            "--center-freq",
+            "852350000",
+            "--modulation",
+            "cqpsk",
+            "--call-timeout",
+            "5.0",
+            "--sample-rate",
+            "2400000",
+        ]);
+        assert!(
+            cli.is_ok(),
+            "trunk with all options should parse: {:?}",
+            cli.err()
+        );
+    }
+
+    #[test]
+    fn cli_trunk_requires_center_freq() {
+        let cli = Cli::try_parse_from(["p25", "trunk", "--input", "wideband.iq"]);
+        assert!(
+            cli.is_err(),
+            "trunk should require --center-freq"
+        );
+    }
+
+    #[test]
+    fn cli_trunk_requires_input_or_device() {
+        let cli = Cli::try_parse_from(["p25", "trunk", "--center-freq", "852350000"]);
+        assert!(cli.is_err(), "trunk should require --input or --device");
+    }
+
+    #[test]
+    fn cli_trunk_defaults_to_cqpsk() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "trunk",
+            "--input",
+            "wideband.iq",
+            "--center-freq",
+            "852350000",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Trunk { modulation, .. } => {
+                assert!(matches!(modulation, CliModulation::Cqpsk));
+            }
+            _ => panic!("expected Trunk command"),
+        }
+    }
+
+    #[test]
+    fn cli_trunk_default_call_timeout_is_3() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "trunk",
+            "--input",
+            "wideband.iq",
+            "--center-freq",
+            "852350000",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Trunk { call_timeout, .. } => {
+                assert!((call_timeout - 3.0).abs() < 1e-6);
+            }
+            _ => panic!("expected Trunk command"),
+        }
     }
 }

@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::p25::ident::IdentTable;
 use crate::p25::tsbk::{Tsbk, TsbkPayload};
-use crate::p25::types::Nac;
+use crate::p25::types::{Frequency, Nac, SourceId, TalkgroupId};
 use crate::p25::voice::control::LinkControlFields;
 use crate::p25::voice::crypto::CryptoControlFields;
 use crate::p25::voice::frame::VoiceFrame;
@@ -413,6 +413,21 @@ pub fn to_json_line(nac: Nac, tsbk: &Tsbk, ident_table: &IdentTable) -> String {
 // Voice event JSON
 // ---------------------------------------------------------------------------
 
+/// Call context from the control channel grant that initiated this voice call.
+///
+/// Present on voice events from the wideband trunked decoder (`p25 trunk`)
+/// where the channel manager tracks which talkgroup/frequency each voice
+/// channel belongs to. Absent on events from `p25 cc`.
+#[derive(Debug, Serialize)]
+pub struct CallContext {
+    /// Receive frequency of the voice channel in MHz.
+    pub frequency: f64,
+    /// Talkgroup ID for this call.
+    pub talkgroup: u16,
+    /// Source unit ID that initiated the call.
+    pub source: u32,
+}
+
 /// A voice event serialized as a JSON object.
 #[derive(Debug, Serialize)]
 pub struct VoiceEventJson {
@@ -421,6 +436,9 @@ pub struct VoiceEventJson {
     /// Event type discriminator.
     #[serde(rename = "type")]
     pub event_type: &'static str,
+    /// Call context from the control channel grant (trunk mode only).
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    pub call_context: Option<CallContext>,
     /// Event-specific fields.
     #[serde(flatten)]
     pub fields: VoiceEventFields,
@@ -506,6 +524,7 @@ pub fn voice_frame_json_line(nac: Nac, frame: &VoiceFrame) -> String {
     let event = VoiceEventJson {
         nac: format!("0x{:03X}", nac.value()),
         event_type: "voice_frame",
+        call_context: None,
         fields: VoiceEventFields::VoiceFrame {
             imbe: imbe_to_hex(frame),
             errors: frame.total_errors(),
@@ -529,6 +548,7 @@ pub fn link_control_json_line(nac: Nac, lc: &LinkControlFields) -> String {
     let event = VoiceEventJson {
         nac: format!("0x{:03X}", nac.value()),
         event_type: "link_control",
+        call_context: None,
         fields: VoiceEventFields::LinkControl {
             lc_opcode: format!("{opcode}"),
             talkgroup,
@@ -544,6 +564,7 @@ pub fn crypto_control_json_line(nac: Nac, cc: &CryptoControlFields) -> String {
     let event = VoiceEventJson {
         nac: format!("0x{:03X}", nac.value()),
         event_type: "crypto_control",
+        call_context: None,
         fields: VoiceEventFields::CryptoControl {
             algorithm: format!("{}", cc.algorithm()),
             key_id: cc.key_id(),
@@ -562,6 +583,7 @@ pub fn voice_header_json_line(nac: Nac, hdr: &VoiceHeaderFields) -> String {
     let event = VoiceEventJson {
         nac: format!("0x{:03X}", nac.value()),
         event_type: "voice_header",
+        call_context: None,
         fields: VoiceEventFields::VoiceHeader {
             algorithm: format!("{}", hdr.algorithm()),
             key_id: hdr.key_id(),
@@ -582,6 +604,137 @@ pub fn data_fragment_json_line(nac: Nac, data: u16) -> String {
     let event = VoiceEventJson {
         nac: format!("0x{:03X}", nac.value()),
         event_type: "data_fragment",
+        call_context: None,
+        fields: VoiceEventFields::DataFragment { data },
+    };
+    serde_json::to_string(&event).expect("VoiceEventJson serialization should not fail")
+}
+
+/// Build [`CallContext`] from grant metadata.
+fn make_call_context(frequency: Frequency, talkgroup: TalkgroupId, source: SourceId) -> CallContext {
+    CallContext {
+        frequency: format_mhz(frequency.hz()),
+        talkgroup: talkgroup.value(),
+        source: source.value(),
+    }
+}
+
+/// Build a JSON line for a voice frame with call context.
+pub fn voice_frame_with_context(
+    nac: Nac,
+    frame: &VoiceFrame,
+    frequency: Frequency,
+    talkgroup: TalkgroupId,
+    source: SourceId,
+) -> String {
+    let event = VoiceEventJson {
+        nac: format!("0x{:03X}", nac.value()),
+        event_type: "voice_frame",
+        call_context: Some(make_call_context(frequency, talkgroup, source)),
+        fields: VoiceEventFields::VoiceFrame {
+            imbe: imbe_to_hex(frame),
+            errors: frame.total_errors(),
+        },
+    };
+    serde_json::to_string(&event).expect("VoiceEventJson serialization should not fail")
+}
+
+/// Build a JSON line for a link control event with call context.
+pub fn link_control_with_context(
+    nac: Nac,
+    lc: &LinkControlFields,
+    frequency: Frequency,
+    talkgroup: TalkgroupId,
+    source: SourceId,
+) -> String {
+    use crate::p25::voice::control::{GroupVoiceTraffic, LinkControlOpcode};
+
+    let opcode = lc.opcode();
+    let (lc_talkgroup, lc_source) = if opcode == LinkControlOpcode::GroupVoiceTraffic {
+        let gvt = GroupVoiceTraffic::new(*lc);
+        (Some(gvt.talkgroup().value()), Some(gvt.source_unit().value()))
+    } else {
+        (None, None)
+    };
+
+    let event = VoiceEventJson {
+        nac: format!("0x{:03X}", nac.value()),
+        event_type: "link_control",
+        call_context: Some(make_call_context(frequency, talkgroup, source)),
+        fields: VoiceEventFields::LinkControl {
+            lc_opcode: format!("{opcode}"),
+            talkgroup: lc_talkgroup,
+            source: lc_source,
+            lc_data: lc.raw().iter().map(|b| format!("{b:02X}")).collect(),
+        },
+    };
+    serde_json::to_string(&event).expect("VoiceEventJson serialization should not fail")
+}
+
+/// Build a JSON line for a crypto control event with call context.
+pub fn crypto_control_with_context(
+    nac: Nac,
+    cc: &CryptoControlFields,
+    frequency: Frequency,
+    talkgroup: TalkgroupId,
+    source: SourceId,
+) -> String {
+    let event = VoiceEventJson {
+        nac: format!("0x{:03X}", nac.value()),
+        event_type: "crypto_control",
+        call_context: Some(make_call_context(frequency, talkgroup, source)),
+        fields: VoiceEventFields::CryptoControl {
+            algorithm: format!("{}", cc.algorithm()),
+            key_id: cc.key_id(),
+            initialization_vector: cc
+                .initialization_vector()
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect(),
+        },
+    };
+    serde_json::to_string(&event).expect("VoiceEventJson serialization should not fail")
+}
+
+/// Build a JSON line for a voice header event with call context.
+pub fn voice_header_with_context(
+    nac: Nac,
+    hdr: &VoiceHeaderFields,
+    frequency: Frequency,
+    talkgroup: TalkgroupId,
+    source: SourceId,
+) -> String {
+    let event = VoiceEventJson {
+        nac: format!("0x{:03X}", nac.value()),
+        event_type: "voice_header",
+        call_context: Some(make_call_context(frequency, talkgroup, source)),
+        fields: VoiceEventFields::VoiceHeader {
+            algorithm: format!("{}", hdr.algorithm()),
+            key_id: hdr.key_id(),
+            talkgroup: hdr.talkgroup().value(),
+            manufacturer_id: hdr.manufacturer_id(),
+            initialization_vector: hdr
+                .crypto_init()
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect(),
+        },
+    };
+    serde_json::to_string(&event).expect("VoiceEventJson serialization should not fail")
+}
+
+/// Build a JSON line for a data fragment event with call context.
+pub fn data_fragment_with_context(
+    nac: Nac,
+    data: u16,
+    frequency: Frequency,
+    talkgroup: TalkgroupId,
+    source: SourceId,
+) -> String {
+    let event = VoiceEventJson {
+        nac: format!("0x{:03X}", nac.value()),
+        event_type: "data_fragment",
+        call_context: Some(make_call_context(frequency, talkgroup, source)),
         fields: VoiceEventFields::DataFragment { data },
     };
     serde_json::to_string(&event).expect("VoiceEventJson serialization should not fail")
@@ -896,5 +1049,67 @@ mod tests {
         assert_eq!(v["talkgroup_a"], 66);
         assert_eq!(v["channel_b"], 0x7145);
         assert_eq!(v["talkgroup_b"], 0x0099);
+    }
+
+    // -----------------------------------------------------------------------
+    // Call context tests (trunk mode voice events)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn voice_frame_with_context_includes_call_fields() {
+        let frame = VoiceFrame {
+            chunks: [0x123, 0x456, 0x789, 0xABC, 0x3FF, 0x555, 0x000, 0x7F],
+            errors: [0, 1, 0, 0, 0, 2, 0],
+        };
+        let nac = Nac::new(0x5FC);
+        let freq = Frequency::from_hz(851_062_500);
+        let tg = TalkgroupId::new(3605);
+        let src = SourceId::new(12345);
+
+        let json = voice_frame_with_context(nac, &frame, freq, tg, src);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["type"], "voice_frame");
+        let freq_mhz = v["frequency"].as_f64().unwrap();
+        assert!((freq_mhz - 851.0625).abs() < 0.0001);
+        assert_eq!(v["talkgroup"], 3605);
+        assert_eq!(v["source"], 12345);
+        assert!(v["imbe"].is_string());
+    }
+
+    #[test]
+    fn voice_frame_without_context_omits_call_fields() {
+        let frame = VoiceFrame {
+            chunks: [0; 8],
+            errors: [0; 7],
+        };
+        let nac = Nac::new(0x5FC);
+
+        let json = voice_frame_json_line(nac, &frame);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["type"], "voice_frame");
+        // No call context fields should be present.
+        assert!(v.get("frequency").is_none());
+        assert!(v.get("talkgroup").is_none());
+        assert!(v.get("source").is_none());
+    }
+
+    #[test]
+    fn data_fragment_with_context_includes_call_fields() {
+        let nac = Nac::new(0x5FC);
+        let freq = Frequency::from_hz(852_100_000);
+        let tg = TalkgroupId::new(200);
+        let src = SourceId::new(99999);
+
+        let json = data_fragment_with_context(nac, 0x1234, freq, tg, src);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["type"], "data_fragment");
+        assert_eq!(v["data"], 0x1234);
+        let freq_mhz = v["frequency"].as_f64().unwrap();
+        assert!((freq_mhz - 852.1).abs() < 0.0001);
+        assert_eq!(v["talkgroup"], 200);
+        assert_eq!(v["source"], 99999);
     }
 }

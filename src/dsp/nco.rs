@@ -1,0 +1,183 @@
+//! Numerically Controlled Oscillator for frequency shifting.
+//!
+//! Shifts wideband IQ samples to baseband by multiplying with a complex
+//! exponential at the specified offset frequency. Uses an incremental
+//! phase accumulator with modular wrap to prevent precision loss.
+
+use std::f64::consts::TAU;
+
+use num_complex::Complex;
+
+/// A complex NCO for frequency-shifting IQ samples.
+///
+/// Generates `exp(-j * 2 * pi * offset_hz / sample_rate * n)` incrementally,
+/// multiplying each input sample to shift the target channel to DC.
+#[derive(Debug)]
+pub struct Nco {
+    /// Phase increment per sample in radians.
+    phase_increment: f64,
+    /// Current accumulated phase in radians.
+    phase: f64,
+}
+
+impl Nco {
+    /// Create a new NCO that shifts by `offset_hz` at the given sample rate.
+    ///
+    /// * `offset_hz` - Frequency offset in hertz (positive = channel above center).
+    /// * `sample_rate` - Input sample rate in hertz.
+    ///
+    /// The NCO multiplies by `exp(-j * phase)` to shift the target down to DC.
+    pub fn new(offset_hz: f64, sample_rate: f64) -> Self {
+        Self {
+            phase_increment: -TAU * offset_hz / sample_rate,
+            phase: 0.0,
+        }
+    }
+
+    /// Frequency-shift one complex sample and advance the phase.
+    pub fn shift(&mut self, sample: Complex<f32>) -> Complex<f32> {
+        let (sin, cos) = self.phase.sin_cos();
+        let rotator = Complex::new(cos as f32, sin as f32);
+        self.phase += self.phase_increment;
+        self.phase = self.phase.rem_euclid(TAU);
+        sample * rotator
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tone_shifted_to_dc() {
+        // Generate a 1 kHz tone at 48 kHz sample rate, then shift by +1 kHz.
+        // After shifting, the tone should be at DC.
+        let sample_rate = 48_000.0;
+        let tone_hz = 1_000.0;
+        let mut nco = Nco::new(tone_hz, sample_rate);
+
+        let num_samples = 4800;
+        let mut output = Vec::with_capacity(num_samples);
+
+        for n in 0..num_samples {
+            let phase = TAU * tone_hz * n as f64 / sample_rate;
+            let input = Complex::new(phase.cos() as f32, phase.sin() as f32);
+            output.push(nco.shift(input));
+        }
+
+        // After settling, the output should be approximately real-valued
+        // (DC = constant magnitude, zero imaginary).
+        let steady = &output[100..];
+        let avg_re: f32 = steady.iter().map(|s| s.re).sum::<f32>() / steady.len() as f32;
+        let avg_im: f32 = steady.iter().map(|s| s.im).sum::<f32>() / steady.len() as f32;
+
+        assert!(
+            (avg_re - 1.0).abs() < 0.01,
+            "DC real component should be ~1.0, got {avg_re}"
+        );
+        assert!(
+            avg_im.abs() < 0.01,
+            "DC imaginary component should be ~0.0, got {avg_im}"
+        );
+    }
+
+    #[test]
+    fn phase_does_not_drift_over_millions_of_samples() {
+        let mut nco = Nco::new(1234.5, 2_400_000.0);
+        let input = Complex::new(1.0, 0.0);
+
+        // Run for 10 million samples.
+        for _ in 0..10_000_000 {
+            nco.shift(input);
+        }
+
+        // Phase should still be within [0, TAU) due to rem_euclid wrapping.
+        assert!(
+            nco.phase >= 0.0 && nco.phase < TAU,
+            "phase out of range: {}",
+            nco.phase
+        );
+
+        // Verify the output still has unit magnitude (no precision drift).
+        let output = nco.shift(input);
+        let magnitude = output.norm();
+        assert!(
+            (magnitude - 1.0).abs() < 0.001,
+            "magnitude drifted: {magnitude}"
+        );
+    }
+
+    #[test]
+    fn zero_offset_is_passthrough() {
+        let mut nco = Nco::new(0.0, 48_000.0);
+        let input = Complex::new(0.5, -0.3);
+        let output = nco.shift(input);
+
+        assert!(
+            (output.re - input.re).abs() < 1e-6,
+            "zero offset should pass through: got {output}"
+        );
+        assert!(
+            (output.im - input.im).abs() < 1e-6,
+            "zero offset should pass through: got {output}"
+        );
+    }
+
+    #[test]
+    fn negative_offset_shifts_up() {
+        // Shift a -1 kHz tone by -1 kHz should bring it to DC.
+        let sample_rate = 48_000.0;
+        let tone_hz = -1_000.0;
+        let mut nco = Nco::new(tone_hz, sample_rate);
+
+        let num_samples = 4800;
+        let mut output = Vec::with_capacity(num_samples);
+
+        for n in 0..num_samples {
+            let phase = TAU * tone_hz * n as f64 / sample_rate;
+            let input = Complex::new(phase.cos() as f32, phase.sin() as f32);
+            output.push(nco.shift(input));
+        }
+
+        let steady = &output[100..];
+        let avg_re: f32 = steady.iter().map(|s| s.re).sum::<f32>() / steady.len() as f32;
+        let avg_im: f32 = steady.iter().map(|s| s.im).sum::<f32>() / steady.len() as f32;
+
+        assert!(
+            (avg_re - 1.0).abs() < 0.01,
+            "DC real should be ~1.0, got {avg_re}"
+        );
+        assert!(
+            avg_im.abs() < 0.01,
+            "DC imaginary should be ~0.0, got {avg_im}"
+        );
+    }
+
+    #[test]
+    fn phase_increment_sign_is_correct() {
+        // Positive offset_hz should produce negative phase_increment
+        // (shift DOWN to baseband).
+        let nco = Nco::new(1000.0, 48_000.0);
+        assert!(
+            nco.phase_increment < 0.0,
+            "positive offset should produce negative phase increment"
+        );
+
+        let nco_neg = Nco::new(-1000.0, 48_000.0);
+        assert!(
+            nco_neg.phase_increment > 0.0,
+            "negative offset should produce positive phase increment"
+        );
+    }
+
+    #[test]
+    fn phase_increment_matches_expected() {
+        let nco = Nco::new(1000.0, 48_000.0);
+        let expected = -TAU * 1000.0 / 48_000.0;
+        assert!(
+            (nco.phase_increment - expected).abs() < 1e-12,
+            "phase increment mismatch: got {}, expected {expected}",
+            nco.phase_increment
+        );
+    }
+}
