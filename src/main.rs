@@ -474,6 +474,10 @@ fn handle_receiver_event(p: &mut Pipeline, event: ReceiverEvent) {
             let line = json::crypto_control_json_line(p.current_nac, &cc);
             println!("{line}");
         }
+        ReceiverEvent::VoiceHeader(hdr) => {
+            let line = json::voice_header_json_line(p.current_nac, &hdr);
+            println!("{line}");
+        }
         ReceiverEvent::DataFragment(frag) => {
             let line = json::data_fragment_json_line(p.current_nac, frag);
             println!("{line}");

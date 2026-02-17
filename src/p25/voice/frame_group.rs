@@ -139,7 +139,7 @@ impl ExtraReceiver {
 /// Processes hexbits in pairs: each pair of 6-bit values produces
 /// 12 bits = 1.5 bytes. The overall conversion packs N hexbits into
 /// ceil(N * 6 / 8) bytes.
-fn hexbits_to_bytes(hexbits: &[Hexbit], bytes: &mut [u8]) {
+pub fn hexbits_to_bytes(hexbits: &[Hexbit], bytes: &mut [u8]) {
     let mut bit_accumulator: u32 = 0;
     let mut bits_available: usize = 0;
     let mut byte_index = 0;

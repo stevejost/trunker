@@ -1,9 +1,9 @@
-//! Reed-Solomon decoders for P25 voice link control and crypto control.
+//! Reed-Solomon decoders for P25 voice data units.
 //!
 //! P25 uses three Reed-Solomon codes over GF(2^6):
-//! - **Short (24, 12, 13)**: protects LDU1 Link Control (corrects up to 6 hexbit errors)
+//! - **Short (24, 12, 13)**: protects LDU1 Link Control and TDULC (corrects up to 6 hexbit errors)
 //! - **Medium (24, 16, 9)**: protects LDU2 Crypto Control (corrects up to 4 hexbit errors)
-//! - Long (36, 20, 17): protects voice header (deferred — not needed for Phase 0)
+//! - **Long (36, 20, 17)**: protects HDU voice header (corrects up to 8 hexbit errors)
 //!
 //! Each operates on 6-bit symbols (hexbits) using the GF(2^6) Galois field.
 
@@ -17,6 +17,7 @@ use crate::p25::types::Hexbit;
 
 impl_polynomial_coefs!(ShortCoefs, 13, 24);
 impl_polynomial_coefs!(MediumCoefs, 9, 24);
+impl_polynomial_coefs!(LongCoefs, 17, 36);
 
 // ---------------------------------------------------------------------------
 // Short (24, 12, 13) code
@@ -101,6 +102,53 @@ pub mod medium {
 }
 
 // ---------------------------------------------------------------------------
+// Long (36, 20, 17) code
+// ---------------------------------------------------------------------------
+
+/// Encoding and decoding of the (36, 20, 17) long Reed-Solomon code.
+///
+/// Corrects up to 8 hexbit symbol errors. Used for voice header (HDU).
+pub mod long {
+    use super::*;
+
+    /// Transpose of the generator matrix P_HDR (16 parity rows x 20 data columns).
+    const GENERATOR: [[u8; 20]; 16] = [
+        [0o74, 0o04, 0o07, 0o26, 0o23, 0o24, 0o52, 0o55, 0o54, 0o74, 0o54, 0o51, 0o01, 0o11, 0o06, 0o34, 0o63, 0o71, 0o02, 0o34],
+        [0o37, 0o17, 0o23, 0o05, 0o73, 0o51, 0o33, 0o62, 0o51, 0o41, 0o70, 0o07, 0o65, 0o70, 0o02, 0o31, 0o43, 0o21, 0o01, 0o35],
+        [0o34, 0o50, 0o37, 0o07, 0o73, 0o25, 0o14, 0o56, 0o32, 0o30, 0o11, 0o72, 0o32, 0o05, 0o65, 0o01, 0o25, 0o70, 0o53, 0o02],
+        [0o06, 0o24, 0o46, 0o63, 0o41, 0o23, 0o02, 0o25, 0o65, 0o41, 0o03, 0o30, 0o70, 0o10, 0o11, 0o15, 0o44, 0o44, 0o74, 0o23],
+        [0o02, 0o11, 0o56, 0o63, 0o72, 0o22, 0o20, 0o73, 0o77, 0o43, 0o13, 0o65, 0o13, 0o65, 0o41, 0o44, 0o77, 0o56, 0o02, 0o21],
+        [0o07, 0o05, 0o75, 0o27, 0o34, 0o41, 0o06, 0o60, 0o12, 0o22, 0o22, 0o54, 0o44, 0o24, 0o20, 0o64, 0o63, 0o04, 0o14, 0o27],
+        [0o44, 0o30, 0o43, 0o63, 0o21, 0o74, 0o14, 0o15, 0o54, 0o51, 0o16, 0o06, 0o73, 0o15, 0o45, 0o16, 0o17, 0o30, 0o52, 0o22],
+        [0o64, 0o57, 0o45, 0o40, 0o51, 0o66, 0o25, 0o30, 0o13, 0o06, 0o57, 0o21, 0o24, 0o77, 0o42, 0o24, 0o17, 0o74, 0o74, 0o33],
+        [0o26, 0o33, 0o55, 0o06, 0o67, 0o74, 0o52, 0o13, 0o35, 0o64, 0o03, 0o36, 0o12, 0o22, 0o46, 0o52, 0o64, 0o04, 0o12, 0o64],
+        [0o14, 0o03, 0o21, 0o04, 0o16, 0o65, 0o23, 0o17, 0o32, 0o33, 0o45, 0o63, 0o52, 0o24, 0o54, 0o16, 0o14, 0o23, 0o57, 0o42],
+        [0o26, 0o02, 0o50, 0o40, 0o31, 0o70, 0o35, 0o20, 0o56, 0o03, 0o72, 0o50, 0o21, 0o24, 0o35, 0o06, 0o40, 0o71, 0o24, 0o05],
+        [0o44, 0o02, 0o31, 0o45, 0o74, 0o36, 0o74, 0o02, 0o12, 0o47, 0o31, 0o61, 0o55, 0o74, 0o12, 0o62, 0o74, 0o70, 0o63, 0o73],
+        [0o54, 0o15, 0o45, 0o47, 0o11, 0o67, 0o75, 0o70, 0o75, 0o27, 0o30, 0o64, 0o12, 0o07, 0o40, 0o20, 0o31, 0o63, 0o15, 0o51],
+        [0o13, 0o16, 0o27, 0o30, 0o21, 0o45, 0o75, 0o55, 0o01, 0o12, 0o56, 0o52, 0o35, 0o44, 0o64, 0o13, 0o72, 0o45, 0o42, 0o46],
+        [0o77, 0o25, 0o71, 0o75, 0o12, 0o64, 0o43, 0o14, 0o72, 0o55, 0o35, 0o01, 0o14, 0o07, 0o65, 0o55, 0o54, 0o56, 0o52, 0o73],
+        [0o05, 0o26, 0o62, 0o07, 0o21, 0o01, 0o27, 0o47, 0o63, 0o47, 0o22, 0o60, 0o72, 0o46, 0o33, 0o57, 0o06, 0o43, 0o33, 0o60],
+    ];
+
+    /// Compute 16 parity hexbits from the first 20 data hexbits.
+    pub fn encode(buf: &mut [Hexbit; 36]) {
+        let (data, parity) = buf.split_at_mut(20);
+        super::encode(data, parity, &GENERATOR);
+    }
+
+    /// Decode a 36-hexbit word, correcting up to 8 symbol errors.
+    ///
+    /// Returns `Some((data_slice, error_count))` on success, or `None` if
+    /// the errors are unrecoverable.
+    pub fn decode(buf: &mut [Hexbit; 36]) -> Option<(&[Hexbit], usize)> {
+        super::decode::<LongCoefs>(buf).map(move |(poly, err)| {
+            (super::extract_data(poly, &mut buf[..20]), err)
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Shared encode/decode implementation
 // ---------------------------------------------------------------------------
 
@@ -172,6 +220,7 @@ mod tests {
     fn validate_coefs() {
         ShortCoefs::default().validate();
         MediumCoefs::default().validate();
+        LongCoefs::default().validate();
     }
 
     #[test]
@@ -390,5 +439,134 @@ mod tests {
             Hexbit::new(50), Hexbit::new(0), Hexbit::new(0), Hexbit::new(0),
         ];
         assert_eq!(medium::decode(&mut w), None);
+    }
+
+    #[test]
+    fn long_encode_decode_clean() {
+        let mut buf = [Hexbit::default(); 36];
+        buf[0] = Hexbit::new(1);
+
+        long::encode(&mut buf);
+        let (data, err) = long::decode(&mut buf).unwrap();
+        assert_eq!(err, 0);
+        assert_eq!(data[0].bits(), 1);
+        for h in &data[1..] {
+            assert_eq!(h.bits(), 0);
+        }
+    }
+
+    #[test]
+    fn long_encode_decode_all_ones() {
+        let mut buf = [Hexbit::default(); 36];
+        for h in &mut buf[..20] {
+            *h = Hexbit::new(0o77);
+        }
+        long::encode(&mut buf);
+
+        let (data, err) = long::decode(&mut buf).unwrap();
+        assert_eq!(err, 0);
+        for h in data {
+            assert_eq!(h.bits(), 0o77);
+        }
+    }
+
+    #[test]
+    fn long_decode_corrects_8_errors() {
+        let mut buf = [Hexbit::default(); 36];
+        buf[0] = Hexbit::new(1);
+        long::encode(&mut buf);
+
+        // Introduce 8 errors at various positions.
+        buf[0] = Hexbit::new(0o00);
+        buf[2] = Hexbit::new(0o43);
+        buf[5] = Hexbit::new(0o21);
+        buf[10] = Hexbit::new(0o11);
+        buf[18] = Hexbit::new(0o67);
+        buf[22] = Hexbit::new(0o04);
+        buf[27] = Hexbit::new(0o12);
+        buf[30] = Hexbit::new(0o32);
+
+        let (data, err) = long::decode(&mut buf).unwrap();
+        assert_eq!(err, 8);
+        assert_eq!(data.len(), 20);
+        assert_eq!(data[0].bits(), 1);
+        for h in &data[1..] {
+            assert_eq!(h.bits(), 0);
+        }
+    }
+
+    #[test]
+    fn long_single_error_at_each_position() {
+        let data_vals: [u8; 20] = [0o77; 20];
+        let expected: Vec<Hexbit> = data_vals.iter().map(|&v| Hexbit::new(v)).collect();
+
+        for i in 0..36 {
+            let mut buf = [Hexbit::default(); 36];
+            for (j, &v) in data_vals.iter().enumerate() {
+                buf[j] = Hexbit::new(v);
+            }
+            long::encode(&mut buf);
+            buf[i] = Hexbit::new(0);
+
+            let (data, err) = long::decode(&mut buf).unwrap();
+            assert_eq!(err, 1, "position {i}");
+            assert_eq!(data, &expected[..], "data mismatch at position {i}");
+        }
+    }
+
+    #[test]
+    fn verify_long_generator_polynomial() {
+        let p = Polynomial::<LongCoefs>::new(
+            [Codeword::for_power(1), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(2), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(3), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(4), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(5), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(6), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(7), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(8), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(9), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(10), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(11), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(12), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(13), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(14), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(15), Codeword::for_power(0)].into_iter(),
+        ) * Polynomial::new(
+            [Codeword::for_power(16), Codeword::for_power(0)].into_iter(),
+        );
+
+        assert_eq!(p.degree().unwrap(), 16);
+        assert_eq!(p.coef(0).bits(), 0o60);
+        assert_eq!(p.coef(1).bits(), 0o73);
+        assert_eq!(p.coef(2).bits(), 0o46);
+        assert_eq!(p.coef(3).bits(), 0o51);
+        assert_eq!(p.coef(4).bits(), 0o73);
+        assert_eq!(p.coef(5).bits(), 0o05);
+        assert_eq!(p.coef(6).bits(), 0o42);
+        assert_eq!(p.coef(7).bits(), 0o64);
+        assert_eq!(p.coef(8).bits(), 0o33);
+        assert_eq!(p.coef(9).bits(), 0o22);
+        assert_eq!(p.coef(10).bits(), 0o27);
+        assert_eq!(p.coef(11).bits(), 0o21);
+        assert_eq!(p.coef(12).bits(), 0o23);
+        assert_eq!(p.coef(13).bits(), 0o02);
+        assert_eq!(p.coef(14).bits(), 0o35);
+        assert_eq!(p.coef(15).bits(), 0o34);
+        assert_eq!(p.coef(16).bits(), 0o01);
     }
 }

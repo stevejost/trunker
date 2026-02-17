@@ -17,6 +17,8 @@ use crate::p25::voice::frame::VoiceFrame;
 use crate::p25::voice::frame_group::{
     FrameGroupEvent, FrameGroupReceiver, FrameGroupType,
 };
+use crate::p25::voice::header::{VoiceHeaderFields, VoiceHeaderReceiver};
+use crate::p25::voice::terminator::VoiceLcTerminatorReceiver;
 
 /// Events produced by the data unit receiver.
 #[derive(Debug)]
@@ -31,6 +33,8 @@ pub enum ReceiverEvent {
     LinkControl(LinkControlFields),
     /// A decoded Crypto Control word (from LDU2).
     CryptoControl(CryptoControlFields),
+    /// A decoded voice header (from HDU).
+    VoiceHeader(VoiceHeaderFields),
     /// A 16-bit low-speed data fragment from a voice frame group.
     DataFragment(u16),
     /// A decode error occurred (logged, not fatal).
@@ -48,6 +52,10 @@ enum State {
     DecodeLcFrameGroup,
     /// Decoding an LDU2 (crypto control) frame group.
     DecodeCcFrameGroup,
+    /// Decoding a voice header (HDU).
+    DecodeHeader,
+    /// Decoding a voice LC terminator (TDULC).
+    DecodeLcTerminator,
     /// Skipping non-TSDU data unit until next sync.
     Skip,
 }
@@ -68,6 +76,10 @@ pub struct DataUnitReceiver {
     current_nid: Option<NetworkId>,
     /// Frame group receiver for LDU1/LDU2 voice data units.
     frame_group: Option<FrameGroupReceiver>,
+    /// Voice header receiver for HDU data units.
+    header_receiver: Option<VoiceHeaderReceiver>,
+    /// Voice LC terminator receiver for TDULC data units.
+    terminator_receiver: Option<VoiceLcTerminatorReceiver>,
 }
 
 impl DataUnitReceiver {
@@ -79,6 +91,8 @@ impl DataUnitReceiver {
             target: NID_DIBITS,
             current_nid: None,
             frame_group: None,
+            header_receiver: None,
+            terminator_receiver: None,
         }
     }
 
@@ -89,6 +103,8 @@ impl DataUnitReceiver {
         self.target = NID_DIBITS;
         self.current_nid = None;
         self.frame_group = None;
+        self.header_receiver = None;
+        self.terminator_receiver = None;
     }
 
     /// Feed one data dibit into the receiver.
@@ -96,11 +112,17 @@ impl DataUnitReceiver {
     /// Returns an event when a NID, TSBK, voice frame, or other
     /// component is decoded. Returns `None` when more dibits are needed.
     pub fn feed(&mut self, dibit: Dibit) -> Option<ReceiverEvent> {
-        // Voice frame group states bypass the buffer/target mechanism
-        // and feed directly to the frame group receiver.
+        // Streaming states bypass the buffer/target mechanism
+        // and feed directly to the appropriate receiver.
         match self.state {
             State::DecodeLcFrameGroup | State::DecodeCcFrameGroup => {
                 return self.feed_frame_group(dibit);
+            }
+            State::DecodeHeader => {
+                return self.feed_header(dibit);
+            }
+            State::DecodeLcTerminator => {
+                return self.feed_terminator(dibit);
             }
             _ => {}
         }
@@ -114,7 +136,10 @@ impl DataUnitReceiver {
         match self.state {
             State::CollectNid => self.process_nid(),
             State::CollectTsbk => self.process_tsbk(),
-            State::DecodeLcFrameGroup | State::DecodeCcFrameGroup => {
+            State::DecodeLcFrameGroup
+            | State::DecodeCcFrameGroup
+            | State::DecodeHeader
+            | State::DecodeLcTerminator => {
                 unreachable!("handled above")
             }
             State::Skip => {
@@ -158,9 +183,16 @@ impl DataUnitReceiver {
                         ));
                         self.state = State::DecodeCcFrameGroup;
                     }
+                    DataUnit::VoiceHeader => {
+                        self.header_receiver = Some(VoiceHeaderReceiver::new());
+                        self.state = State::DecodeHeader;
+                    }
+                    DataUnit::VoiceLcTerminator => {
+                        self.terminator_receiver =
+                            Some(VoiceLcTerminatorReceiver::new());
+                        self.state = State::DecodeLcTerminator;
+                    }
                     DataUnit::VoiceSimpleTerminator
-                    | DataUnit::VoiceLcTerminator
-                    | DataUnit::VoiceHeader
                     | DataUnit::DataPacket
                     | DataUnit::Unknown(_) => {
                         self.state = State::Skip;
@@ -263,6 +295,52 @@ impl DataUnitReceiver {
             FrameGroupEvent::CryptoControl(cc) => ReceiverEvent::CryptoControl(cc),
             FrameGroupEvent::DataFragment(frag) => ReceiverEvent::DataFragment(frag),
             FrameGroupEvent::Error(err) => ReceiverEvent::Error(err),
+        })
+    }
+
+    /// Feed a dibit into the active voice header receiver.
+    fn feed_header(&mut self, dibit: Dibit) -> Option<ReceiverEvent> {
+        let recv = match self.header_receiver.as_mut() {
+            Some(r) => r,
+            None => {
+                self.state = State::Skip;
+                return None;
+            }
+        };
+
+        let result = recv.feed(dibit)?;
+
+        if recv.is_done() {
+            self.state = State::Skip;
+            self.header_receiver = None;
+        }
+
+        Some(match result {
+            Ok(fields) => ReceiverEvent::VoiceHeader(fields),
+            Err(err) => ReceiverEvent::Error(err),
+        })
+    }
+
+    /// Feed a dibit into the active voice LC terminator receiver.
+    fn feed_terminator(&mut self, dibit: Dibit) -> Option<ReceiverEvent> {
+        let recv = match self.terminator_receiver.as_mut() {
+            Some(r) => r,
+            None => {
+                self.state = State::Skip;
+                return None;
+            }
+        };
+
+        let result = recv.feed(dibit)?;
+
+        if recv.is_done() {
+            self.state = State::Skip;
+            self.terminator_receiver = None;
+        }
+
+        Some(match result {
+            Ok(lc) => ReceiverEvent::LinkControl(lc),
+            Err(err) => ReceiverEvent::Error(err),
         })
     }
 }
@@ -395,10 +473,40 @@ mod tests {
     }
 
     #[test]
-    fn non_tsdu_nid_transitions_to_skip() {
+    fn hdu_nid_transitions_to_decode_header() {
         let mut receiver = DataUnitReceiver::new();
         // Voice header (DUID = 0x0)
         let nid_dibits = u64_to_dibits(make_nid_word(0x293, 0x0));
+
+        for dibit in &nid_dibits {
+            receiver.feed(*dibit);
+        }
+
+        assert!(!receiver.is_done());
+        assert!(matches!(receiver.state, State::DecodeHeader));
+        assert!(receiver.header_receiver.is_some());
+    }
+
+    #[test]
+    fn tdulc_nid_transitions_to_decode_lc_terminator() {
+        let mut receiver = DataUnitReceiver::new();
+        // TDULC (DUID = 0xF)
+        let nid_dibits = u64_to_dibits(make_nid_word(0x293, 0xF));
+
+        for dibit in &nid_dibits {
+            receiver.feed(*dibit);
+        }
+
+        assert!(!receiver.is_done());
+        assert!(matches!(receiver.state, State::DecodeLcTerminator));
+        assert!(receiver.terminator_receiver.is_some());
+    }
+
+    #[test]
+    fn simple_terminator_transitions_to_skip() {
+        let mut receiver = DataUnitReceiver::new();
+        // VoiceSimpleTerminator (DUID = 0x3)
+        let nid_dibits = u64_to_dibits(make_nid_word(0x293, 0x3));
 
         for dibit in &nid_dibits {
             receiver.feed(*dibit);

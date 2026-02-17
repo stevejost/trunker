@@ -68,6 +68,10 @@ pub enum P25Error {
     #[error("Reed-Solomon medium decode failed: unrecoverable errors in crypto control")]
     RsMediumUnrecoverable,
 
+    /// Reed-Solomon long (36,20,17) decode failed (voice header).
+    #[error("Reed-Solomon long decode failed: unrecoverable errors in voice header")]
+    RsLongUnrecoverable,
+
     /// Cyclic (16,8,5) decode failed (low-speed data fragment).
     #[error("cyclic decode failed: unrecoverable errors in low-speed data")]
     CyclicUnrecoverable,

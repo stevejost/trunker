@@ -46,6 +46,27 @@ pub const EXTRA_WORD_DIBITS: usize = 5;
 /// One 8-dibit fragment appears between frames 8 and 9 in each frame group.
 pub const DATA_FRAG_DIBITS: usize = 8;
 
+/// Number of dibits in each Golay-shortened word of a voice header (HDU).
+///
+/// Each 9-dibit (18-bit) word is decoded via shortened Golay(18,6,8) to one hexbit.
+pub const HEADER_WORD_DIBITS: usize = 9;
+
+/// Total hexbits in a voice header (HDU) after Golay decode.
+///
+/// 36 words x 1 hexbit per word = 36 hexbits, then RS long(36,20,17).
+pub const HEADER_HEXBITS: usize = 36;
+
+/// Number of decoded data bytes in a voice header (HDU).
+///
+/// RS long yields 20 data hexbits = 120 bits = 15 bytes.
+pub const HEADER_BYTES: usize = 15;
+
+/// Number of dibits in each Golay-extended word of a TDULC.
+///
+/// Each 12-dibit (24-bit) word is decoded via extended Golay(24,12,8),
+/// yielding 12 data bits = 2 hexbits.
+pub const LC_TERM_WORD_DIBITS: usize = 12;
+
 /// Frame sync pattern for HDU/TDU/LDU/TSDU data units (48 bits).
 pub const FRAME_SYNC: u64 = 0x5575_F5FF_77FF;
 

@@ -12,6 +12,7 @@ use crate::p25::types::Nac;
 use crate::p25::voice::control::LinkControlFields;
 use crate::p25::voice::crypto::CryptoControlFields;
 use crate::p25::voice::frame::VoiceFrame;
+use crate::p25::voice::header::VoiceHeaderFields;
 
 /// A TSBK serialized as a JSON object.
 #[derive(Debug, Serialize)]
@@ -458,6 +459,19 @@ pub enum VoiceEventFields {
         /// Initialization vector as hex string.
         initialization_vector: String,
     },
+    /// Voice header from HDU.
+    VoiceHeader {
+        /// Algorithm name.
+        algorithm: String,
+        /// Key ID.
+        key_id: u16,
+        /// Talkgroup ID.
+        talkgroup: u16,
+        /// Manufacturer ID.
+        manufacturer_id: u8,
+        /// Crypto initialization vector as hex string.
+        initialization_vector: String,
+    },
     /// Low-speed data fragment.
     DataFragment {
         /// The 16-bit decoded low-speed data value (two cyclic codewords).
@@ -535,6 +549,26 @@ pub fn crypto_control_json_line(nac: Nac, cc: &CryptoControlFields) -> String {
             key_id: cc.key_id(),
             initialization_vector: cc
                 .initialization_vector()
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect(),
+        },
+    };
+    serde_json::to_string(&event).expect("VoiceEventJson serialization should not fail")
+}
+
+/// Build a JSON line for a Voice Header event.
+pub fn voice_header_json_line(nac: Nac, hdr: &VoiceHeaderFields) -> String {
+    let event = VoiceEventJson {
+        nac: format!("0x{:03X}", nac.value()),
+        event_type: "voice_header",
+        fields: VoiceEventFields::VoiceHeader {
+            algorithm: format!("{}", hdr.algorithm()),
+            key_id: hdr.key_id(),
+            talkgroup: hdr.talkgroup().value(),
+            manufacturer_id: hdr.manufacturer_id(),
+            initialization_vector: hdr
+                .crypto_init()
                 .iter()
                 .map(|b| format!("{b:02X}"))
                 .collect(),
