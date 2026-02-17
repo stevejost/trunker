@@ -45,6 +45,20 @@ pub enum P25Error {
         /// The data unit identifier value.
         duid: u8,
     },
+
+    /// Golay standard (23,12,7) decoding failed on a voice frame chunk.
+    #[error("Golay decode failed on voice chunk u_{chunk}")]
+    VoiceGolayDecode {
+        /// Which chunk (0..=3) failed.
+        chunk: usize,
+    },
+
+    /// Hamming standard (15,11,3) decoding failed on a voice frame chunk.
+    #[error("Hamming decode failed on voice chunk u_{chunk}")]
+    VoiceHammingDecode {
+        /// Which chunk (4..=6) failed.
+        chunk: usize,
+    },
 }
 
 #[cfg(test)]
