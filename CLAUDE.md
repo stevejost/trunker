@@ -32,6 +32,14 @@ This project uses Agent Teams. Each team member has a defined role and responsib
 
 **Focus:** Implementation. Pull tasks from the PM's task list and write code. Follow the architecture rules, write tests (enforced by QA), and submit work for graybeard review. When stuck on RF/DSP questions, escalate to the RF Expert. When unsure about scope, check with the PM or PO.
 
+### 7. Backend Senior Engineer (WebSockets & RTC)
+
+**Focus:** Real-time communication infrastructure. Expert in WebSocket protocols, WebRTC, and low-latency streaming architectures. Designs and implements persistent connection management, pub/sub messaging patterns, binary framing protocols, and real-time data distribution. Understands connection lifecycle (handshake, heartbeat, reconnection), backpressure handling, and scaling strategies for concurrent connections. Consulted for any feature involving live data push, streaming APIs, or real-time client-server communication.
+
+### 8. Fullstack Senior Engineer
+
+**Focus:** End-to-end feature delivery across the stack. Proficient in multiple backend frameworks (Actix, Axum, Express, Django, etc.) and frontend technologies. Bridges the gap between backend services and client-facing interfaces. Evaluates framework trade-offs for new services, designs REST/GraphQL APIs, implements server-side rendering or SPA patterns as appropriate, and ensures consistent data flow from database to UI. Consulted when a feature spans multiple layers or when choosing a framework/stack for a new component.
+
 ### Team Interaction Rules
 
 - **PM** assigns tasks. Developers don't self-assign without PM approval.
