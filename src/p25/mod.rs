@@ -1,5 +1,6 @@
 //! P25 protocol decoder types and parsers.
 
+pub mod coding;
 pub mod consts;
 pub mod crc;
 pub mod error;
@@ -11,3 +12,4 @@ pub mod status;
 pub mod trellis;
 pub mod tsbk;
 pub mod types;
+pub mod voice;
