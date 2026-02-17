@@ -588,4 +588,54 @@ mod tests {
             _ => unreachable!(),
         }
     }
+
+    #[test]
+    fn ldu1_nid_transitions_to_decode_lc_frame_group() {
+        let mut receiver = DataUnitReceiver::new();
+        // LDU1: DUID = 0x5
+        let nid_dibits = u64_to_dibits(make_nid_word(0x293, 0x5));
+
+        let mut events = Vec::new();
+        for dibit in &nid_dibits {
+            if let Some(event) = receiver.feed(*dibit) {
+                events.push(event);
+            }
+        }
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ReceiverEvent::Nid(nid) => {
+                assert_eq!(nid.data_unit, DataUnit::VoiceLcFrameGroup);
+            }
+            other => panic!("expected Nid event, got {other:?}"),
+        }
+        assert!(!receiver.is_done());
+        assert!(matches!(receiver.state, State::DecodeLcFrameGroup));
+        assert!(receiver.frame_group.is_some());
+    }
+
+    #[test]
+    fn ldu2_nid_transitions_to_decode_cc_frame_group() {
+        let mut receiver = DataUnitReceiver::new();
+        // LDU2: DUID = 0xA
+        let nid_dibits = u64_to_dibits(make_nid_word(0x293, 0xA));
+
+        let mut events = Vec::new();
+        for dibit in &nid_dibits {
+            if let Some(event) = receiver.feed(*dibit) {
+                events.push(event);
+            }
+        }
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ReceiverEvent::Nid(nid) => {
+                assert_eq!(nid.data_unit, DataUnit::VoiceCcFrameGroup);
+            }
+            other => panic!("expected Nid event, got {other:?}"),
+        }
+        assert!(!receiver.is_done());
+        assert!(matches!(receiver.state, State::DecodeCcFrameGroup));
+        assert!(receiver.frame_group.is_some());
+    }
 }

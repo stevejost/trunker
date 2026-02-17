@@ -253,8 +253,10 @@ pub struct FrameGroupReceiver {
     group_type: FrameGroupType,
     /// Current state in the frame group structure.
     state: State,
-    /// Current voice frame dibit buffer.
-    frame_buffer: Vec<Dibit>,
+    /// Current voice frame dibit buffer (fixed-size, indexed by `frame_buffer_count`).
+    frame_buffer: [Dibit; VOICE_FRAME_DIBITS],
+    /// Number of dibits collected in the current frame.
+    frame_buffer_count: usize,
     /// Extra piece accumulator (persists across pieces).
     extra: ExtraReceiver,
     /// Data fragment decoder.
@@ -271,7 +273,8 @@ impl FrameGroupReceiver {
         Self {
             group_type,
             state: State::VoiceFrame,
-            frame_buffer: Vec::with_capacity(VOICE_FRAME_DIBITS),
+            frame_buffer: [Dibit::new(0); VOICE_FRAME_DIBITS],
+            frame_buffer_count: 0,
             extra: ExtraReceiver::new(),
             data_fragment: DataFragmentReceiver::new(),
             extra_dibit_count: 0,
@@ -299,24 +302,16 @@ impl FrameGroupReceiver {
 
     /// Collect a voice frame dibit.
     fn feed_voice_frame(&mut self, dibit: Dibit) -> Option<FrameGroupEvent> {
-        self.frame_buffer.push(dibit);
+        self.frame_buffer[self.frame_buffer_count] = dibit;
+        self.frame_buffer_count += 1;
 
-        if self.frame_buffer.len() < VOICE_FRAME_DIBITS {
+        if self.frame_buffer_count < VOICE_FRAME_DIBITS {
             return None;
         }
 
         // Decode the complete voice frame.
-        let dibits: Vec<Dibit> = self.frame_buffer.drain(..).collect();
-        let frame_array: [Dibit; VOICE_FRAME_DIBITS] = match dibits.try_into() {
-            Ok(arr) => arr,
-            Err(_) => {
-                self.state = State::Done;
-                return Some(FrameGroupEvent::Error(P25Error::PayloadTooShort {
-                    expected: VOICE_FRAME_DIBITS,
-                    actual: 0,
-                }));
-            }
-        };
+        let frame_array = self.frame_buffer;
+        self.frame_buffer_count = 0;
 
         self.frame_index += 1;
 
@@ -337,7 +332,7 @@ impl FrameGroupReceiver {
 
     /// Collect an extra piece dibit.
     fn feed_extra(&mut self, dibit: Dibit) -> Option<FrameGroupEvent> {
-        let piece_done = self.extra.feed(dibit);
+        self.extra.feed(dibit);
         self.extra_dibit_count += 1;
 
         if self.extra_dibit_count >= EXTRA_PIECE_DIBITS {
@@ -363,9 +358,6 @@ impl FrameGroupReceiver {
             }
         }
 
-        // piece_done but not all pieces collected yet: no event, just
-        // transition happens above.
-        let _ = piece_done;
         None
     }
 

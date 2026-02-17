@@ -460,7 +460,7 @@ pub enum VoiceEventFields {
     },
     /// Low-speed data fragment.
     DataFragment {
-        /// The 8-bit decoded data value.
+        /// The 16-bit decoded low-speed data value (two cyclic codewords).
         data: u16,
     },
 }
@@ -712,6 +712,138 @@ mod tests {
         let json = to_json_line(nac, &parsed, &table);
         let result: Result<serde_json::Value, _> = serde_json::from_str(&json);
         assert!(result.is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // Voice event JSON tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn json_voice_frame_output() {
+        let frame = VoiceFrame {
+            chunks: [0x123, 0x456, 0x789, 0xABC, 0x3FF, 0x555, 0x000, 0x7F],
+            errors: [0, 1, 0, 0, 0, 2, 0],
+        };
+        let nac = Nac::new(0x5FC);
+        let json = voice_frame_json_line(nac, &frame);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["nac"], "0x5FC");
+        assert_eq!(v["type"], "voice_frame");
+        assert_eq!(v["errors"], 3);
+        // 88 bits = 11 bytes → 22 hex chars
+        assert_eq!(v["imbe"].as_str().unwrap().len(), 22);
+        assert!(!json.contains('\n'));
+    }
+
+    #[test]
+    fn json_voice_frame_imbe_hex_all_zeros() {
+        let frame = VoiceFrame {
+            chunks: [0; 8],
+            errors: [0; 7],
+        };
+        let nac = Nac::new(0x293);
+        let json = voice_frame_json_line(nac, &frame);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["imbe"], "0000000000000000000000");
+    }
+
+    #[test]
+    fn json_link_control_group_voice() {
+        // Opcode 0x00 = GroupVoiceTraffic, talkgroup=0x0042, source=0x010203
+        let lc = LinkControlFields::new([
+            0x00, // opcode 0x00, not protected
+            0x00, // MFID
+            0x00, // service options
+            0x00, // reserved
+            0x00, 0x42, // talkgroup
+            0x01, 0x02, 0x03, // source unit
+        ]);
+        let nac = Nac::new(0x5FC);
+        let json = link_control_json_line(nac, &lc);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["nac"], "0x5FC");
+        assert_eq!(v["type"], "link_control");
+        assert_eq!(v["lc_opcode"], "GRP_V_CH_USR");
+        assert_eq!(v["talkgroup"], 0x0042);
+        assert_eq!(v["source"], 0x010203);
+        assert!(v["lc_data"].is_string());
+        assert!(!json.contains('\n'));
+    }
+
+    #[test]
+    fn json_link_control_non_group_voice_omits_talkgroup() {
+        // Opcode 0x0F = CallTermination — no talkgroup/source fields
+        let lc = LinkControlFields::new([
+            0x0F, // opcode 0x0F
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]);
+        let nac = Nac::new(0x293);
+        let json = link_control_json_line(nac, &lc);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["lc_opcode"], "CALL_TERM");
+        // talkgroup and source should be absent (skip_serializing_if = None)
+        assert!(v.get("talkgroup").is_none() || v["talkgroup"].is_null());
+        assert!(v.get("source").is_none() || v["source"].is_null());
+    }
+
+    #[test]
+    fn json_crypto_control_aes() {
+        let mut buf = [0u8; 12];
+        buf[0] = 0xAA; // IV byte 0
+        buf[8] = 0xBB; // IV byte 8
+        buf[9] = 0x84; // AES-256
+        buf[10] = 0xDE; // key_id high
+        buf[11] = 0xAD; // key_id low
+        let cc = CryptoControlFields::new(buf);
+        let nac = Nac::new(0x5FC);
+        let json = crypto_control_json_line(nac, &cc);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["nac"], "0x5FC");
+        assert_eq!(v["type"], "crypto_control");
+        assert_eq!(v["algorithm"], "AES-256");
+        assert_eq!(v["key_id"], 0xDEAD);
+        // IV is 9 bytes = 18 hex chars
+        assert_eq!(v["initialization_vector"].as_str().unwrap().len(), 18);
+        assert!(!json.contains('\n'));
+    }
+
+    #[test]
+    fn json_crypto_control_unencrypted() {
+        let mut buf = [0u8; 12];
+        buf[9] = 0x80; // Unencrypted
+        let cc = CryptoControlFields::new(buf);
+        let nac = Nac::new(0x293);
+        let json = crypto_control_json_line(nac, &cc);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["algorithm"], "Unencrypted");
+        assert_eq!(v["key_id"], 0);
+    }
+
+    #[test]
+    fn json_data_fragment() {
+        let nac = Nac::new(0x5FC);
+        let json = data_fragment_json_line(nac, 0xABCD);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["nac"], "0x5FC");
+        assert_eq!(v["type"], "data_fragment");
+        assert_eq!(v["data"], 0xABCD);
+        assert!(!json.contains('\n'));
+    }
+
+    #[test]
+    fn json_data_fragment_zero() {
+        let nac = Nac::new(0x293);
+        let json = data_fragment_json_line(nac, 0);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(v["data"], 0);
     }
 
     #[test]
