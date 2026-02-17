@@ -1,0 +1,54 @@
+name: Feature request
+description: Propose a new capability or enhancement
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area(s)
+      description: Select the logical work area(s)
+      multiple: true
+      options:
+        - area:rf-pipeline
+        - area:protocol
+        - area:tsbk
+        - area:cli
+        - area:docs
+        - area:metadata-output
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What user/problem need does this address?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the design at a high level.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Optional alternatives or tradeoffs.
+
