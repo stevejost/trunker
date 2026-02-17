@@ -310,6 +310,10 @@ impl MonitorState {
     }
 
     /// Insert or update a grant, tracking the channel in known_channels.
+    ///
+    /// Grants for channels that cannot be resolved to a frequency are
+    /// silently dropped — these are typically partner/peered system grants
+    /// whose identifier tables are not broadcast on this control channel.
     fn upsert_grant(
         &mut self,
         channel: u16,
@@ -318,6 +322,9 @@ impl MonitorState {
         source: Option<u32>,
     ) {
         let resolved_frequency = frequency.or_else(|| self.resolve_frequency(channel));
+        if resolved_frequency.is_none() {
+            return;
+        }
         self.track_channel(channel);
 
         let grant = self.active_grants.entry(channel).or_insert(ActiveGrant {
@@ -405,7 +412,7 @@ mod tests {
     #[test]
     fn grant_appears_after_group_voice_grant() {
         let mut state = default_state();
-        let json = r#"{"name":"GRP_V_CH_GRANT","channel":3851,"frequency":null,"talkgroup":100,"source":12345}"#;
+        let json = r#"{"name":"GRP_V_CH_GRANT","channel":3851,"frequency":851.5,"talkgroup":100,"source":12345}"#;
         state.process_message(json);
 
         assert!(state.active_grants.contains_key(&3851));
@@ -417,7 +424,7 @@ mod tests {
     #[test]
     fn grant_update_refreshes_both_channels() {
         let mut state = default_state();
-        let json = r#"{"name":"GRP_V_CH_GRANT_UPDT","channel_a":433,"frequency_a":null,"talkgroup_a":2821,"channel_b":135,"frequency_b":null,"talkgroup_b":3769}"#;
+        let json = r#"{"name":"GRP_V_CH_GRANT_UPDT","channel_a":433,"frequency_a":851.0,"talkgroup_a":2821,"channel_b":135,"frequency_b":852.0,"talkgroup_b":3769}"#;
         state.process_message(json);
 
         assert!(state.active_grants.contains_key(&433));
@@ -449,15 +456,29 @@ mod tests {
     }
 
     #[test]
-    fn identifier_table_populated_from_ident_up() {
+    fn identifier_table_populated_from_ch_params_updt() {
         let mut state = default_state();
-        let json = r#"{"name":"IDENT_UP","identifier":6,"bandwidth":12500,"transmit_offset":-45000000,"channel_spacing":6250,"base_frequency":851006250}"#;
+        let json = r#"{"name":"CH_PARAMS_UPDT","identifier":6,"bandwidth":12500,"transmit_offset":-45000000,"channel_spacing":6250,"base_frequency":851006250}"#;
         state.process_message(json);
 
         let entry = state.identifiers[6].unwrap();
         assert_eq!(entry.base_frequency, 851006250);
         assert_eq!(entry.channel_spacing, 6250);
         assert_eq!(entry.transmit_offset, -45000000);
+    }
+
+    #[test]
+    fn ident_up_raw_does_not_corrupt_table() {
+        let mut state = default_state();
+        // First populate identifier 0 with real data
+        let real = r#"{"name":"CH_PARAMS_UPDT","identifier":0,"bandwidth":12500,"transmit_offset":-45000000,"channel_spacing":6250,"base_frequency":851006250}"#;
+        state.process_message(real);
+        assert_eq!(state.identifiers[0].unwrap().base_frequency, 851006250);
+
+        // Now feed an IDENT_UP (0x20) raw packet — should NOT overwrite identifier 0
+        let raw = r#"{"nac":"0x5FC","opcode":"0x20","name":"IDENT_UP","last_block":true,"manufacturer_id":0,"data":"A300FFFFFD8A4270"}"#;
+        state.process_message(raw);
+        assert_eq!(state.identifiers[0].unwrap().base_frequency, 851006250);
     }
 
     #[test]
@@ -474,7 +495,7 @@ mod tests {
     #[test]
     fn grant_expiry_removes_stale_grants() {
         let mut state = MonitorState::new(Duration::from_millis(50));
-        let json = r#"{"name":"GRP_V_CH_GRANT","channel":100,"frequency":null,"talkgroup":200,"source":300}"#;
+        let json = r#"{"name":"GRP_V_CH_GRANT","channel":100,"frequency":851.0,"talkgroup":200,"source":300}"#;
         state.process_message(json);
         assert_eq!(state.active_grants.len(), 1);
 
@@ -487,7 +508,7 @@ mod tests {
     #[test]
     fn fresh_grant_not_expired() {
         let mut state = MonitorState::new(Duration::from_secs(10));
-        let json = r#"{"name":"GRP_V_CH_GRANT","channel":100,"frequency":null,"talkgroup":200,"source":300}"#;
+        let json = r#"{"name":"GRP_V_CH_GRANT","channel":100,"frequency":851.0,"talkgroup":200,"source":300}"#;
         state.process_message(json);
 
         state.expire_grants();
@@ -498,7 +519,7 @@ mod tests {
     fn resolve_frequency_with_ident_table() {
         let mut state = default_state();
         // Set up identifier 6 with known parameters
-        let json = r#"{"name":"IDENT_UP","identifier":6,"bandwidth":12500,"transmit_offset":-45000000,"channel_spacing":6250,"base_frequency":851006250}"#;
+        let json = r#"{"name":"CH_PARAMS_UPDT","identifier":6,"bandwidth":12500,"transmit_offset":-45000000,"channel_spacing":6250,"base_frequency":851006250}"#;
         state.process_message(json);
 
         // Channel 0x6009: identifier=6, index=9
@@ -541,23 +562,25 @@ mod tests {
     }
 
     #[test]
-    fn channel_list_sorted_by_channel_number_without_frequency() {
+    fn unresolvable_grants_are_dropped() {
         let mut state = default_state();
 
-        let grant1 = r#"{"name":"GRP_V_CH_GRANT","channel":500,"frequency":null,"talkgroup":100,"source":1}"#;
-        let grant2 = r#"{"name":"GRP_V_CH_GRANT","channel":200,"frequency":null,"talkgroup":200,"source":2}"#;
-        state.process_message(grant1);
-        state.process_message(grant2);
+        // Grants with no frequency and no identifier entry should be dropped
+        let grant = r#"{"name":"GRP_V_CH_GRANT","channel":500,"frequency":null,"talkgroup":100,"source":1}"#;
+        state.process_message(grant);
 
-        let list = state.channel_list();
-        assert_eq!(list.len(), 2);
-        assert_eq!(list[0].channel, 200);
-        assert_eq!(list[1].channel, 500);
+        assert!(state.active_grants.is_empty());
+        assert!(state.known_channels.is_empty());
     }
 
     #[test]
     fn known_channels_tracked_and_sorted() {
         let mut state = default_state();
+        state.identifiers[0] = Some(IdentifierEntry {
+            base_frequency: 851_000_000,
+            channel_spacing: 12_500,
+            transmit_offset: 0,
+        });
 
         let grant1 = r#"{"name":"GRP_V_CH_GRANT","channel":500,"frequency":null,"talkgroup":100,"source":1}"#;
         let grant2 = r#"{"name":"GRP_V_CH_GRANT","channel":200,"frequency":null,"talkgroup":200,"source":2}"#;
@@ -642,19 +665,19 @@ mod tests {
     }
 
     #[test]
-    fn grant_frequency_resolved_retroactively() {
+    fn grant_dropped_before_identifier_available() {
         let mut state = default_state();
 
-        // First, create a grant without frequency resolution
+        // Grant without frequency resolution is dropped (partner system filtering)
         let grant = r#"{"name":"GRP_V_CH_GRANT","channel":24585,"frequency":null,"talkgroup":100,"source":1}"#;
         state.process_message(grant);
-        assert!(state.active_grants[&24585].frequency.is_none());
+        assert!(!state.active_grants.contains_key(&24585));
 
         // Now add the identifier
-        let ident = r#"{"name":"IDENT_UP","identifier":6,"bandwidth":12500,"transmit_offset":0,"channel_spacing":12500,"base_frequency":851000000}"#;
+        let ident = r#"{"name":"CH_PARAMS_UPDT","identifier":6,"bandwidth":12500,"transmit_offset":0,"channel_spacing":12500,"base_frequency":851000000}"#;
         state.process_message(ident);
 
-        // Refresh the grant — now frequency should resolve
+        // Grant now resolves and is accepted
         let grant2 = r#"{"name":"GRP_V_CH_GRANT","channel":24585,"frequency":null,"talkgroup":100,"source":1}"#;
         state.process_message(grant2);
         // 0x6009 = ident 6, index 9 => 851000000 + 12500*9 = 851112500 Hz = 851.1125 MHz

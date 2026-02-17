@@ -53,12 +53,18 @@ fn install_panic_hook() {
 }
 
 /// Set up the terminal for TUI rendering.
+///
+/// Enables raw mode, switches to the alternate screen buffer, and clears
+/// it to ensure the TUI starts from a clean slate. The clear is necessary
+/// because piped stdin data can arrive before the alternate screen is
+/// fully established, pushing the viewport down.
 fn setup_terminal() -> Result<ratatui::Terminal<CrosstermBackend<io::Stdout>>, MonitorError> {
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
     crossterm::execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
-    let terminal = ratatui::Terminal::new(backend)?;
+    let mut terminal = ratatui::Terminal::new(backend)?;
+    terminal.clear()?;
     Ok(terminal)
 }
 
@@ -168,7 +174,7 @@ mod tests {
             .unwrap();
         sender
             .send(MonitorEvent::JsonLine(
-                r#"{"name":"GRP_V_CH_GRANT","channel":100,"frequency":null,"talkgroup":200,"source":300}"#.to_string(),
+                r#"{"name":"GRP_V_CH_GRANT","channel":100,"frequency":851.0,"talkgroup":200,"source":300}"#.to_string(),
             ))
             .unwrap();
         drop(sender);

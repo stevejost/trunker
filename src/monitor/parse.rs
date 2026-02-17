@@ -46,7 +46,7 @@ pub enum ParsedMessage {
         /// Talkgroup ID.
         talkgroup: u16,
     },
-    /// Identifier update (opcode 0x20, 0x34, or 0x3D).
+    /// Identifier update (opcode 0x34 or 0x3D).
     IdentifierUpdate {
         /// 4-bit band identifier.
         identifier: u8,
@@ -165,7 +165,7 @@ fn dispatch_message(name: &str, value: &Value) -> ParsedMessage {
         "GRP_V_CH_GRANT_UPDT_EXP" | "GRP_V_CH_GRANT_UPDT_EXPLICIT" => {
             parse_group_voice_grant_update_explicit(value)
         }
-        "IDENT_UP" | "CH_PARAMS_UPDT" | "IDEN_UP_VU" => parse_identifier_update(value),
+        "CH_PARAMS_UPDT" | "IDEN_UP_VU" => parse_identifier_update(value),
         "IDEN_UP_TDMA" => parse_identifier_update_tdma(value),
         "NET_STS_BCST" | "NET2_STS_BCST" => parse_network_status_broadcast(value),
         "RFSS_STS_BCST" => parse_rfss_status_broadcast(value),
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn parse_identifier_update() {
-        let json = r#"{"nac":"0x5FC","opcode":"0x20","name":"IDENT_UP","identifier":6,"bandwidth":12500,"transmit_offset":-45000000,"channel_spacing":6250,"base_frequency":851006250}"#;
+        let json = r#"{"nac":"0x5FC","opcode":"0x3D","name":"CH_PARAMS_UPDT","identifier":6,"bandwidth":12500,"transmit_offset":-45000000,"channel_spacing":6250,"base_frequency":851006250}"#;
         let msg = parse_json_line(json).unwrap();
         assert_eq!(
             msg,
@@ -389,6 +389,19 @@ mod tests {
                 base_frequency: 851006250,
                 channel_spacing: 6250,
                 transmit_offset: -45000000,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_ident_up_as_other() {
+        // Opcode 0x20 (IDENT_UP) now outputs raw data — monitor should not parse it as IdentifierUpdate
+        let json = r#"{"nac":"0x5FC","opcode":"0x20","name":"IDENT_UP","last_block":true,"manufacturer_id":0,"data":"A300FFFFFD8A4270"}"#;
+        let msg = parse_json_line(json).unwrap();
+        assert_eq!(
+            msg,
+            ParsedMessage::Other {
+                name: "IDENT_UP".to_string()
             }
         );
     }

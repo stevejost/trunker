@@ -56,18 +56,23 @@ impl SoapySource {
         gain: Option<f64>,
         running: Arc<AtomicBool>,
     ) -> Result<Self, SdrError> {
-        let device = open_device(device_args)?;
-        configure_frequency(&device, frequency_hz)?;
-        configure_sample_rate(&device, sample_rate_hz)?;
-        configure_gain(&device, gain)?;
-        let mut stream = create_stream(&device)?;
-        let mtu = stream
-            .mtu()
-            .map_err(|e| SdrError::StreamCreate(e.message))?;
-
-        stream
-            .activate(None)
-            .map_err(|e| SdrError::StreamActivate(e.message))?;
+        // Suppress stderr during init — SoapySDR and RTL-SDR drivers print
+        // noisy informational messages (e.g. "Found Rafael Micro R820T tuner")
+        // directly to stderr, which corrupts TUI displays when piped to a monitor.
+        let (stream, mtu) = suppress_stderr(|| -> Result<_, SdrError> {
+            let device = open_device(device_args)?;
+            configure_frequency(&device, frequency_hz)?;
+            configure_sample_rate(&device, sample_rate_hz)?;
+            configure_gain(&device, gain)?;
+            let mut stream = create_stream(&device)?;
+            let mtu = stream
+                .mtu()
+                .map_err(|e| SdrError::StreamCreate(e.message))?;
+            stream
+                .activate(None)
+                .map_err(|e| SdrError::StreamActivate(e.message))?;
+            Ok((stream, mtu))
+        })?;
 
         tracing::info!(
             device_args,
@@ -226,6 +231,35 @@ fn create_stream(device: &Device) -> Result<RxStream<Complex<f32>>, SdrError> {
     device
         .rx_stream::<Complex<f32>>(&[RX_CHANNEL])
         .map_err(|e| SdrError::StreamCreate(e.message))
+}
+
+/// Temporarily redirect stderr to `/dev/null`, run the closure, then restore it.
+///
+/// SoapySDR and hardware drivers (RTL-SDR, etc.) print informational messages
+/// directly to stderr via C `fprintf`. When `p25 cc` is piped to `p25 monitor`,
+/// these writes share the terminal and corrupt the TUI alternate screen.
+fn suppress_stderr<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let saved = unsafe { libc::dup(libc::STDERR_FILENO) };
+    if saved >= 0 {
+        let devnull =
+            unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY) };
+        if devnull >= 0 {
+            unsafe { libc::dup2(devnull, libc::STDERR_FILENO) };
+            unsafe { libc::close(devnull) };
+        }
+    }
+
+    let result = f();
+
+    if saved >= 0 {
+        unsafe { libc::dup2(saved, libc::STDERR_FILENO) };
+        unsafe { libc::close(saved) };
+    }
+
+    result
 }
 
 /// List all SoapySDR devices visible on the system.

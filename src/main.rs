@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -116,6 +117,14 @@ const STAGE2_DECIMATION: usize = 10;
 const TOTAL_DECIMATION: usize = STAGE1_DECIMATION * STAGE2_DECIMATION;
 
 fn main() -> Result<()> {
+    // When stdout is piped (e.g., `p25 cc ... | p25 monitor`), suppress all
+    // stderr output. SoapySDR and hardware drivers print directly to stderr
+    // and cannot be individually silenced, corrupting downstream TUI displays.
+    // To view logs while piping: `p25 cc ... 2>decode.log | p25 monitor`
+    if !std::io::stdout().is_terminal() {
+        suppress_stderr();
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -180,6 +189,20 @@ impl Iterator for SampleSource {
         match self {
             SampleSource::File(reader) => reader.next(),
             SampleSource::Soapy(source) => source.next(),
+        }
+    }
+}
+
+/// Permanently redirect stderr to `/dev/null`.
+///
+/// Called when stdout is piped so that stderr noise from SoapySDR drivers,
+/// tracing output, and overflow indicators doesn't corrupt downstream displays.
+fn suppress_stderr() {
+    unsafe {
+        let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY);
+        if devnull >= 0 {
+            libc::dup2(devnull, libc::STDERR_FILENO);
+            libc::close(devnull);
         }
     }
 }

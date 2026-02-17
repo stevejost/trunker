@@ -4,7 +4,7 @@
 //! and produce ratatui widgets. No side effects or state mutation.
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 
 use super::state::{ActivityEvent, ChannelDisplayEntry, MonitorState};
 
@@ -36,7 +36,7 @@ fn render_header(frame: &mut Frame, area: Rect, state: &MonitorState) {
     let site = info.site_id.map_or("---".to_string(), |v| v.to_string());
     let cc_freq = info
         .control_frequency
-        .map_or("---".to_string(), |f| format!("{f:.4}"));
+        .map_or("---".to_string(), |f| format!("{f:.5}"));
     let count = state.message_count;
 
     let text = format!(
@@ -66,7 +66,8 @@ fn render_middle(frame: &mut Frame, area: Rect, state: &MonitorState) {
 /// Render the channel list panel.
 ///
 /// Shows the control channel at the top, active grants with a bullet
-/// marker, and inactive channels dimmed.
+/// marker, and inactive channels dimmed. Uses `ListState` to clip
+/// content to the visible area — items that don't fit are hidden.
 fn render_channels(frame: &mut Frame, area: Rect, state: &MonitorState) {
     let entries = state.channel_list();
     let items: Vec<ListItem> = entries
@@ -74,15 +75,18 @@ fn render_channels(frame: &mut Frame, area: Rect, state: &MonitorState) {
         .map(|e| channel_list_item(e, state))
         .collect();
 
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(" Channels "));
-    frame.render_widget(list, area);
+    let block = Block::default().borders(Borders::ALL).title(" Channels ");
+    let list = List::new(items).block(block);
+
+    let mut list_state = ListState::default();
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 /// Build a single channel list item with appropriate styling.
 fn channel_list_item<'a>(entry: &ChannelDisplayEntry, state: &MonitorState) -> ListItem<'a> {
     let freq_str = entry
         .frequency
-        .map_or("???".to_string(), |f| format!("{f:.4}"));
+        .map_or("???".to_string(), |f| format!("{f:.5}"));
 
     let is_control = state.system_info.control_channel == Some(entry.channel);
 
@@ -105,19 +109,24 @@ fn channel_list_item<'a>(entry: &ChannelDisplayEntry, state: &MonitorState) -> L
     ListItem::new(Line::from(Span::styled(line, style)))
 }
 
-/// Render the activity feed panel.
+/// Render the activity feed panel, auto-scrolled to show newest events.
 ///
-/// Shows timestamped events with color coding: green for grants,
-/// red for emergencies, white for other events. Newest at bottom.
+/// Uses `ListState` with offset to scroll the list so the newest events
+/// are visible at the bottom. Events are color-coded: green for grants,
+/// red for emergencies, white for other events.
 fn render_activity(frame: &mut Frame, area: Rect, state: &MonitorState) {
-    let visible_height = area.height.saturating_sub(2) as usize;
     let events = &state.activity_events;
-    let skip = events.len().saturating_sub(visible_height);
+    let items: Vec<ListItem> = events.iter().map(activity_list_item).collect();
+    let total = items.len();
 
-    let items: Vec<ListItem> = events.iter().skip(skip).map(activity_list_item).collect();
+    let block = Block::default().borders(Borders::ALL).title(" Activity ");
+    let inner_height = block.inner(area).height as usize;
+    let list = List::new(items).block(block);
 
-    let list = List::new(items).block(Block::default().borders(Borders::ALL).title(" Activity "));
-    frame.render_widget(list, area);
+    // Scroll so newest events are visible at the bottom.
+    let offset = total.saturating_sub(inner_height);
+    let mut list_state = ListState::default().with_offset(offset);
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 /// Build a single activity list item with color coding.
@@ -128,7 +137,9 @@ fn activity_list_item(event: &ActivityEvent) -> ListItem<'_> {
 
     let style = if event.is_emergency {
         Style::default().fg(Color::Red).bold()
-    } else if event.description.starts_with("Grant:") || event.description.starts_with("Update:") {
+    } else if event.description.starts_with("Grant:")
+        || event.description.starts_with("Update:")
+    {
         Style::default().fg(Color::Green)
     } else {
         Style::default().fg(Color::White)
@@ -150,23 +161,26 @@ fn format_elapsed(seconds: u64) -> String {
 
 /// Render the raw log panel at the bottom.
 ///
-/// Shows raw JSON lines scrolling, newest at bottom.
+/// Shows raw JSON lines auto-scrolled to the bottom. Uses a `List` with
+/// `ListState` offset for proper clipping — long lines are truncated
+/// by ratatui at the widget boundary.
 fn render_log(frame: &mut Frame, area: Rect, state: &MonitorState) {
-    let visible_height = area.height.saturating_sub(2) as usize;
     let log = &state.raw_log;
-    let skip = log.len().saturating_sub(visible_height);
-
-    let text: String = log
+    let items: Vec<ListItem> = log
         .iter()
-        .skip(skip)
-        .map(|line| line.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
+        .map(|line| ListItem::new(Line::from(Span::raw(line.as_str()))))
+        .collect();
+    let total = items.len();
 
-    let paragraph = Paragraph::new(text)
+    let block = Block::default().borders(Borders::ALL).title(" Log ");
+    let inner_height = block.inner(area).height as usize;
+    let list = List::new(items)
         .style(Style::default().fg(Color::DarkGray))
-        .block(Block::default().borders(Borders::ALL).title(" Log "));
-    frame.render_widget(paragraph, area);
+        .block(block);
+
+    let offset = total.saturating_sub(inner_height);
+    let mut list_state = ListState::default().with_offset(offset);
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 #[cfg(test)]
@@ -305,6 +319,20 @@ mod tests {
         );
 
         let backend = ratatui::backend::TestBackend::new(120, 40);
+        let mut terminal = ratatui::Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &state)).unwrap();
+    }
+
+    #[test]
+    fn render_does_not_panic_with_overflow() {
+        let mut state = default_state();
+        for i in 0..100 {
+            state.process_message(&format!(
+                r#"{{"name":"GRP_V_CH_GRANT","channel":{i},"frequency":null,"talkgroup":{i},"source":{i}}}"#
+            ));
+        }
+
+        let backend = ratatui::backend::TestBackend::new(40, 12);
         let mut terminal = ratatui::Terminal::new(backend).unwrap();
         terminal.draw(|frame| render(frame, &state)).unwrap();
     }

@@ -27,6 +27,11 @@ pub enum TsbkOpcode {
     /// Deny response (0x16).
     DenyResponse,
     /// Identifier update (0x20).
+    ///
+    /// Note: On Motorola ASTRO 25 systems, 0x20 often carries vendor-specific
+    /// data that does not match the standard IDENT_UP bit layout. OP25 does
+    /// not parse this opcode. We route it to Unknown and rely on 0x33/0x3D
+    /// for identifier table updates.
     IdentifierUpdate,
     /// Group affiliation response (0x28).
     GroupAffiliationResponse,
@@ -362,9 +367,8 @@ fn parse_payload(header: &TsbkHeader, data: &[u8; 12]) -> TsbkPayload {
         TsbkOpcode::EmergencyAlarm => parse_emergency_alarm(data),
         TsbkOpcode::SndcpDataChannelGrant => parse_sndcp_data_channel_grant(data),
         TsbkOpcode::DenyResponse => parse_deny_response(data),
-        TsbkOpcode::IdentifierUpdate | TsbkOpcode::ChannelParametersUpdate => {
-            parse_identifier_update(data)
-        }
+        TsbkOpcode::ChannelParametersUpdate => parse_identifier_update(data),
+        TsbkOpcode::IdentifierUpdate => parse_unknown(data),
         TsbkOpcode::GroupAffiliationResponse => parse_group_affiliation_response(data),
         TsbkOpcode::UnitRegistrationResponse => parse_unit_registration_response(data),
         TsbkOpcode::UnitDeregistrationAck => parse_unit_deregistration_ack(data),
@@ -404,7 +408,7 @@ fn parse_group_voice_grant_update(data: &[u8; 12]) -> TsbkPayload {
     }
 }
 
-/// Parse identifier update (opcodes 0x20, 0x34, 0x3D).
+/// Parse identifier update (opcode 0x3D).
 ///
 /// Layout (bytes 2-9, 64 bits total):
 ///   Identifier: 4 bits
