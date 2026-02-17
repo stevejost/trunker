@@ -77,12 +77,9 @@ pub struct Codeword {
 impl Codeword {
     /// Construct a codeword from a 6-bit value.
     ///
-    /// # Panics
-    ///
-    /// Panics if `bits` has any of the upper 2 bits set.
+    /// Bits beyond the low 6 are silently masked off.
     pub fn new(bits: u8) -> Self {
-        assert!(bits >> 6 == 0, "codeword must be 6 bits, got 0x{bits:02X}");
-        Self { bits }
+        Self { bits: bits & 0x3F }
     }
 
     /// Construct the codeword alpha^power (modulo the field size).
