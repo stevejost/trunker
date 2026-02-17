@@ -1,14 +1,17 @@
-//! JSON serialization of decoded P25 TSBK messages.
+//! JSON serialization of decoded P25 messages.
 //!
-//! Converts parsed TSBKs into single-line JSON for stdout output.
-//! Channel numbers are resolved to frequencies when an identifier
-//! table is available.
+//! Converts parsed TSBKs and voice events into single-line JSON for
+//! stdout output. Channel numbers are resolved to frequencies when
+//! an identifier table is available.
 
 use serde::Serialize;
 
 use crate::p25::ident::IdentTable;
 use crate::p25::tsbk::{Tsbk, TsbkPayload};
 use crate::p25::types::Nac;
+use crate::p25::voice::control::LinkControlFields;
+use crate::p25::voice::crypto::CryptoControlFields;
+use crate::p25::voice::frame::VoiceFrame;
 
 /// A TSBK serialized as a JSON object.
 #[derive(Debug, Serialize)]
@@ -403,6 +406,151 @@ pub fn to_json_value(nac: Nac, tsbk: &Tsbk, ident_table: &IdentTable) -> TsbkJso
 pub fn to_json_line(nac: Nac, tsbk: &Tsbk, ident_table: &IdentTable) -> String {
     let value = to_json_value(nac, tsbk, ident_table);
     serde_json::to_string(&value).expect("TsbkJson serialization should not fail")
+}
+
+// ---------------------------------------------------------------------------
+// Voice event JSON
+// ---------------------------------------------------------------------------
+
+/// A voice event serialized as a JSON object.
+#[derive(Debug, Serialize)]
+pub struct VoiceEventJson {
+    /// Network access code (hex string).
+    pub nac: String,
+    /// Event type discriminator.
+    #[serde(rename = "type")]
+    pub event_type: &'static str,
+    /// Event-specific fields.
+    #[serde(flatten)]
+    pub fields: VoiceEventFields,
+}
+
+/// Voice event-specific fields for JSON output.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum VoiceEventFields {
+    /// IMBE voice frame.
+    VoiceFrame {
+        /// IMBE data as hex string (11 bytes = 88 bits).
+        imbe: String,
+        /// Total FEC errors corrected.
+        errors: usize,
+    },
+    /// Link Control from LDU1.
+    LinkControl {
+        /// LC opcode name.
+        lc_opcode: String,
+        /// Talkgroup (if group voice traffic).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        talkgroup: Option<u16>,
+        /// Source unit ID (if group voice traffic).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source: Option<u32>,
+        /// Raw LC payload as hex.
+        lc_data: String,
+    },
+    /// Crypto Control from LDU2.
+    CryptoControl {
+        /// Algorithm name.
+        algorithm: String,
+        /// Key ID.
+        key_id: u16,
+        /// Initialization vector as hex string.
+        initialization_vector: String,
+    },
+    /// Low-speed data fragment.
+    DataFragment {
+        /// The 8-bit decoded data value.
+        data: u16,
+    },
+}
+
+/// Pack IMBE voice frame chunks into a hex string.
+///
+/// The 88 bits are packed MSB-first from the 8 chunks:
+/// u_0..u_3 (12 bits each), u_4..u_6 (11 bits each), u_7 (7 bits).
+fn imbe_to_hex(frame: &VoiceFrame) -> String {
+    let mut bits: u128 = 0;
+    for i in 0..=3 {
+        bits = (bits << 12) | u128::from(frame.chunks[i]);
+    }
+    for i in 4..=6 {
+        bits = (bits << 11) | u128::from(frame.chunks[i]);
+    }
+    bits = (bits << 7) | u128::from(frame.chunks[7]);
+    // 88 bits = 11 bytes
+    let bytes = bits.to_be_bytes();
+    // u128 is 16 bytes; our 11 bytes start at offset 5
+    bytes[5..16]
+        .iter()
+        .map(|b| format!("{b:02X}"))
+        .collect()
+}
+
+/// Build a JSON line for a voice frame event.
+pub fn voice_frame_json_line(nac: Nac, frame: &VoiceFrame) -> String {
+    let event = VoiceEventJson {
+        nac: format!("0x{:03X}", nac.value()),
+        event_type: "voice_frame",
+        fields: VoiceEventFields::VoiceFrame {
+            imbe: imbe_to_hex(frame),
+            errors: frame.total_errors(),
+        },
+    };
+    serde_json::to_string(&event).expect("VoiceEventJson serialization should not fail")
+}
+
+/// Build a JSON line for a Link Control event.
+pub fn link_control_json_line(nac: Nac, lc: &LinkControlFields) -> String {
+    use crate::p25::voice::control::{GroupVoiceTraffic, LinkControlOpcode};
+
+    let opcode = lc.opcode();
+    let (talkgroup, source) = if opcode == LinkControlOpcode::GroupVoiceTraffic {
+        let gvt = GroupVoiceTraffic::new(*lc);
+        (Some(gvt.talkgroup().value()), Some(gvt.source_unit().value()))
+    } else {
+        (None, None)
+    };
+
+    let event = VoiceEventJson {
+        nac: format!("0x{:03X}", nac.value()),
+        event_type: "link_control",
+        fields: VoiceEventFields::LinkControl {
+            lc_opcode: format!("{opcode}"),
+            talkgroup,
+            source,
+            lc_data: lc.raw().iter().map(|b| format!("{b:02X}")).collect(),
+        },
+    };
+    serde_json::to_string(&event).expect("VoiceEventJson serialization should not fail")
+}
+
+/// Build a JSON line for a Crypto Control event.
+pub fn crypto_control_json_line(nac: Nac, cc: &CryptoControlFields) -> String {
+    let event = VoiceEventJson {
+        nac: format!("0x{:03X}", nac.value()),
+        event_type: "crypto_control",
+        fields: VoiceEventFields::CryptoControl {
+            algorithm: format!("{}", cc.algorithm()),
+            key_id: cc.key_id(),
+            initialization_vector: cc
+                .initialization_vector()
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect(),
+        },
+    };
+    serde_json::to_string(&event).expect("VoiceEventJson serialization should not fail")
+}
+
+/// Build a JSON line for a data fragment event.
+pub fn data_fragment_json_line(nac: Nac, data: u16) -> String {
+    let event = VoiceEventJson {
+        nac: format!("0x{:03X}", nac.value()),
+        event_type: "data_fragment",
+        fields: VoiceEventFields::DataFragment { data },
+    };
+    serde_json::to_string(&event).expect("VoiceEventJson serialization should not fail")
 }
 
 #[cfg(test)]

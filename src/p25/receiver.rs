@@ -1,15 +1,22 @@
 //! Data unit receiver state machine.
 //!
 //! Consumes data dibits (after status symbol removal) and decodes
-//! complete TSBK messages from TSDU data units.
+//! P25 data units: TSDU (trunking signaling), LDU1/LDU2 (voice),
+//! and terminator frames.
 
 use crate::p25::consts::{CODING_DIBITS, NID_DIBITS};
 use crate::p25::error::P25Error;
 use crate::p25::interleave;
-use crate::p25::nid::{self, NetworkId};
+use crate::p25::nid::{self, DataUnit, NetworkId};
 use crate::p25::trellis;
 use crate::p25::tsbk::{self, Tsbk};
 use crate::p25::types::Dibit;
+use crate::p25::voice::control::LinkControlFields;
+use crate::p25::voice::crypto::CryptoControlFields;
+use crate::p25::voice::frame::VoiceFrame;
+use crate::p25::voice::frame_group::{
+    FrameGroupEvent, FrameGroupReceiver, FrameGroupType,
+};
 
 /// Events produced by the data unit receiver.
 #[derive(Debug)]
@@ -18,6 +25,14 @@ pub enum ReceiverEvent {
     Nid(NetworkId),
     /// A TSBK was successfully decoded and CRC-verified.
     Tsbk(Tsbk),
+    /// A decoded IMBE voice frame.
+    VoiceFrame(VoiceFrame),
+    /// A decoded Link Control word (from LDU1).
+    LinkControl(LinkControlFields),
+    /// A decoded Crypto Control word (from LDU2).
+    CryptoControl(CryptoControlFields),
+    /// A 16-bit low-speed data fragment from a voice frame group.
+    DataFragment(u16),
     /// A decode error occurred (logged, not fatal).
     Error(P25Error),
 }
@@ -29,6 +44,10 @@ enum State {
     CollectNid,
     /// Collecting coded TSBK dibits (98 per block).
     CollectTsbk,
+    /// Decoding an LDU1 (link control) frame group.
+    DecodeLcFrameGroup,
+    /// Decoding an LDU2 (crypto control) frame group.
+    DecodeCcFrameGroup,
     /// Skipping non-TSDU data unit until next sync.
     Skip,
 }
@@ -37,9 +56,8 @@ enum State {
 ///
 /// After frame sync is detected externally, the caller feeds data
 /// dibits (with status symbols already removed) into this receiver.
-/// It collects the NID, dispatches based on DUID, and for TSDU
-/// data units, decodes one or more TSBKs.
-#[derive(Debug)]
+/// It collects the NID, dispatches based on DUID, and decodes TSDU
+/// (trunking signaling), LDU1/LDU2 (voice), and terminator data units.
 pub struct DataUnitReceiver {
     state: State,
     /// Buffer for accumulating dibits in the current phase.
@@ -48,6 +66,8 @@ pub struct DataUnitReceiver {
     target: usize,
     /// The NID from the current data unit.
     current_nid: Option<NetworkId>,
+    /// Frame group receiver for LDU1/LDU2 voice data units.
+    frame_group: Option<FrameGroupReceiver>,
 }
 
 impl DataUnitReceiver {
@@ -58,6 +78,7 @@ impl DataUnitReceiver {
             buffer: Vec::with_capacity(CODING_DIBITS),
             target: NID_DIBITS,
             current_nid: None,
+            frame_group: None,
         }
     }
 
@@ -67,13 +88,23 @@ impl DataUnitReceiver {
         self.buffer.clear();
         self.target = NID_DIBITS;
         self.current_nid = None;
+        self.frame_group = None;
     }
 
     /// Feed one data dibit into the receiver.
     ///
-    /// Returns an event when a NID or TSBK is decoded, or when an
-    /// error occurs. Returns `None` when more dibits are needed.
+    /// Returns an event when a NID, TSBK, voice frame, or other
+    /// component is decoded. Returns `None` when more dibits are needed.
     pub fn feed(&mut self, dibit: Dibit) -> Option<ReceiverEvent> {
+        // Voice frame group states bypass the buffer/target mechanism
+        // and feed directly to the frame group receiver.
+        match self.state {
+            State::DecodeLcFrameGroup | State::DecodeCcFrameGroup => {
+                return self.feed_frame_group(dibit);
+            }
+            _ => {}
+        }
+
         self.buffer.push(dibit);
 
         if self.buffer.len() < self.target {
@@ -83,6 +114,9 @@ impl DataUnitReceiver {
         match self.state {
             State::CollectNid => self.process_nid(),
             State::CollectTsbk => self.process_tsbk(),
+            State::DecodeLcFrameGroup | State::DecodeCcFrameGroup => {
+                unreachable!("handled above")
+            }
             State::Skip => {
                 // Discard dibits until externally reset via reset().
                 self.buffer.clear();
@@ -93,8 +127,8 @@ impl DataUnitReceiver {
 
     /// Whether the receiver has finished processing the current data unit.
     ///
-    /// Returns `true` when the receiver is in Skip state (non-TSDU) or
-    /// after the last TSBK block has been decoded.
+    /// Returns `true` when the receiver is in Skip state, after the
+    /// last TSBK has been decoded, or after a frame group is complete.
     pub fn is_done(&self) -> bool {
         matches!(self.state, State::Skip)
     }
@@ -107,13 +141,30 @@ impl DataUnitReceiver {
             Ok(nid) => {
                 self.current_nid = Some(nid);
 
-                if nid.data_unit.is_trunking_signaling() {
-                    // Switch to collecting TSBK coded dibits.
-                    self.state = State::CollectTsbk;
-                    self.target = CODING_DIBITS;
-                } else {
-                    // Non-TSDU: skip until next sync.
-                    self.state = State::Skip;
+                match nid.data_unit {
+                    DataUnit::TrunkingSignaling => {
+                        self.state = State::CollectTsbk;
+                        self.target = CODING_DIBITS;
+                    }
+                    DataUnit::VoiceLcFrameGroup => {
+                        self.frame_group = Some(FrameGroupReceiver::new(
+                            FrameGroupType::LinkControl,
+                        ));
+                        self.state = State::DecodeLcFrameGroup;
+                    }
+                    DataUnit::VoiceCcFrameGroup => {
+                        self.frame_group = Some(FrameGroupReceiver::new(
+                            FrameGroupType::CryptoControl,
+                        ));
+                        self.state = State::DecodeCcFrameGroup;
+                    }
+                    DataUnit::VoiceSimpleTerminator
+                    | DataUnit::VoiceLcTerminator
+                    | DataUnit::VoiceHeader
+                    | DataUnit::DataPacket
+                    | DataUnit::Unknown(_) => {
+                        self.state = State::Skip;
+                    }
                 }
 
                 Some(ReceiverEvent::Nid(nid))
@@ -184,6 +235,35 @@ impl DataUnitReceiver {
                 Some(ReceiverEvent::Error(err))
             }
         }
+    }
+
+    /// Feed a dibit into the active frame group receiver and translate
+    /// frame group events into receiver events.
+    fn feed_frame_group(&mut self, dibit: Dibit) -> Option<ReceiverEvent> {
+        let fg = match self.frame_group.as_mut() {
+            Some(fg) => fg,
+            None => {
+                self.state = State::Skip;
+                return None;
+            }
+        };
+
+        let event = fg.feed(dibit)?;
+
+        // Check if the frame group is finished after this event.
+        if fg.is_done() {
+            self.state = State::Skip;
+            self.frame_group = None;
+        }
+
+        // Translate frame group events to receiver events.
+        Some(match event {
+            FrameGroupEvent::VoiceFrame(vf) => ReceiverEvent::VoiceFrame(vf),
+            FrameGroupEvent::LinkControl(lc) => ReceiverEvent::LinkControl(lc),
+            FrameGroupEvent::CryptoControl(cc) => ReceiverEvent::CryptoControl(cc),
+            FrameGroupEvent::DataFragment(frag) => ReceiverEvent::DataFragment(frag),
+            FrameGroupEvent::Error(err) => ReceiverEvent::Error(err),
+        })
     }
 }
 

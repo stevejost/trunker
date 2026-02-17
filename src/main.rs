@@ -462,6 +462,22 @@ fn handle_receiver_event(p: &mut Pipeline, event: ReceiverEvent) {
             println!("{line}");
             p.tsbk_count += 1;
         }
+        ReceiverEvent::VoiceFrame(vf) => {
+            let line = json::voice_frame_json_line(p.current_nac, &vf);
+            println!("{line}");
+        }
+        ReceiverEvent::LinkControl(lc) => {
+            let line = json::link_control_json_line(p.current_nac, &lc);
+            println!("{line}");
+        }
+        ReceiverEvent::CryptoControl(cc) => {
+            let line = json::crypto_control_json_line(p.current_nac, &cc);
+            println!("{line}");
+        }
+        ReceiverEvent::DataFragment(frag) => {
+            let line = json::data_fragment_json_line(p.current_nac, frag);
+            println!("{line}");
+        }
         ReceiverEvent::Error(err) => {
             tracing::debug!(error = %err, "decode error");
         }

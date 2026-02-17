@@ -18,6 +18,7 @@ use super::descramble::{self, VOICE_FRAME_DIBITS};
 use super::pn::PseudoRandom;
 
 /// Decoded IMBE voice frame containing 88 bits of voice data.
+#[derive(Debug)]
 pub struct VoiceFrame {
     /// Data chunks u_0 through u_7.
     ///
