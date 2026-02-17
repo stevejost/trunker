@@ -1,0 +1,66 @@
+name: Technical debt
+description: Refactor, hardening, architecture cleanup, or quality debt
+title: "[Debt] "
+labels:
+  - enhancement
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area(s)
+      description: Select the logical work area(s)
+      multiple: true
+      options:
+        - area:rf-pipeline
+        - area:protocol
+        - area:tsbk
+        - area:cli
+        - area:docs
+        - area:metadata-output
+    validations:
+      required: true
+
+  - type: dropdown
+    id: debt_type
+    attributes:
+      label: Debt Type
+      options:
+        - type:correctness
+        - Performance
+        - Test coverage
+        - Developer experience
+        - Documentation quality
+    validations:
+      required: true
+
+  - type: textarea
+    id: debt
+    attributes:
+      label: Debt Description
+    validations:
+      required: true
+
+  - type: textarea
+    id: risk
+    attributes:
+      label: Risk If Not Addressed
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Proposed Scope
+      description: Keep scope concrete and bounded.
+    validations:
+      required: true
+
+  - type: textarea
+    id: test_plan
+    attributes:
+      label: Test Plan
+      placeholder: |
+        - Unit tests:
+        - Integration tests:
+        - Real-capture verification:
+
