@@ -319,7 +319,7 @@ fn decode_control_channel(
         sample_rate,
         modulation,
     };
-    let mut pipeline = ChannelPipeline::new(config);
+    let mut pipeline = ChannelPipeline::new(config)?;
     let mut ident_table = IdentTable::new();
     let mut tsbk_count: u64 = 0;
 
@@ -407,7 +407,7 @@ fn decode_trunked(
         sample_rate,
         modulation,
     };
-    let mut cc_pipeline = ChannelPipeline::new(config);
+    let mut cc_pipeline = ChannelPipeline::new(config)?;
     let mut ident_table = IdentTable::new();
     let mut tsbk_count: u64 = 0;
 

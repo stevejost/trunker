@@ -229,7 +229,7 @@ fn channel_pipeline_processes_noise_without_events() {
         sample_rate: 2_400_000,
         modulation: Modulation::Cqpsk,
     };
-    let mut pipeline = ChannelPipeline::new(config);
+    let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
     let mut event_count = 0;
     for i in 0..100_000_u32 {
@@ -257,7 +257,7 @@ fn both_modulation_types_process_cleanly() {
             sample_rate: 2_400_000,
             modulation,
         };
-        let mut pipeline = ChannelPipeline::new(config);
+        let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
         let silence = Complex::new(0.0, 0.0);
         for _ in 0..10_000 {

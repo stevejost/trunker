@@ -234,7 +234,17 @@ impl ChannelManager {
         // New channel: compute NCO offset and create pipeline.
         let offset_hz = frequency.hz() as f64 - self.center_frequency_hz;
         let nco = Nco::new(offset_hz, self.sample_rate);
-        let pipeline = ChannelPipeline::new(self.pipeline_config);
+        let pipeline = match ChannelPipeline::new(self.pipeline_config) {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::error!(
+                    frequency = %frequency,
+                    error = %e,
+                    "failed to create voice channel pipeline"
+                );
+                return;
+            }
+        };
 
         tracing::info!(
             frequency = %frequency,

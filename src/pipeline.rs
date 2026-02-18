@@ -18,19 +18,220 @@ use crate::p25::receiver::{DataUnitReceiver, ReceiverEvent};
 use crate::p25::status::{StatusDeinterleaver, StreamSymbol};
 use crate::p25::types::{Dibit, Nac};
 
-/// Two-stage decimation filter parameters.
-/// Stage 1: 2.4 MS/s -> 240 kHz (decimate by 10).
-const STAGE1_CUTOFF_HZ: f32 = 12_000.0;
-const STAGE1_TAPS: usize = 201;
-const STAGE1_DECIMATION: usize = 10;
+/// Target IF rate after all decimation: 24 kHz (5 samples/symbol at 4800 baud).
+const CHANNEL_RATE: u32 = 24_000;
 
-/// Stage 2: 240 kHz -> 24 kHz (decimate by 10).
-const STAGE2_CUTOFF_HZ: f32 = 6_250.0;
-const STAGE2_TAPS: usize = 61;
-const STAGE2_DECIMATION: usize = 10;
+/// Reference first-stage filter parameters at 2.4 MS/s.
+/// Used to compute proportional tap counts at other sample rates.
+const STAGE1_REF_RATE: f32 = 2_400_000.0;
+const STAGE1_REF_TAPS: f32 = 201.0;
 
-/// Total decimation factor (stage 1 * stage 2).
-pub const TOTAL_DECIMATION: usize = STAGE1_DECIMATION * STAGE2_DECIMATION;
+/// Reference final-stage filter parameters at 240 kHz.
+const FINAL_STAGE_REF_RATE: f32 = 240_000.0;
+const FINAL_STAGE_REF_TAPS: f32 = 61.0;
+
+/// Cutoff frequency for non-final stages (protects 12.5 kHz P25 channel).
+const NON_FINAL_CUTOFF_HZ: f32 = 12_000.0;
+
+/// Cutoff frequency for the final stage (half of 12.5 kHz channel bandwidth).
+const FINAL_CUTOFF_HZ: f32 = 6_250.0;
+
+/// Maximum decimation factor per stage.
+const MAX_STAGE_FACTOR: usize = 25;
+
+/// Error type for decimation configuration.
+#[derive(Debug, thiserror::Error)]
+pub enum DecimationError {
+    /// Sample rate is not an integer multiple of the 24 kHz channel rate.
+    #[error("sample rate {sample_rate} Hz is not a multiple of 24000; try {nearest_lower} or {nearest_higher}")]
+    NotDivisible {
+        /// The invalid sample rate.
+        sample_rate: u32,
+        /// Nearest valid rate below.
+        nearest_lower: u32,
+        /// Nearest valid rate above.
+        nearest_higher: u32,
+    },
+    /// Total decimation factor cannot be split into stages of 25x or less.
+    #[error("cannot factor total decimation {total}x into stages of 25x or less")]
+    NoValidFactoring {
+        /// The unfactorable total decimation.
+        total: usize,
+    },
+}
+
+/// Configuration for one decimation filter stage.
+#[derive(Debug, Clone)]
+pub struct DecimationStage {
+    /// Decimation factor for this stage.
+    pub decimation_factor: usize,
+    /// Low-pass filter cutoff frequency in hertz.
+    pub cutoff_hz: f32,
+    /// Number of FIR filter taps.
+    pub num_taps: usize,
+    /// Input sample rate for this stage in hertz.
+    pub input_rate: f32,
+}
+
+/// Computed decimation configuration for a given input sample rate.
+#[derive(Debug, Clone)]
+pub struct DecimationConfig {
+    /// Ordered list of decimation stages (first applied first).
+    pub stages: Vec<DecimationStage>,
+}
+
+impl DecimationConfig {
+    /// Compute the decimation stages required to reduce `sample_rate` to 24 kHz.
+    ///
+    /// Returns an error if the sample rate is not a multiple of 24000 or
+    /// cannot be factored into stages of 25x or less.
+    pub fn compute(sample_rate: u32) -> Result<Self, DecimationError> {
+        if sample_rate == 0 || !sample_rate.is_multiple_of(CHANNEL_RATE) {
+            let nearest_lower = (sample_rate / CHANNEL_RATE) * CHANNEL_RATE;
+            let nearest_higher = nearest_lower + CHANNEL_RATE;
+            return Err(DecimationError::NotDivisible {
+                sample_rate,
+                nearest_lower,
+                nearest_higher,
+            });
+        }
+
+        let total = (sample_rate / CHANNEL_RATE) as usize;
+
+        let factors = factor_into_stages(total)?;
+        let stage_count = factors.len();
+
+        let mut stages = Vec::with_capacity(stage_count);
+        let mut current_rate = sample_rate as f32;
+
+        for (i, &factor) in factors.iter().enumerate() {
+            let is_final = i == stage_count - 1;
+            let is_single = stage_count == 1;
+
+            let cutoff_hz = if is_final || is_single {
+                FINAL_CUTOFF_HZ
+            } else {
+                NON_FINAL_CUTOFF_HZ
+            };
+
+            let num_taps = if is_single || i == 0 {
+                compute_taps(current_rate, STAGE1_REF_RATE, STAGE1_REF_TAPS)
+            } else {
+                compute_taps(current_rate, FINAL_STAGE_REF_RATE, FINAL_STAGE_REF_TAPS)
+            };
+
+            stages.push(DecimationStage {
+                decimation_factor: factor,
+                cutoff_hz,
+                num_taps,
+                input_rate: current_rate,
+            });
+
+            current_rate /= factor as f32;
+        }
+
+        Ok(Self { stages })
+    }
+
+    /// Total decimation factor across all stages.
+    pub fn total_decimation(&self) -> usize {
+        self.stages.iter().map(|s| s.decimation_factor).product()
+    }
+
+    /// First stage decimation factor.
+    pub fn stage1_decimation(&self) -> usize {
+        self.stages[0].decimation_factor
+    }
+
+    /// Last stage decimation factor (second stage for a two-stage config).
+    pub fn stage2_decimation(&self) -> usize {
+        self.stages.last().unwrap().decimation_factor
+    }
+
+    /// First stage tap count.
+    pub fn stage1_taps(&self) -> usize {
+        self.stages[0].num_taps
+    }
+
+    /// Last stage tap count.
+    pub fn stage2_taps(&self) -> usize {
+        self.stages.last().unwrap().num_taps
+    }
+
+    /// First stage cutoff frequency in hertz.
+    pub fn stage1_cutoff_hz(&self) -> f32 {
+        self.stages[0].cutoff_hz
+    }
+
+    /// Last stage cutoff frequency in hertz.
+    pub fn stage2_cutoff_hz(&self) -> f32 {
+        self.stages.last().unwrap().cutoff_hz
+    }
+}
+
+/// Compute the number of FIR taps scaled proportionally from a reference.
+///
+/// Maintains the same transition bandwidth as the reference configuration
+/// at different sample rates. Returns an odd number >= 51.
+fn compute_taps(input_rate: f32, ref_rate: f32, ref_taps: f32) -> usize {
+    let scaled = ref_taps * input_rate / ref_rate;
+    let rounded = scaled.round() as usize;
+    // Ensure odd and at least 51.
+    let at_least_51 = rounded.max(51);
+    if at_least_51.is_multiple_of(2) {
+        at_least_51 + 1
+    } else {
+        at_least_51
+    }
+}
+
+/// Factor a total decimation into stages where each factor is <= 25.
+fn factor_into_stages(total: usize) -> Result<Vec<usize>, DecimationError> {
+    if total <= MAX_STAGE_FACTOR {
+        return Ok(vec![total]);
+    }
+
+    // Try two-factor decomposition: find largest factor2 <= 25 where
+    // total / factor2 is also <= 25.
+    if let Some((f1, f2)) = find_two_factors(total) {
+        return Ok(vec![f1, f2]);
+    }
+
+    // Try three-factor decomposition.
+    // Pull out the largest factor <= 25, then decompose the remainder.
+    for f3 in (2..=MAX_STAGE_FACTOR).rev() {
+        if total.is_multiple_of(f3) {
+            let remainder = total / f3;
+            if let Some((f1, f2)) = find_two_factors(remainder) {
+                return Ok(vec![f1, f2, f3]);
+            }
+        }
+    }
+
+    Err(DecimationError::NoValidFactoring { total })
+}
+
+/// Find two factors of `n` where both are <= 25.
+/// Returns (larger_factor, smaller_factor) so stage 1 decimates more.
+fn find_two_factors(n: usize) -> Option<(usize, usize)> {
+    // Try factor2 = 10 first (common RTL-SDR friendly value).
+    if n.is_multiple_of(10) && n / 10 <= MAX_STAGE_FACTOR {
+        let f1 = n / 10;
+        return Some((f1, 10));
+    }
+
+    // Search for the largest factor <= 25 whose complement is also <= 25.
+    for f2 in (2..=MAX_STAGE_FACTOR).rev() {
+        if n.is_multiple_of(f2) {
+            let f1 = n / f2;
+            if f1 <= MAX_STAGE_FACTOR {
+                return Some((f1, f2));
+            }
+        }
+    }
+
+    None
+}
 
 /// Modulation type for demodulation path selection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,8 +272,8 @@ pub struct PipelineConfig {
 /// Does **not** contain the identifier table or NAC state -- those are
 /// managed by the orchestrator that owns this pipeline.
 pub struct ChannelPipeline {
-    filter_stage1: DecimatingFilter,
-    filter_stage2: DecimatingFilter,
+    filters: Vec<DecimatingFilter>,
+    total_decimation: usize,
     demod_path: DemodPath,
     status_deinterleaver: StatusDeinterleaver,
     receiver: DataUnitReceiver,
@@ -85,8 +286,24 @@ pub struct ChannelPipeline {
 
 impl ChannelPipeline {
     /// Build a new pipeline with the given configuration.
-    pub fn new(config: PipelineConfig) -> Self {
-        let output_rate = config.sample_rate as f32 / TOTAL_DECIMATION as f32;
+    ///
+    /// Returns an error if the sample rate cannot be decimated to 24 kHz.
+    pub fn new(config: PipelineConfig) -> Result<Self, DecimationError> {
+        let decimation = DecimationConfig::compute(config.sample_rate)?;
+        let output_rate = config.sample_rate as f32 / decimation.total_decimation() as f32;
+
+        let filters: Vec<DecimatingFilter> = decimation
+            .stages
+            .iter()
+            .map(|stage| {
+                DecimatingFilter::new(
+                    stage.cutoff_hz,
+                    stage.input_rate,
+                    stage.num_taps,
+                    stage.decimation_factor,
+                )
+            })
+            .collect();
 
         let demod_path = match config.modulation {
             Modulation::C4fm => {
@@ -107,26 +324,16 @@ impl ChannelPipeline {
             },
         };
 
-        Self {
-            filter_stage1: DecimatingFilter::new(
-                STAGE1_CUTOFF_HZ,
-                config.sample_rate as f32,
-                STAGE1_TAPS,
-                STAGE1_DECIMATION,
-            ),
-            filter_stage2: DecimatingFilter::new(
-                STAGE2_CUTOFF_HZ,
-                config.sample_rate as f32 / STAGE1_DECIMATION as f32,
-                STAGE2_TAPS,
-                STAGE2_DECIMATION,
-            ),
+        Ok(Self {
+            filters,
+            total_decimation: decimation.total_decimation(),
             demod_path,
             status_deinterleaver: StatusDeinterleaver::new(),
             receiver: DataUnitReceiver::new(),
             synced: false,
             current_nac: Nac::new(0),
             sample_count: 0,
-        }
+        })
     }
 
     /// Process one IQ sample through the full pipeline.
@@ -136,9 +343,12 @@ impl ChannelPipeline {
     pub fn process_sample(&mut self, sample: Complex<f32>) -> Option<ReceiverEvent> {
         self.sample_count += 1;
 
-        // Two-stage decimation: 2.4 MS/s -> 240 kHz -> 24 kHz.
-        let stage1_out = self.filter_stage1.process(sample)?;
-        let filtered = self.filter_stage2.process(stage1_out)?;
+        // Chain through all decimation filter stages.
+        let mut current = sample;
+        for filter in &mut self.filters {
+            current = filter.process(current)?;
+        }
+        let filtered = current;
 
         // Demodulate through the selected path.
         let event = match &mut self.demod_path {
@@ -186,7 +396,7 @@ impl ChannelPipeline {
         };
         tracing::debug!(
             sample = self.sample_count,
-            baseband_sample = self.sample_count / TOTAL_DECIMATION as u64,
+            baseband_sample = self.sample_count / self.total_decimation as u64,
             upper,
             mid,
             lower,
@@ -233,7 +443,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::C4fm,
         };
-        let pipeline = ChannelPipeline::new(config);
+        let pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
         assert_eq!(pipeline.sample_count(), 0);
         assert_eq!(pipeline.current_nac(), Nac::new(0));
     }
@@ -244,7 +454,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::Cqpsk,
         };
-        let pipeline = ChannelPipeline::new(config);
+        let pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
         assert_eq!(pipeline.sample_count(), 0);
     }
 
@@ -254,7 +464,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::Cqpsk,
         };
-        let mut pipeline = ChannelPipeline::new(config);
+        let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
         let silence = Complex::new(0.0, 0.0);
         let mut event_count = 0;
@@ -274,7 +484,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::C4fm,
         };
-        let mut pipeline = ChannelPipeline::new(config);
+        let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
         // Feed pseudo-random noise to exercise the full path.
         for i in 0..50_000u32 {
@@ -284,5 +494,34 @@ mod tests {
         }
 
         assert_eq!(pipeline.sample_count(), 50_000);
+    }
+
+    #[test]
+    fn decimation_config_2400k_regression() {
+        let config = DecimationConfig::compute(2_400_000).expect("2.4M should be valid");
+        assert_eq!(config.stages.len(), 2);
+        assert_eq!(config.total_decimation(), 100);
+        assert_eq!(config.stages[0].decimation_factor, 10);
+        assert_eq!(config.stages[1].decimation_factor, 10);
+        assert_eq!(config.stages[0].num_taps, 201);
+        assert_eq!(config.stages[1].num_taps, 61);
+        assert!((config.stages[0].cutoff_hz - 12_000.0).abs() < 0.01);
+        assert!((config.stages[1].cutoff_hz - 6_250.0).abs() < 0.01);
+        assert!((config.stages[0].input_rate - 2_400_000.0).abs() < 1.0);
+        assert!((config.stages[1].input_rate - 240_000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn decimation_config_rejects_invalid_rate() {
+        assert!(DecimationConfig::compute(2_000_000).is_err());
+        assert!(DecimationConfig::compute(0).is_err());
+    }
+
+    #[test]
+    fn decimation_config_single_stage() {
+        // 48000 / 24000 = 2, single stage.
+        let config = DecimationConfig::compute(48_000).expect("48k should be valid");
+        assert_eq!(config.stages.len(), 1);
+        assert_eq!(config.total_decimation(), 2);
     }
 }
