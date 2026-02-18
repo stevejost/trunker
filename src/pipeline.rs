@@ -161,52 +161,49 @@ fn compute_taps(input_rate: f32, ref_rate: f32, ref_taps: f32) -> usize {
     }
 }
 
+/// Preferred final-stage factors, ordered by filter quality.
+/// Smaller factors in the final stage give better stopband attenuation
+/// with fewer taps.
+const PREFERRED_SMALL_FACTORS: &[usize] = &[10, 8, 5, 4, 3, 2];
+const PREFERRED_LARGE_FACTORS: &[usize] = &[20, 15, 12, 10, 8, 5, 4, 3, 2];
+
 /// Factor a total decimation into stages where each factor is <= 25.
+///
+/// Uses a two-pass approach: first tries final factors <= 10 for best
+/// filter quality, then allows final factors up to 20. Falls back to
+/// three stages if no two-stage decomposition works.
 fn factor_into_stages(total: usize) -> Result<Vec<usize>, DecimationError> {
     if total <= MAX_STAGE_FACTOR {
         return Ok(vec![total]);
     }
 
-    // Try two-factor decomposition: find largest factor2 <= 25 where
-    // total / factor2 is also <= 25.
-    if let Some((f1, f2)) = find_two_factors(total) {
-        return Ok(vec![f1, f2]);
+    // Pass 1: two-stage with small final factor (<= 10).
+    for &f in PREFERRED_SMALL_FACTORS {
+        if total.is_multiple_of(f) && total / f <= MAX_STAGE_FACTOR {
+            return Ok(vec![total / f, f]);
+        }
     }
 
-    // Try three-factor decomposition.
-    // Pull out the largest factor <= 25, then decompose the remainder.
-    for f3 in (2..=MAX_STAGE_FACTOR).rev() {
+    // Pass 2: two-stage with larger final factor (<= 20).
+    for &f in PREFERRED_LARGE_FACTORS {
+        if total.is_multiple_of(f) && total / f <= MAX_STAGE_FACTOR {
+            return Ok(vec![total / f, f]);
+        }
+    }
+
+    // Pass 3: three-stage fallback.
+    for &f3 in PREFERRED_SMALL_FACTORS {
         if total.is_multiple_of(f3) {
-            let remainder = total / f3;
-            if let Some((f1, f2)) = find_two_factors(remainder) {
-                return Ok(vec![f1, f2, f3]);
+            let remaining = total / f3;
+            for &f2 in PREFERRED_SMALL_FACTORS {
+                if remaining.is_multiple_of(f2) && remaining / f2 <= MAX_STAGE_FACTOR {
+                    return Ok(vec![remaining / f2, f2, f3]);
+                }
             }
         }
     }
 
     Err(DecimationError::NoValidFactoring { total })
-}
-
-/// Find two factors of `n` where both are <= 25.
-/// Returns (larger_factor, smaller_factor) so stage 1 decimates more.
-fn find_two_factors(n: usize) -> Option<(usize, usize)> {
-    // Try factor2 = 10 first (common RTL-SDR friendly value).
-    if n.is_multiple_of(10) && n / 10 <= MAX_STAGE_FACTOR {
-        let f1 = n / 10;
-        return Some((f1, 10));
-    }
-
-    // Search for the largest factor <= 25 whose complement is also <= 25.
-    for f2 in (2..=MAX_STAGE_FACTOR).rev() {
-        if n.is_multiple_of(f2) {
-            let f1 = n / f2;
-            if f1 <= MAX_STAGE_FACTOR {
-                return Some((f1, f2));
-            }
-        }
-    }
-
-    None
 }
 
 /// Modulation type for demodulation path selection.
