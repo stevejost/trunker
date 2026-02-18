@@ -14,6 +14,16 @@ use trunker::pipeline::{
 /// Target channel rate: always 24 kHz (5 samples/symbol at 4800 baud).
 const CHANNEL_RATE: u32 = 24_000;
 
+/// Helper: first stage of a multi-stage config.
+fn first_stage(config: &DecimationConfig) -> &trunker::pipeline::DecimationStage {
+    &config.stages[0]
+}
+
+/// Helper: last stage of a multi-stage config.
+fn last_stage(config: &DecimationConfig) -> &trunker::pipeline::DecimationStage {
+    config.stages.last().expect("stages should not be empty in tests")
+}
+
 // ---------------------------------------------------------------------------
 // Regression: 2.4 MS/s must produce exact original hardcoded values
 // ---------------------------------------------------------------------------
@@ -23,19 +33,19 @@ fn regression_2400k_matches_original_constants() {
     let config = DecimationConfig::compute(2_400_000).expect("2.4M should be valid");
 
     assert_eq!(config.total_decimation(), 100, "total decimation");
-    assert_eq!(config.stage1_decimation(), 10, "stage 1 decimation");
-    assert_eq!(config.stage2_decimation(), 10, "stage 2 decimation");
-    assert_eq!(config.stage1_taps(), 201, "stage 1 taps (regression)");
-    assert_eq!(config.stage2_taps(), 61, "stage 2 taps (regression)");
+    assert_eq!(first_stage(&config).decimation_factor, 10, "stage 1 decimation");
+    assert_eq!(last_stage(&config).decimation_factor, 10, "stage 2 decimation");
+    assert_eq!(first_stage(&config).num_taps, 201, "stage 1 taps (regression)");
+    assert_eq!(last_stage(&config).num_taps, 61, "stage 2 taps (regression)");
     assert!(
-        (config.stage1_cutoff_hz() - 12_000.0).abs() < 0.01,
+        (first_stage(&config).cutoff_hz - 12_000.0).abs() < 0.01,
         "stage 1 cutoff: got {}",
-        config.stage1_cutoff_hz()
+        first_stage(&config).cutoff_hz
     );
     assert!(
-        (config.stage2_cutoff_hz() - 6_250.0).abs() < 0.01,
+        (last_stage(&config).cutoff_hz - 6_250.0).abs() < 0.01,
         "stage 2 cutoff: got {}",
-        config.stage2_cutoff_hz()
+        last_stage(&config).cutoff_hz
     );
 }
 
@@ -48,11 +58,11 @@ fn valid_rate_2880k() {
     let config = DecimationConfig::compute(2_880_000).expect("2.88M should be valid");
     assert_eq!(config.total_decimation(), 120);
     assert_eq!(
-        config.stage1_decimation() * config.stage2_decimation(),
+        first_stage(&config).decimation_factor * last_stage(&config).decimation_factor,
         120
     );
-    assert!(config.stage1_decimation() <= 25, "stage 1 factor too large");
-    assert!(config.stage2_decimation() <= 25, "stage 2 factor too large");
+    assert!(first_stage(&config).decimation_factor <= 25, "stage 1 factor too large");
+    assert!(last_stage(&config).decimation_factor <= 25, "stage 2 factor too large");
 }
 
 #[test]
@@ -60,11 +70,11 @@ fn valid_rate_3000k() {
     let config = DecimationConfig::compute(3_000_000).expect("3M should be valid");
     assert_eq!(config.total_decimation(), 125);
     assert_eq!(
-        config.stage1_decimation() * config.stage2_decimation(),
+        first_stage(&config).decimation_factor * last_stage(&config).decimation_factor,
         125
     );
-    assert!(config.stage1_decimation() <= 25);
-    assert!(config.stage2_decimation() <= 25);
+    assert!(first_stage(&config).decimation_factor <= 25);
+    assert!(last_stage(&config).decimation_factor <= 25);
 }
 
 #[test]
@@ -72,11 +82,11 @@ fn valid_rate_4800k() {
     let config = DecimationConfig::compute(4_800_000).expect("4.8M should be valid");
     assert_eq!(config.total_decimation(), 200);
     assert_eq!(
-        config.stage1_decimation() * config.stage2_decimation(),
+        first_stage(&config).decimation_factor * last_stage(&config).decimation_factor,
         200
     );
-    assert!(config.stage1_decimation() <= 25);
-    assert!(config.stage2_decimation() <= 25);
+    assert!(first_stage(&config).decimation_factor <= 25);
+    assert!(last_stage(&config).decimation_factor <= 25);
 }
 
 #[test]
@@ -84,11 +94,11 @@ fn valid_rate_6000k() {
     let config = DecimationConfig::compute(6_000_000).expect("6M should be valid");
     assert_eq!(config.total_decimation(), 250);
     assert_eq!(
-        config.stage1_decimation() * config.stage2_decimation(),
+        first_stage(&config).decimation_factor * last_stage(&config).decimation_factor,
         250
     );
-    assert!(config.stage1_decimation() <= 25);
-    assert!(config.stage2_decimation() <= 25);
+    assert!(first_stage(&config).decimation_factor <= 25);
+    assert!(last_stage(&config).decimation_factor <= 25);
 }
 
 #[test]
@@ -96,11 +106,11 @@ fn valid_rate_9600k() {
     let config = DecimationConfig::compute(9_600_000).expect("9.6M should be valid");
     assert_eq!(config.total_decimation(), 400);
     assert_eq!(
-        config.stage1_decimation() * config.stage2_decimation(),
+        first_stage(&config).decimation_factor * last_stage(&config).decimation_factor,
         400
     );
-    assert!(config.stage1_decimation() <= 25);
-    assert!(config.stage2_decimation() <= 25);
+    assert!(first_stage(&config).decimation_factor <= 25);
+    assert!(last_stage(&config).decimation_factor <= 25);
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +136,7 @@ fn all_valid_rates_have_correct_total_decimation() {
         );
 
         assert_eq!(
-            config.stage1_decimation() * config.stage2_decimation(),
+            first_stage(&config).decimation_factor * last_stage(&config).decimation_factor,
             expected_total as usize,
             "stage product for {rate}"
         );
@@ -148,16 +158,16 @@ fn filter_cutoffs_are_correct_for_all_valid_rates() {
 
         // Stage 1 cutoff: always 12 kHz (protects P25 12.5 kHz channel).
         assert!(
-            (config.stage1_cutoff_hz() - 12_000.0).abs() < 0.01,
+            (first_stage(&config).cutoff_hz - 12_000.0).abs() < 0.01,
             "stage 1 cutoff for {rate}: got {}",
-            config.stage1_cutoff_hz()
+            first_stage(&config).cutoff_hz
         );
 
-        // Stage 2 cutoff: always 6.25 kHz (half of 12.5 kHz channel BW).
+        // Last stage cutoff: always 6.25 kHz (half of 12.5 kHz channel BW).
         assert!(
-            (config.stage2_cutoff_hz() - 6_250.0).abs() < 0.01,
-            "stage 2 cutoff for {rate}: got {}",
-            config.stage2_cutoff_hz()
+            (last_stage(&config).cutoff_hz - 6_250.0).abs() < 0.01,
+            "last stage cutoff for {rate}: got {}",
+            last_stage(&config).cutoff_hz
         );
     }
 }
@@ -172,14 +182,14 @@ fn filter_taps_are_odd_for_all_valid_rates() {
         let config = DecimationConfig::compute(rate).unwrap();
 
         assert!(
-            config.stage1_taps() % 2 == 1,
+            first_stage(&config).num_taps % 2 == 1,
             "stage 1 taps for {rate} should be odd: got {}",
-            config.stage1_taps()
+            first_stage(&config).num_taps
         );
         assert!(
-            config.stage2_taps() % 2 == 1,
-            "stage 2 taps for {rate} should be odd: got {}",
-            config.stage2_taps()
+            last_stage(&config).num_taps % 2 == 1,
+            "last stage taps for {rate} should be odd: got {}",
+            last_stage(&config).num_taps
         );
     }
 }
@@ -194,14 +204,14 @@ fn filter_taps_are_at_least_51() {
         let config = DecimationConfig::compute(rate).unwrap();
 
         assert!(
-            config.stage1_taps() >= 51,
+            first_stage(&config).num_taps >= 51,
             "stage 1 taps for {rate} should be >= 51: got {}",
-            config.stage1_taps()
+            first_stage(&config).num_taps
         );
         assert!(
-            config.stage2_taps() >= 51,
-            "stage 2 taps for {rate} should be >= 51: got {}",
-            config.stage2_taps()
+            last_stage(&config).num_taps >= 51,
+            "last stage taps for {rate} should be >= 51: got {}",
+            last_stage(&config).num_taps
         );
     }
 }
@@ -212,10 +222,10 @@ fn higher_sample_rates_need_more_stage1_taps() {
     let high = DecimationConfig::compute(9_600_000).unwrap();
 
     assert!(
-        high.stage1_taps() > low.stage1_taps(),
+        first_stage(&high).num_taps > first_stage(&low).num_taps,
         "9.6M should need more stage 1 taps than 2.4M: {} vs {}",
-        high.stage1_taps(),
-        low.stage1_taps()
+        first_stage(&high).num_taps,
+        first_stage(&low).num_taps
     );
 }
 
@@ -430,6 +440,22 @@ fn error_suggests_nearest_valid_rates() {
             // 2_000_000 / 24_000 = 83.33 -> floor = 83 * 24000 = 1_992_000
             assert_eq!(nearest_lower, 1_992_000);
             assert_eq!(nearest_higher, 2_016_000);
+        }
+        _ => panic!("expected NotDivisible error"),
+    }
+}
+
+#[test]
+fn zero_rate_error_suggests_channel_rate() {
+    let err = DecimationConfig::compute(0).unwrap_err();
+    match err {
+        DecimationError::NotDivisible {
+            nearest_lower,
+            nearest_higher,
+            ..
+        } => {
+            assert_eq!(nearest_lower, 24_000, "zero rate should suggest 24k as nearest");
+            assert_eq!(nearest_higher, 24_000);
         }
         _ => panic!("expected NotDivisible error"),
     }

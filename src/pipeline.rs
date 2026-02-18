@@ -86,7 +86,14 @@ impl DecimationConfig {
     /// Returns an error if the sample rate is not a multiple of 24000 or
     /// cannot be factored into stages of 25x or less.
     pub fn compute(sample_rate: u32) -> Result<Self, DecimationError> {
-        if sample_rate == 0 || !sample_rate.is_multiple_of(CHANNEL_RATE) {
+        if sample_rate == 0 {
+            return Err(DecimationError::NotDivisible {
+                sample_rate: 0,
+                nearest_lower: CHANNEL_RATE,
+                nearest_higher: CHANNEL_RATE,
+            });
+        }
+        if !sample_rate.is_multiple_of(CHANNEL_RATE) {
             let nearest_lower = (sample_rate / CHANNEL_RATE) * CHANNEL_RATE;
             let nearest_higher = nearest_lower + CHANNEL_RATE;
             return Err(DecimationError::NotDivisible {
@@ -106,15 +113,14 @@ impl DecimationConfig {
 
         for (i, &factor) in factors.iter().enumerate() {
             let is_final = i == stage_count - 1;
-            let is_single = stage_count == 1;
 
-            let cutoff_hz = if is_final || is_single {
+            let cutoff_hz = if is_final {
                 FINAL_CUTOFF_HZ
             } else {
                 NON_FINAL_CUTOFF_HZ
             };
 
-            let num_taps = if is_single || i == 0 {
+            let num_taps = if i == 0 {
                 compute_taps(current_rate, STAGE1_REF_RATE, STAGE1_REF_TAPS)
             } else {
                 compute_taps(current_rate, FINAL_STAGE_REF_RATE, FINAL_STAGE_REF_TAPS)
@@ -136,36 +142,6 @@ impl DecimationConfig {
     /// Total decimation factor across all stages.
     pub fn total_decimation(&self) -> usize {
         self.stages.iter().map(|s| s.decimation_factor).product()
-    }
-
-    /// First stage decimation factor.
-    pub fn stage1_decimation(&self) -> usize {
-        self.stages[0].decimation_factor
-    }
-
-    /// Last stage decimation factor (second stage for a two-stage config).
-    pub fn stage2_decimation(&self) -> usize {
-        self.stages.last().unwrap().decimation_factor
-    }
-
-    /// First stage tap count.
-    pub fn stage1_taps(&self) -> usize {
-        self.stages[0].num_taps
-    }
-
-    /// Last stage tap count.
-    pub fn stage2_taps(&self) -> usize {
-        self.stages.last().unwrap().num_taps
-    }
-
-    /// First stage cutoff frequency in hertz.
-    pub fn stage1_cutoff_hz(&self) -> f32 {
-        self.stages[0].cutoff_hz
-    }
-
-    /// Last stage cutoff frequency in hertz.
-    pub fn stage2_cutoff_hz(&self) -> f32 {
-        self.stages.last().unwrap().cutoff_hz
     }
 }
 
