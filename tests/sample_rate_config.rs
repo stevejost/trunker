@@ -7,7 +7,9 @@
 
 use num_complex::Complex;
 
-use trunker::pipeline::{ChannelPipeline, DecimationConfig, Modulation, PipelineConfig};
+use trunker::pipeline::{
+    ChannelPipeline, DecimationConfig, DecimationError, Modulation, PipelineConfig,
+};
 
 /// Target channel rate: always 24 kHz (5 samples/symbol at 4800 baud).
 const CHANNEL_RATE: u32 = 24_000;
@@ -393,4 +395,107 @@ fn regression_2400k_pipeline_silence() {
 
     assert_eq!(event_count, 0, "silence should not produce events");
     assert_eq!(pipeline.sample_count(), 10_000);
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline constructor error propagation
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pipeline_rejects_invalid_sample_rate() {
+    let config = PipelineConfig {
+        sample_rate: 2_000_000,
+        modulation: Modulation::Cqpsk,
+    };
+    assert!(
+        ChannelPipeline::new(config).is_err(),
+        "pipeline should reject 2M (not a multiple of 24k)"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Error details: nearest valid rates are correct
+// ---------------------------------------------------------------------------
+
+#[test]
+fn error_suggests_nearest_valid_rates() {
+    let err = DecimationConfig::compute(2_000_000).unwrap_err();
+    match err {
+        DecimationError::NotDivisible {
+            sample_rate,
+            nearest_lower,
+            nearest_higher,
+        } => {
+            assert_eq!(sample_rate, 2_000_000);
+            // 2_000_000 / 24_000 = 83.33 -> floor = 83 * 24000 = 1_992_000
+            assert_eq!(nearest_lower, 1_992_000);
+            assert_eq!(nearest_higher, 2_016_000);
+        }
+        _ => panic!("expected NotDivisible error"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Input rate cascading: verify stage input rates chain correctly
+// ---------------------------------------------------------------------------
+
+#[test]
+fn stage_input_rates_chain_correctly() {
+    let valid_rates: Vec<u32> = vec![
+        2_400_000, 2_880_000, 3_000_000, 4_800_000, 6_000_000, 9_600_000,
+    ];
+
+    for rate in valid_rates {
+        let config = DecimationConfig::compute(rate).unwrap();
+        let mut expected_input = rate as f32;
+
+        for (i, stage) in config.stages.iter().enumerate() {
+            assert!(
+                (stage.input_rate - expected_input).abs() < 1.0,
+                "stage {i} input_rate for {rate}: expected {expected_input}, got {}",
+                stage.input_rate
+            );
+            expected_input /= stage.decimation_factor as f32;
+        }
+
+        // After all stages, should be at channel rate (24 kHz).
+        assert!(
+            (expected_input - CHANNEL_RATE as f32).abs() < 1.0,
+            "final rate for {rate}: expected {CHANNEL_RATE}, got {expected_input}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Single-stage config for small decimation factors
+// ---------------------------------------------------------------------------
+
+#[test]
+fn single_stage_for_small_decimation() {
+    // 48000 / 24000 = 2x, should be single stage.
+    let config = DecimationConfig::compute(48_000).expect("48k should be valid");
+    assert_eq!(config.stages.len(), 1);
+    assert_eq!(config.total_decimation(), 2);
+    assert_eq!(config.stages[0].decimation_factor, 2);
+    // Single stage should use final cutoff.
+    assert!(
+        (config.stages[0].cutoff_hz - 6_250.0).abs() < 0.01,
+        "single stage should use 6250 Hz cutoff"
+    );
+}
+
+#[test]
+fn single_stage_at_max_factor() {
+    // 600000 / 24000 = 25x, exactly at max single-stage factor.
+    let config = DecimationConfig::compute(600_000).expect("600k should be valid");
+    assert_eq!(config.stages.len(), 1);
+    assert_eq!(config.total_decimation(), 25);
+}
+
+#[test]
+fn two_stages_just_above_max_single_factor() {
+    // 624000 / 24000 = 26x, needs two stages.
+    let config = DecimationConfig::compute(624_000).expect("624k should be valid");
+    assert!(config.stages.len() >= 2, "26x needs multi-stage");
+    assert_eq!(config.total_decimation(), 26);
 }
