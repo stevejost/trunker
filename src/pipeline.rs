@@ -44,7 +44,9 @@ const MAX_STAGE_FACTOR: usize = 25;
 #[derive(Debug, thiserror::Error)]
 pub enum DecimationError {
     /// Sample rate is not an integer multiple of the 24 kHz channel rate.
-    #[error("sample rate {sample_rate} Hz is not a multiple of 24000; try {nearest_lower} or {nearest_higher}")]
+    #[error(
+        "sample rate {sample_rate} Hz is not a multiple of 24000; try {nearest_lower} or {nearest_higher}"
+    )]
     NotDivisible {
         /// The invalid sample rate.
         sample_rate: u32,
@@ -284,8 +286,7 @@ impl ChannelPipeline {
         let demod_path = match config.modulation {
             Modulation::C4fm => {
                 let mut timing = SymbolTiming::new();
-                let expected_outer =
-                    2.0 * std::f32::consts::PI * 1800.0 / output_rate;
+                let expected_outer = 2.0 * std::f32::consts::PI * 1800.0 / output_rate;
                 timing.set_initial_thresholds(expected_outer, -expected_outer);
 
                 DemodPath::C4fm {

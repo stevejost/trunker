@@ -10,10 +10,10 @@ use num_complex::Complex;
 use trunker::channel_manager::{ChannelManager, ChannelManagerConfig, VoiceChannelEvent};
 use trunker::output::json;
 use trunker::p25::ident::IdentTable;
+use trunker::p25::nid::NidIntegrityPolicy;
 use trunker::p25::receiver::ReceiverEvent;
 use trunker::p25::tsbk::{TsbkOpcode, TsbkPayload};
 use trunker::p25::types::Frequency;
-use trunker::p25::nid::NidIntegrityPolicy;
 use trunker::pipeline::{self, ChannelPipeline, PipelineConfig};
 use trunker::sdr::cf32_reader::Cf32Reader;
 use trunker::sdr::soapy_source::{self, SoapySource};
@@ -185,7 +185,6 @@ enum Command {
     },
 }
 
-
 fn main() -> Result<()> {
     // When stdout is piped (e.g., `p25 cc ... | p25 monitor`), suppress all
     // stderr output. SoapySDR and hardware drivers print directly to stderr
@@ -240,7 +239,11 @@ fn main() -> Result<()> {
                 "starting control channel decoder"
             );
             decode_control_channel(
-                sample_source, sample_rate, pipeline_modulation, nid_policy, &running,
+                sample_source,
+                sample_rate,
+                pipeline_modulation,
+                nid_policy,
+                &running,
             )?;
         }
         Command::Trunk {
@@ -360,7 +363,13 @@ fn open_sample_source(
         validate_device_args(frequency, gain_control)?;
         let gain = resolve_gain(gain_control);
         let soapy = SoapySource::open(
-            &device_args, frequency, sample_rate, gain, antenna, settings, running,
+            &device_args,
+            frequency,
+            sample_rate,
+            gain,
+            antenna,
+            settings,
+            running,
         )?;
         Ok(SampleSource::Soapy(soapy))
     } else {
@@ -894,10 +903,7 @@ mod tests {
     #[test]
     fn cli_trunk_requires_center_freq() {
         let cli = Cli::try_parse_from(["p25", "trunk", "--input", "wideband.iq"]);
-        assert!(
-            cli.is_err(),
-            "trunk should require --center-freq"
-        );
+        assert!(cli.is_err(), "trunk should require --center-freq");
     }
 
     #[test]

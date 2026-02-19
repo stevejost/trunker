@@ -14,9 +14,7 @@ use crate::p25::types::Dibit;
 use crate::p25::voice::control::LinkControlFields;
 use crate::p25::voice::crypto::CryptoControlFields;
 use crate::p25::voice::frame::VoiceFrame;
-use crate::p25::voice::frame_group::{
-    FrameGroupEvent, FrameGroupReceiver, FrameGroupType,
-};
+use crate::p25::voice::frame_group::{FrameGroupEvent, FrameGroupReceiver, FrameGroupType};
 use crate::p25::voice::header::{VoiceHeaderFields, VoiceHeaderReceiver};
 use crate::p25::voice::terminator::VoiceLcTerminatorReceiver;
 
@@ -167,69 +165,73 @@ impl DataUnitReceiver {
 
         match nid::decode_nid(&dibits) {
             Ok(nid) => {
-                // Gate on NID integrity before routing to a data unit decoder.
-                if !nid.parity_ok {
-                    match self.integrity_policy {
-                        NidIntegrityPolicy::Strict => {
-                            self.state = State::Skip;
-                            return Some(ReceiverEvent::Error(
-                                P25Error::NidRejected {
-                                    reason: "parity check failed",
-                                    nac: nid.access_code.value(),
-                                    duid: nid.data_unit.to_bits(),
-                                },
-                            ));
-                        }
-                        NidIntegrityPolicy::Permissive => {
-                            tracing::warn!(
-                                nac = %nid.access_code,
-                                duid = ?nid.data_unit,
-                                "NID parity failed, continuing (permissive mode)"
-                            );
-                        }
-                    }
+                if let Some(rejection) = self.check_nid_integrity(&nid) {
+                    return Some(rejection);
                 }
 
                 self.current_nid = Some(nid);
-
-                match nid.data_unit {
-                    DataUnit::TrunkingSignaling => {
-                        self.state = State::CollectTsbk;
-                        self.target = CODING_DIBITS;
-                    }
-                    DataUnit::VoiceLcFrameGroup => {
-                        self.frame_group = Some(FrameGroupReceiver::new(
-                            FrameGroupType::LinkControl,
-                        ));
-                        self.state = State::DecodeLcFrameGroup;
-                    }
-                    DataUnit::VoiceCcFrameGroup => {
-                        self.frame_group = Some(FrameGroupReceiver::new(
-                            FrameGroupType::CryptoControl,
-                        ));
-                        self.state = State::DecodeCcFrameGroup;
-                    }
-                    DataUnit::VoiceHeader => {
-                        self.header_receiver = Some(VoiceHeaderReceiver::new());
-                        self.state = State::DecodeHeader;
-                    }
-                    DataUnit::VoiceLcTerminator => {
-                        self.terminator_receiver =
-                            Some(VoiceLcTerminatorReceiver::new());
-                        self.state = State::DecodeLcTerminator;
-                    }
-                    DataUnit::VoiceSimpleTerminator
-                    | DataUnit::DataPacket
-                    | DataUnit::Unknown(_) => {
-                        self.state = State::Skip;
-                    }
-                }
-
+                self.route_data_unit(nid.data_unit);
                 Some(ReceiverEvent::Nid(nid))
             }
             Err(err) => {
                 self.state = State::Skip;
                 Some(ReceiverEvent::Error(err))
+            }
+        }
+    }
+
+    /// Check NID integrity and return an error event if the policy rejects it.
+    ///
+    /// Returns `Some(error_event)` if rejected, `None` if accepted.
+    fn check_nid_integrity(&mut self, nid: &NetworkId) -> Option<ReceiverEvent> {
+        if nid.parity_ok {
+            return None;
+        }
+        match self.integrity_policy {
+            NidIntegrityPolicy::Strict => {
+                self.state = State::Skip;
+                Some(ReceiverEvent::Error(P25Error::NidRejected {
+                    reason: "parity check failed",
+                    nac: nid.access_code.value(),
+                    duid: nid.data_unit.to_bits(),
+                }))
+            }
+            NidIntegrityPolicy::Permissive => {
+                tracing::warn!(
+                    nac = %nid.access_code,
+                    duid = ?nid.data_unit,
+                    "NID parity failed, continuing (permissive mode)"
+                );
+                None
+            }
+        }
+    }
+
+    /// Transition receiver state based on the data unit type.
+    fn route_data_unit(&mut self, data_unit: DataUnit) {
+        match data_unit {
+            DataUnit::TrunkingSignaling => {
+                self.state = State::CollectTsbk;
+                self.target = CODING_DIBITS;
+            }
+            DataUnit::VoiceLcFrameGroup => {
+                self.frame_group = Some(FrameGroupReceiver::new(FrameGroupType::LinkControl));
+                self.state = State::DecodeLcFrameGroup;
+            }
+            DataUnit::VoiceCcFrameGroup => {
+                self.frame_group = Some(FrameGroupReceiver::new(FrameGroupType::CryptoControl));
+                self.state = State::DecodeCcFrameGroup;
+            }
+            DataUnit::VoiceHeader => {
+                self.header_receiver = Some(VoiceHeaderReceiver::new());
+                self.state = State::DecodeHeader;
+            }
+            DataUnit::VoiceLcTerminator => {
+                self.terminator_receiver = Some(VoiceLcTerminatorReceiver::new());
+                self.state = State::DecodeLcTerminator;
+            }
+            DataUnit::VoiceSimpleTerminator | DataUnit::DataPacket | DataUnit::Unknown(_) => {
+                self.state = State::Skip;
             }
         }
     }
@@ -799,11 +801,17 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         assert!(
-            matches!(&events[0], ReceiverEvent::Error(P25Error::NidRejected { .. })),
+            matches!(
+                &events[0],
+                ReceiverEvent::Error(P25Error::NidRejected { .. })
+            ),
             "strict mode should reject bad-parity NID, got {:?}",
             events[0]
         );
-        assert!(receiver.is_done(), "should skip to next sync after rejection");
+        assert!(
+            receiver.is_done(),
+            "should skip to next sync after rejection"
+        );
     }
 
     #[test]
