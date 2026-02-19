@@ -10,3 +10,4 @@ pub mod output;
 pub mod p25;
 pub mod pipeline;
 pub mod sdr;
+pub mod vocoder;
