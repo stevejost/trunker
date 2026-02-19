@@ -426,7 +426,17 @@ fn parse_group_voice_grant_update(data: &[u8; 12]) -> TsbkPayload {
     }
 }
 
-/// Parse identifier update (opcode 0x3D).
+/// Shared identifier fields extracted from the 4+9+9+10+32 bit layout
+/// used by opcodes 0x20 and 0x3D.
+struct IdentFields {
+    identifier: u8,
+    bandwidth: u32,
+    transmit_offset: i64,
+    channel_spacing: u32,
+    base_frequency: u64,
+}
+
+/// Extract identifier fields from the standard 4+9+9+10+32 bit layout.
 ///
 /// Layout (bytes 2-9, 64 bits total):
 ///   Identifier: 4 bits
@@ -434,7 +444,7 @@ fn parse_group_voice_grant_update(data: &[u8; 12]) -> TsbkPayload {
 ///   Transmit Offset: 9 bits (x 250 kHz, MSB=sign)
 ///   Channel Spacing: 10 bits (x 125 Hz)
 ///   Base Frequency: 32 bits (x 5 Hz)
-fn parse_identifier_update(data: &[u8; 12]) -> TsbkPayload {
+fn parse_ident_fields(data: &[u8; 12]) -> IdentFields {
     let word = u64::from_be_bytes([
         data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9],
     ]);
@@ -455,12 +465,24 @@ fn parse_identifier_update(data: &[u8; 12]) -> TsbkPayload {
     let channel_spacing = ((word >> 32) & 0x3FF) as u32 * 125;
     let base_frequency = (word & 0xFFFF_FFFF) * 5;
 
-    TsbkPayload::IdentifierUpdate {
+    IdentFields {
         identifier,
         bandwidth,
         transmit_offset,
         channel_spacing,
         base_frequency,
+    }
+}
+
+/// Parse identifier update (opcode 0x3D).
+fn parse_identifier_update(data: &[u8; 12]) -> TsbkPayload {
+    let f = parse_ident_fields(data);
+    TsbkPayload::IdentifierUpdate {
+        identifier: f.identifier,
+        bandwidth: f.bandwidth,
+        transmit_offset: f.transmit_offset,
+        channel_spacing: f.channel_spacing,
+        base_frequency: f.base_frequency,
     }
 }
 
@@ -678,41 +700,22 @@ const MAX_BASE_FREQUENCY_HZ: u64 = 1_300_000_000;
 /// protocol-level sanity checks. Falls back to `Unknown` when any
 /// check fails.
 fn parse_ident_candidate(data: &[u8; 12]) -> TsbkPayload {
-    let word = u64::from_be_bytes([
-        data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9],
-    ]);
-
-    let identifier = ((word >> 60) & 0x0F) as u8;
-    let bandwidth_raw = ((word >> 51) & 0x1FF) as u32;
-    let bandwidth = bandwidth_raw * 125;
-
-    let off_raw = ((word >> 42) & 0x1FF) as u16;
-    let magnitude = (off_raw & 0xFF) as i64 * 250_000;
-    let transmit_offset = if off_raw >> 8 == 0 {
-        -magnitude
-    } else {
-        magnitude
-    };
-
-    let channel_spacing_raw = ((word >> 32) & 0x3FF) as u32;
-    let channel_spacing = channel_spacing_raw * 125;
-    let base_frequency = (word & 0xFFFF_FFFF) * 5;
+    let f = parse_ident_fields(data);
 
     let mut raw_data = [0u8; 8];
     raw_data.copy_from_slice(&data[2..10]);
 
-    // Protocol-level sanity checks (not system-specific).
-    let sane = channel_spacing > 0
-        && bandwidth > 0
-        && (MIN_BASE_FREQUENCY_HZ..=MAX_BASE_FREQUENCY_HZ).contains(&base_frequency);
+    let sane = f.channel_spacing > 0
+        && f.bandwidth > 0
+        && (MIN_BASE_FREQUENCY_HZ..=MAX_BASE_FREQUENCY_HZ).contains(&f.base_frequency);
 
     if sane {
         TsbkPayload::IdentCandidate {
-            identifier,
-            bandwidth,
-            transmit_offset,
-            channel_spacing,
-            base_frequency,
+            identifier: f.identifier,
+            bandwidth: f.bandwidth,
+            transmit_offset: f.transmit_offset,
+            channel_spacing: f.channel_spacing,
+            base_frequency: f.base_frequency,
             raw_data,
         }
     } else {
