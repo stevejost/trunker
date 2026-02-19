@@ -38,3 +38,5 @@ pub(crate) mod window;
 pub(crate) mod voiced;
 #[allow(dead_code)]
 pub(crate) mod unvoiced;
+#[allow(dead_code)]
+pub(crate) mod decode;
