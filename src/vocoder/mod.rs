@@ -26,3 +26,7 @@ pub(crate) mod descramble;
 pub(crate) mod gain;
 #[allow(dead_code)]
 pub(crate) mod coefs;
+#[allow(dead_code)]
+pub(crate) mod spectral;
+#[allow(dead_code)]
+pub(crate) mod prev;
