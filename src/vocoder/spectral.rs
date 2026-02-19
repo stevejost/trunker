@@ -96,6 +96,7 @@ impl Spectrals {
     }
 
     /// Return the number of spectral amplitudes (equal to L, the harmonic count).
+    #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.values.len()
     }

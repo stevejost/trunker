@@ -16,6 +16,7 @@ use crate::p25::receiver::ReceiverEvent;
 use crate::p25::tsbk::{Tsbk, TsbkPayload};
 use crate::p25::types::{Frequency, Nac, SourceId, TalkgroupId};
 use crate::pipeline::{ChannelPipeline, Modulation, PipelineConfig};
+use crate::vocoder::{AudioBuffer, ImbeDecoder, ReceivedFrame, SAMPLES_PER_FRAME};
 
 /// A voice channel event with call context.
 #[derive(Debug)]
@@ -30,6 +31,11 @@ pub struct VoiceChannelEvent {
     pub nac: Nac,
     /// The decoded protocol event.
     pub event: ReceiverEvent,
+    /// Decoded PCM audio samples (8 kHz, f32) for voice frame events.
+    ///
+    /// Present only when `--decode-audio` is enabled and the event is a
+    /// `VoiceFrame`. Contains 160 samples (20 ms at 8 kHz).
+    pub audio: Option<Vec<f32>>,
 }
 
 /// An active voice channel with its DSP pipeline.
@@ -44,6 +50,8 @@ struct VoiceChannel {
     nco: Nco,
     /// Per-channel decode pipeline.
     pipeline: ChannelPipeline,
+    /// IMBE vocoder decoder (present when `--decode-audio` is enabled).
+    decoder: Option<ImbeDecoder>,
     /// Sample counter at last grant update (for timeout).
     last_grant_sample: u64,
 }
@@ -62,6 +70,8 @@ pub struct ChannelManagerConfig {
     pub modulation: Modulation,
     /// NID integrity policy for voice channel pipelines.
     pub nid_integrity: NidIntegrityPolicy,
+    /// Whether to decode IMBE voice frames into audio.
+    pub decode_audio: bool,
 }
 
 /// Manages voice channel pipelines for wideband trunking.
@@ -80,6 +90,8 @@ pub struct ChannelManager {
     active_channels: HashMap<Frequency, VoiceChannel>,
     /// Pipeline configuration for new voice channels.
     pipeline_config: PipelineConfig,
+    /// Whether to decode IMBE voice frames into audio.
+    decode_audio: bool,
     /// Global sample counter.
     sample_count: u64,
 }
@@ -107,6 +119,7 @@ impl ChannelManager {
                 modulation: config.modulation,
                 nid_integrity: config.nid_integrity,
             },
+            decode_audio: config.decode_audio,
             sample_count: 0,
         }
     }
@@ -175,12 +188,24 @@ impl ChannelManager {
         for channel in self.active_channels.values_mut() {
             let shifted = channel.nco.shift(sample);
             if let Some(event) = channel.pipeline.process_sample(shifted) {
+                let audio = if let (Some(decoder), ReceiverEvent::VoiceFrame(vf)) =
+                    (channel.decoder.as_mut(), &event)
+                {
+                    let received = ReceivedFrame::from(vf);
+                    let mut buffer: AudioBuffer = [0.0; SAMPLES_PER_FRAME];
+                    decoder.decode(received, &mut buffer);
+                    Some(buffer.to_vec())
+                } else {
+                    None
+                };
+
                 events.push(VoiceChannelEvent {
                     frequency: channel.frequency,
                     talkgroup: channel.talkgroup,
                     source: channel.source,
                     nac: channel.pipeline.current_nac(),
                     event,
+                    audio,
                 });
             }
         }
@@ -258,12 +283,19 @@ impl ChannelManager {
             "activated voice channel"
         );
 
+        let decoder = if self.decode_audio {
+            Some(ImbeDecoder::new())
+        } else {
+            None
+        };
+
         self.active_channels.insert(frequency, VoiceChannel {
             frequency,
             talkgroup,
             source,
             nco,
             pipeline,
+            decoder,
             last_grant_sample: self.sample_count,
         });
     }
@@ -309,6 +341,7 @@ mod tests {
             call_timeout_seconds: 3.0,
             modulation: Modulation::Cqpsk,
             nid_integrity: NidIntegrityPolicy::default(),
+            decode_audio: false,
         }
     }
 

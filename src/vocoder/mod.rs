@@ -7,36 +7,23 @@
 //! 2. Perform spectral amplitude enhancement
 //! 3. Synthesize audio via overlap-add harmonic synthesis
 
-// TODO: remove #[allow(dead_code)] once vocoder has internal consumers
-#[allow(dead_code)]
 pub(crate) mod error;
-#[allow(dead_code)]
 pub(crate) mod consts;
-#[allow(dead_code)]
 pub(crate) mod frame;
-#[allow(dead_code)]
 pub(crate) mod params;
-#[allow(dead_code)]
 pub(crate) mod allocs;
-#[allow(dead_code)]
 pub(crate) mod scan;
-#[allow(dead_code)]
 pub(crate) mod descramble;
-#[allow(dead_code)]
 pub(crate) mod gain;
-#[allow(dead_code)]
 pub(crate) mod coefs;
-#[allow(dead_code)]
 pub(crate) mod spectral;
-#[allow(dead_code)]
 pub(crate) mod prev;
-#[allow(dead_code)]
 pub(crate) mod enhance;
-#[allow(dead_code)]
 pub(crate) mod window;
-#[allow(dead_code)]
 pub(crate) mod voiced;
-#[allow(dead_code)]
 pub(crate) mod unvoiced;
-#[allow(dead_code)]
 pub(crate) mod decode;
+
+pub use decode::ImbeDecoder;
+pub use frame::{AudioBuffer, ReceivedFrame};
+pub use consts::SAMPLES_PER_FRAME;

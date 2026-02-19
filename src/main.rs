@@ -17,6 +17,7 @@ use trunker::p25::types::Frequency;
 use trunker::pipeline::{self, ChannelPipeline, PipelineConfig};
 use trunker::sdr::cf32_reader::Cf32Reader;
 use trunker::sdr::soapy_source::{self, SoapySource};
+use trunker::vocoder::{AudioBuffer, ImbeDecoder, ReceivedFrame, SAMPLES_PER_FRAME};
 
 /// P25 trunked radio decoder — RF in, JSON out.
 #[derive(Parser)]
@@ -135,6 +136,10 @@ enum Command {
         /// failed parity; permissive continues with a warning.
         #[arg(long, default_value = "strict")]
         nid_integrity: CliNidIntegrity,
+
+        /// Decode IMBE voice frames into audio (CPU-intensive).
+        #[arg(long)]
+        decode_audio: bool,
     },
 
     /// Decode a wideband P25 trunked system (control + voice channels).
@@ -172,6 +177,10 @@ enum Command {
         /// failed parity; permissive continues with a warning.
         #[arg(long, default_value = "strict")]
         nid_integrity: CliNidIntegrity,
+
+        /// Decode IMBE voice frames into audio (CPU-intensive).
+        #[arg(long)]
+        decode_audio: bool,
     },
 
     /// List available SoapySDR devices.
@@ -216,6 +225,7 @@ fn main() -> Result<()> {
             frequency,
             modulation,
             nid_integrity,
+            decode_audio,
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
@@ -243,6 +253,7 @@ fn main() -> Result<()> {
                 sample_rate,
                 pipeline_modulation,
                 nid_policy,
+                decode_audio,
                 &running,
             )?;
         }
@@ -256,6 +267,7 @@ fn main() -> Result<()> {
             modulation,
             call_timeout,
             nid_integrity,
+            decode_audio,
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
@@ -286,6 +298,7 @@ fn main() -> Result<()> {
                 pipeline_modulation,
                 nid_policy,
                 call_timeout,
+                decode_audio,
                 &running,
             )?;
         }
@@ -416,6 +429,7 @@ fn decode_control_channel(
     sample_rate: u32,
     modulation: pipeline::Modulation,
     nid_integrity: NidIntegrityPolicy,
+    decode_audio: bool,
     running: &Arc<AtomicBool>,
 ) -> Result<()> {
     let config = PipelineConfig {
@@ -426,6 +440,11 @@ fn decode_control_channel(
     let mut pipeline = ChannelPipeline::new(config)?;
     let mut ident_table = IdentTable::new();
     let mut tsbk_count: u64 = 0;
+    let mut decoder = if decode_audio {
+        Some(ImbeDecoder::new())
+    } else {
+        None
+    };
 
     for iq_sample in source {
         if !running.load(Ordering::SeqCst) {
@@ -435,7 +454,7 @@ fn decode_control_channel(
 
         if let Some(event) = pipeline.process_sample(iq_sample) {
             let nac = pipeline.current_nac();
-            handle_receiver_event(nac, &mut ident_table, &mut tsbk_count, event);
+            handle_receiver_event(nac, &mut ident_table, &mut tsbk_count, &mut decoder, event);
         }
     }
 
@@ -447,11 +466,12 @@ fn decode_control_channel(
     Ok(())
 }
 
-/// Dispatch a decoded protocol event (NID, TSBK, or error).
+/// Dispatch a decoded protocol event (NID, TSBK, voice frame, or error).
 fn handle_receiver_event(
     nac: trunker::p25::types::Nac,
     ident_table: &mut IdentTable,
     tsbk_count: &mut u64,
+    decoder: &mut Option<ImbeDecoder>,
     event: ReceiverEvent,
 ) {
     match event {
@@ -473,6 +493,12 @@ fn handle_receiver_event(
             *tsbk_count += 1;
         }
         ReceiverEvent::VoiceFrame(vf) => {
+            if let Some(dec) = decoder.as_mut() {
+                let received = ReceivedFrame::from(&vf);
+                let mut buffer: AudioBuffer = [0.0; SAMPLES_PER_FRAME];
+                dec.decode(received, &mut buffer);
+            }
+
             let line = json::voice_frame_json_line(nac, &vf);
             println!("{line}");
         }
@@ -499,6 +525,7 @@ fn handle_receiver_event(
 }
 
 /// Run the wideband trunked decoder (CC + voice channels).
+#[allow(clippy::too_many_arguments)]
 fn decode_trunked(
     source: SampleSource,
     sample_rate: u32,
@@ -506,6 +533,7 @@ fn decode_trunked(
     modulation: pipeline::Modulation,
     nid_integrity: NidIntegrityPolicy,
     call_timeout: f64,
+    decode_audio: bool,
     running: &Arc<AtomicBool>,
 ) -> Result<()> {
     let config = PipelineConfig {
@@ -523,6 +551,7 @@ fn decode_trunked(
         call_timeout_seconds: call_timeout,
         nid_integrity,
         modulation,
+        decode_audio,
     });
 
     for iq_sample in source {

@@ -1,6 +1,7 @@
 //! Constants used in the IMBE vocoder.
 
 /// Audio samples per second (Hz).
+#[allow(dead_code)]
 pub const SAMPLE_RATE: usize = 8000;
 
 /// Number of audio samples per voiced/unvoiced frame (20 ms at 8 kHz).

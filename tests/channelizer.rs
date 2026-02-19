@@ -132,6 +132,7 @@ fn channel_manager_tracks_multiple_grants() {
         call_timeout_seconds: 3.0,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
+        decode_audio: false,
     });
     let ident_table = make_ident_table();
 
@@ -162,6 +163,7 @@ fn channel_manager_rejects_out_of_band() {
         call_timeout_seconds: 3.0,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
+        decode_audio: false,
     });
     let ident_table = make_ident_table();
 
@@ -191,6 +193,7 @@ fn channel_manager_timeout_lifecycle() {
         call_timeout_seconds: 0.01, // Very short: 24000 samples
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
+        decode_audio: false,
     });
     let ident_table = make_ident_table();
 

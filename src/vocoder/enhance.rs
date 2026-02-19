@@ -183,6 +183,7 @@ impl EnhancedSpectrals {
     }
 
     /// Return the number of enhanced spectral amplitudes.
+    #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.values.len()
     }

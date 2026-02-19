@@ -20,17 +20,16 @@ use super::voiced::{Phase, PhaseBase, Voiced};
 /// Call [`decode`](ImbeDecoder::decode) once per received voice frame.
 /// The decoder tracks inter-frame state (spectral prediction, phase
 /// accumulation, error rate) internally.
-pub(crate) struct ImbeDecoder {
+#[derive(Default)]
+pub struct ImbeDecoder {
     /// Saved parameters from the previous frame.
     prev: PrevFrame,
 }
 
 impl ImbeDecoder {
     /// Create a new `ImbeDecoder` in the default state.
-    pub(crate) fn new() -> Self {
-        Self {
-            prev: PrevFrame::default(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Decode the given frame into the given audio sample buffer.
@@ -38,7 +37,7 @@ impl ImbeDecoder {
     /// On success, fills `buffer` with 160 PCM samples. On invalid input
     /// or high error rates, either repeats the previous frame or outputs
     /// silence per TIA-102.BABA error handling rules.
-    pub(crate) fn decode(&mut self, frame: ReceivedFrame, buffer: &mut AudioBuffer) {
+    pub fn decode(&mut self, frame: ReceivedFrame, buffer: &mut AudioBuffer) {
         let period = match Bootstrap::new(&frame.chunks) {
             Bootstrap::Period(p) => p,
             Bootstrap::Invalid => {
