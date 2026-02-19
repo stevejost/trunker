@@ -99,6 +99,11 @@ impl Spectrals {
     pub(crate) fn len(&self) -> usize {
         self.values.len()
     }
+
+    /// Iterate over spectral amplitudes M_1 through M_L.
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, f32> {
+        self.values.iter()
+    }
 }
 
 impl Default for Spectrals {

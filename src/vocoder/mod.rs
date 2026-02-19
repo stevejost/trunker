@@ -30,3 +30,5 @@ pub(crate) mod coefs;
 pub(crate) mod spectral;
 #[allow(dead_code)]
 pub(crate) mod prev;
+#[allow(dead_code)]
+pub(crate) mod enhance;
