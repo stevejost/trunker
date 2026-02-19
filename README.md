@@ -18,56 +18,128 @@ The P25 SDR ecosystem is a mess. Every existing application tries to be a comple
 
 ### `p25 cc` — Control Channel Decoder
 
-Tunes to a P25 control channel frequency, demodulates C4FM, decodes Trunking Signaling Blocks (TSBKs), and emits structured JSON to stdout.
+Monitors a P25 control channel frequency, demodulates C4FM or CQPSK, decodes Trunking Signaling Blocks (TSBKs), and emits structured JSON lines to stdout.
 
 ```bash
-# Monitor a control channel
-p25 cc --device "driver=rtlsdr" -f 853.450e6
+# Live decode with an RTL-SDR (C4FM)
+p25 cc --device "driver=rtlsdr" --frequency 852350000 --gain 40
 
-# With an SDRplay RSPdx
-p25 cc --device "driver=sdrplay" -f 853.450e6
+# Simulcast system with CQPSK modulation (SDRplay RSPdx)
+p25 cc --device "driver=sdrplay" --frequency 852350000 --gain 40 \
+  --modulation cqpsk --setting rfgain_sel=24 --setting hdr_ctrl=false
 
-# Decode from a recorded IQ file (development/testing)
-p25 cc --file capture.iq --sample-rate 2.4e6
+# Decode from a recorded IQ file
+p25 cc --input capture.cf32
 
 # Pipe to jq for live filtering
-p25 cc -f 853.450e6 | jq 'select(.type == "chan_grant")'
+p25 cc --device "driver=rtlsdr" -f 852350000 --gain 40 \
+  | jq 'select(.name == "GRP_V_CH_GRANT")'
 ```
 
-**Output:**
+**Output (one JSON object per line):**
 
 ```jsonl
-{"ts":1739500000.123,"type":"chan_grant","tg":3769,"freq":851325000,"src":12345}
-{"ts":1739500001.456,"type":"chan_grant","tg":3325,"freq":852075000,"src":67890}
-{"ts":1739500002.789,"type":"affiliation","unit":54321,"tg":3847}
-{"ts":1739500003.012,"type":"ident_update","channel":1,"freq":851050000,"bandwidth":12500}
-{"ts":1739500004.345,"type":"adj_site","site":3,"rfss":1,"freq":852225000}
-{"ts":1739500005.678,"type":"sys_info","sysid":"5F2","wacn":"BEE00","nac":"5F2"}
+{"nac":"0x5FC","opcode":"0x00","name":"GRP_V_CH_GRANT","last_block":true,"manufacturer_id":0,"channel":24841,"frequency":851.0625,"talkgroup":3769,"source":12345}
+{"nac":"0x5FC","opcode":"0x3A","name":"RFSS_STS_BCST","last_block":true,"manufacturer_id":0,"system_id":"0x5F2","rfss_id":1,"site_id":1,"channel":56691,"frequency":852.35}
+{"nac":"0x5FC","opcode":"0x3D","name":"CH_PARAMS_UPDT","last_block":true,"manufacturer_id":0,"identifier":6,"bandwidth":12500,"transmit_offset":-45000000,"channel_spacing":6250,"base_frequency":851006250}
 ```
 
-### `p25 voice` — Voice Channel Decoder *(future)*
+### `p25 trunk` — Wideband Trunked Decoder
 
-Tunes to a P25 voice channel frequency, demodulates C4FM, decodes IMBE voice frames, and outputs audio. Can follow channel grants from `p25 cc`.
+Decodes both the control channel and active voice channels from a single wideband IQ capture. Watches for channel grants on the CC and automatically spawns voice channel pipelines at the granted frequencies.
 
 ```bash
-# Follow grants from the control channel decoder
-p25 cc -f 853.450e6 | p25 voice --follow-grants --device "driver=rtlsdr,serial=00000002"
+# Live decode with SDRplay (wideband capture centered on system)
+p25 trunk --device "driver=sdrplay" --center-freq 852350000 --gain 40 \
+  --modulation cqpsk --setting rfgain_sel=24
 
-# Decode a single talkgroup
-p25 cc -f 853.450e6 | p25 voice --follow-grants --talkgroup 3769
+# From a recorded wideband IQ file
+p25 trunk --input wideband.cf32 --center-freq 852350000
 
-# Multiple simultaneous talkgroups with multiple SDRs
-p25 cc -f 853.450e6 | p25 voice --follow-grants --talkgroup 3769 --device-index 1 &
-p25 cc -f 853.450e6 | p25 voice --follow-grants --talkgroup 3847 --device-index 2 &
+# With custom call timeout (default 3 seconds)
+p25 trunk --input wideband.cf32 --center-freq 852350000 --call-timeout 5.0
 ```
 
-### `p25 scan` — System Scanner *(future)*
+Voice events include call context (frequency, talkgroup, source) from the CC grant:
 
-Higher-level orchestrator that manages multiple voice decoders and SDR devices for a complete scanning experience.
+```jsonl
+{"nac":"0x5FC","type":"voice_frame","frequency":851.0625,"talkgroup":3769,"source":12345,"imbe":"1234567890ABCDEF123456","errors":2}
+{"nac":"0x5FC","type":"voice_frame","frequency":851.0625,"talkgroup":3769,"source":12345,"imbe":"1234567890ABCDEF123456","errors":0}
+```
+
+### `p25 monitor` — Terminal Monitor
+
+Real-time TUI that displays control channel activity. Reads JSON lines from stdin (piped from `p25 cc`) and renders active grants, system info, and talkgroup activity.
 
 ```bash
-# Scan a system using a config file
-p25 scan --config srrcs.toml
+# Pipe control channel output to the monitor
+p25 cc --device "driver=rtlsdr" --frequency 852350000 --gain 40 | p25 monitor
+
+# With custom grant expiry timeout (default 3 seconds)
+p25 cc --input capture.cf32 | p25 monitor --grant-timeout 5
+```
+
+### `p25 devices` — List SDR Hardware
+
+Lists all SoapySDR-compatible devices detected on the system.
+
+```bash
+p25 devices
+```
+
+---
+
+## Filtering JSON Output
+
+All messages include fields suitable for filtering with `jq` or any JSON-aware tool. No built-in filter flags are needed -- the Unix pipeline is the filter mechanism.
+
+**Fields present on every TSBK message:**
+
+| Field | Type | Example | Description |
+|---|---|---|---|
+| `nac` | string | `"0x5FC"` | Network Access Code (identifies the system) |
+| `opcode` | string | `"0x00"` | Raw opcode hex value |
+| `name` | string | `"GRP_V_CH_GRANT"` | Human-readable opcode name |
+| `manufacturer_id` | integer | `0` | Manufacturer ID (0 = standard) |
+| `last_block` | boolean | `true` | Whether this is the last TSBK in a TSDU |
+
+**Fields only on specific opcodes (not available for per-message filtering):**
+
+| Field | Opcodes |
+|---|---|
+| `system_id` | `NET_STS_BCST`, `RFSS_STS_BCST`, `ADJ_STS_BCST`, `U_REG_RSP`, `U_DE_REG_ACK` |
+| `wacn` | `NET_STS_BCST`, `U_DE_REG_ACK` |
+| `rfss_id`, `site_id` | `RFSS_STS_BCST`, `ADJ_STS_BCST` |
+| `talkgroup` | `GRP_V_CH_GRANT`, `GRP_V_CH_GRANT_UPDT_EXP` |
+| `source` | `GRP_V_CH_GRANT`, `UNT_TO_UNT_ANS_REQ`, `EMERGENCY_ALRM`, `U_DE_REG_ACK` |
+
+**Fields present on every voice event:**
+
+| Field | Type | Example | Description |
+|---|---|---|---|
+| `nac` | string | `"0x5FC"` | Network Access Code |
+| `type` | string | `"voice_frame"` | Event type: `voice_frame`, `link_control`, `crypto_control`, `voice_header`, `data_fragment` |
+
+**Example `jq` filters:**
+
+```bash
+# Filter by NAC (isolate one system on a shared frequency)
+p25 cc ... | jq 'select(.nac == "0x5FC")'
+
+# Only channel grants
+p25 cc ... | jq 'select(.name == "GRP_V_CH_GRANT")'
+
+# Only non-standard manufacturer messages
+p25 cc ... | jq 'select(.manufacturer_id != 0)'
+
+# Channel grants for a specific talkgroup
+p25 cc ... | jq 'select(.name == "GRP_V_CH_GRANT" and .talkgroup == 3769)'
+
+# System identity messages only
+p25 cc ... | jq 'select(.name == "NET_STS_BCST" or .name == "RFSS_STS_BCST")'
+
+# Voice frames from trunk mode
+p25 trunk ... | jq 'select(.type == "voice_frame")'
 ```
 
 ---
@@ -120,7 +192,7 @@ p25 scan --config srrcs.toml
                                        ▼
 ┌─────────────────────────────────────────────────┐
 │                JSON Serializer                   │
-│              (stdout / file / ZMQ)               │
+│            (JSON lines to stdout)                 │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -147,13 +219,11 @@ Each layer boundary is a clean interface with a well-defined data type. No layer
 |---|---|---|
 | Language | Rust | Performance of C, safety guarantees, excellent tooling, `cargo install` distribution |
 | SDR Interface | SoapySDR (via `soapysdr` crate) | Hardware-agnostic, supports all major SDR devices |
-| DSP Math | `num-complex`, `rustfft` | Standard Rust numerics, proven FFT implementation |
-| Bit Manipulation | `bitvec` | Ergonomic bitfield access, critical for protocol parsing |
+| DSP Math | `num-complex` | Standard Rust numerics for complex IQ samples |
 | Serialization | `serde` + `serde_json` | Industry-standard, zero-boilerplate JSON output |
 | CLI | `clap` | Derive-based arg parsing, subcommand support |
 | Logging | `tracing` | Structured logging with levels, filterable at runtime |
 | Testing | Built-in (`cargo test`) | No external test framework needed |
-| Async (future) | `tokio` | For ZMQ/network output and multi-device orchestration |
 
 ---
 
@@ -172,7 +242,7 @@ The control channel transmits **Trunking Signaling Blocks (TSBKs)** — short da
 - **Channel Grants** (`GRP_V_CH_GRANT`) — assigns a voice frequency to a talkgroup. This is the core message that tells a scanner where to tune.
 - **Channel Grant Updates** (`GRP_V_CH_GRANT_UPDT`) — updates for ongoing calls.
 - **Unit Registrations** (`U_REG_RSP`) — a radio registering on the system.
-- **Affiliations** (`U_REG_RSP`, `GRP_AFF_RSP`) — a radio joining a talkgroup.
+- **Affiliations** (`GRP_AFF_RSP`) — a radio joining a talkgroup.
 - **Identifier Updates** (`IDEN_UP`) — maps logical channel numbers to actual RF frequencies.
 - **Adjacent Site** (`ADJ_STS_BCST`) — information about neighboring sites in a multi-site system.
 - **System Info** (`RFSS_STS_BCST`, `NET_STS_BCST`) — system identity and configuration.
@@ -214,10 +284,10 @@ cargo test
 cargo test -- --nocapture
 
 # Run a specific test module
-cargo test tsbk::parser::tests
+cargo test tsbk::tests
 
 # Run integration tests with IQ fixtures
-cargo test --test integration
+cargo test --test decode_pipeline
 ```
 
 ### Recording IQ Files for Development
@@ -231,7 +301,8 @@ SoapySDRUtil --probe  # verify your device is detected
 # Using rx_sdr (from soapy-tools)
 rx_sdr -d "driver=rtlsdr" -f 853450000 -s 2400000 -g 40 -n 57600000 capture_30s.iq
 
-# This gives you 30 seconds of IQ at 2.4 MSPS (2 bytes/sample I+Q = ~144 MB)
+# This gives you 30 seconds of IQ at 2.4 MSPS in u8 format (~144 MB)
+# Note: rx_sdr produces u8 (RTL-SDR native); convert to CF32 for the decoder
 ```
 
 ### Project Structure
@@ -242,67 +313,113 @@ trunker/
 ├── Cargo.lock
 ├── CLAUDE.md
 ├── README.md
-├── LICENSE-MIT
-├── LICENSE-APACHE
+├── LICENSE
 ├── rustfmt.toml
 ├── .gitignore
 │
-├── src/                         # Application source (standard Rust convention)
-│   ├── main.rs                  # CLI entry point and subcommand dispatch
-│   ├── cli.rs                   # Clap argument definitions
+├── src/
+│   ├── main.rs                  # CLI entry point (p25 cc, trunk, devices, monitor)
+│   ├── lib.rs                   # Library root, re-exports all modules
+│   ├── pipeline.rs              # Per-channel DSP + protocol decode pipeline
+│   ├── channel_manager.rs       # Wideband trunked decoder (CC + voice channels)
+│   │
 │   ├── sdr/
 │   │   ├── mod.rs
-│   │   ├── source.rs            # SoapySDR + file source abstraction
-│   │   └── config.rs            # Device configuration
+│   │   ├── soapy_source.rs      # Live SDR via SoapySDR
+│   │   ├── cf32_reader.rs       # IQ file replay (CF32 format)
+│   │   └── error.rs
+│   │
 │   ├── dsp/
 │   │   ├── mod.rs
-│   │   ├── fm_demod.rs          # C4FM demodulation
-│   │   ├── clock_recovery.rs    # Gardner timing error detector
+│   │   ├── fm_demod.rs          # C4FM FM discriminator
+│   │   ├── cqpsk_demod.rs       # CQPSK coherent demodulator (simulcast)
+│   │   ├── cqpsk_mod.rs         # CQPSK modulator (test signal generation)
+│   │   ├── costas.rs            # Costas PLL for carrier recovery
+│   │   ├── gardner.rs           # Gardner timing error detector
+│   │   ├── gardner_timing.rs    # Gardner clock recovery loop
+│   │   ├── timing.rs            # Symbol timing recovery (C4FM path)
 │   │   ├── slicer.rs            # Dibit decision slicer
-│   │   └── filter.rs            # FIR / RRC filter implementations
+│   │   ├── filter.rs            # FIR decimating low-pass filter
+│   │   ├── rrc_filter.rs        # Root raised cosine matched filter
+│   │   ├── dc_block.rs          # DC offset removal
+│   │   ├── agc.rs               # Automatic gain control
+│   │   ├── nco.rs               # Numerically controlled oscillator
+│   │   ├── interpolator.rs      # Polynomial interpolator
+│   │   ├── diff_decoder.rs      # Differential decoder (CQPSK)
+│   │   └── sync.rs              # 48-bit frame sync word detection
+│   │
 │   ├── p25/
 │   │   ├── mod.rs
-│   │   ├── sync.rs              # Frame synchronization
-│   │   ├── trellis.rs           # 1/2 rate trellis decoding
-│   │   ├── error_correction.rs  # Golay, Hamming, Reed-Solomon, CRC
-│   │   ├── tsbk/
+│   │   ├── types.rs             # Newtypes: Nac, TalkgroupId, Frequency, etc.
+│   │   ├── consts.rs            # Protocol constants
+│   │   ├── error.rs             # P25 error types (thiserror)
+│   │   ├── nid.rs               # Network ID decode + integrity gating
+│   │   ├── receiver.rs          # Data unit receiver state machine
+│   │   ├── tsbk.rs              # TSBK opcode parser (all message types)
+│   │   ├── trellis.rs           # 1/2 rate trellis codec
+│   │   ├── interleave.rs        # TSBK dibit deinterleaving
+│   │   ├── crc.rs               # CRC-16 (CCITT) for TSBK verification
+│   │   ├── status.rs            # Status symbol deinterleaving
+│   │   ├── ident.rs             # Identifier table (channel → frequency)
+│   │   │
+│   │   ├── coding/              # Forward error correction
 │   │   │   ├── mod.rs
-│   │   │   ├── opcode.rs        # TSBK opcode enum definitions
-│   │   │   ├── parser.rs        # TSBK field extraction
-│   │   │   └── messages.rs      # Typed message structs
-│   │   ├── nid.rs               # Network ID decoding
-│   │   └── data_unit.rs         # Data unit type handling
+│   │   │   ├── golay.rs         # (24,12) extended Golay
+│   │   │   ├── hamming.rs       # (15,11) Hamming
+│   │   │   ├── reed_solomon.rs  # (24,12,13) and (24,16,9) Reed-Solomon
+│   │   │   ├── galois.rs        # GF(2^6) field arithmetic
+│   │   │   ├── cyclic.rs        # Cyclic code for low-speed data
+│   │   │   └── bmcf.rs          # Bush-Caldwell-Murthy-Fang decoder
+│   │   │
+│   │   └── voice/               # Voice data unit decoding
+│   │       ├── mod.rs
+│   │       ├── frame.rs         # IMBE voice frame (88-bit chunks)
+│   │       ├── frame_group.rs   # LDU1/LDU2 frame group receiver
+│   │       ├── header.rs        # Voice header (HDU) decoder
+│   │       ├── terminator.rs    # Voice LC terminator (TDULC) decoder
+│   │       ├── control.rs       # Link Control word (LDU1)
+│   │       ├── crypto.rs        # Crypto Control word (LDU2)
+│   │       ├── descramble.rs    # Voice frame descrambling
+│   │       └── pn.rs            # PN sequence generation
+│   │
 │   ├── output/
 │   │   ├── mod.rs
-│   │   ├── json.rs              # JSON serialization
-│   │   └── zmq.rs               # ZeroMQ publisher (optional feature)
-│   └── util/
+│   │   └── json.rs              # JSON serialization (TSBKs + voice events)
+│   │
+│   └── monitor/                 # TUI for p25 monitor subcommand
 │       ├── mod.rs
-│       └── bits.rs              # Bit manipulation helpers
+│       ├── event.rs             # Monitor event types
+│       ├── parse.rs             # JSON line parser (stdin)
+│       ├── state.rs             # Talkgroup/grant state tracking
+│       ├── ui.rs                # Terminal UI rendering
+│       └── error.rs
 │
-├── tests/                       # Integration tests (standard Rust convention)
-│   ├── integration/
-│   │   └── cc_decode.rs         # End-to-end control channel tests
-│   └── fixtures/
-│       ├── tsbk_vectors.json    # Known TSBK hex → expected parse results
-│       └── dibit_stream.bin     # Recorded dibit sequences with known content
+├── tests/                       # Integration tests
+│   ├── channelizer.rs           # Wideband channelizer tests
+│   ├── cqpsk_signal.rs          # CQPSK signal generation tests
+│   ├── decode_pipeline.rs       # End-to-end decode pipeline tests
+│   ├── monitor_state.rs         # Monitor state machine tests
+│   ├── sample_rate_config.rs    # Sample rate / decimation tests
+│   └── soapy_source.rs          # SDR source integration tests
 │
-├── samples/                     # Radio captures for development and testing
-│   ├── README.md                # Documents each capture (frequency, SDR, settings)
-│   └── iq/                      # Raw IQ baseband recordings
-│       └── srrcs_cc_852350_2400k_i16.wav  # SRRCS control channel capture
+├── samples/                     # Radio captures and test tools
+│   ├── decode_test.py           # OP25 comparison test harness
+│   ├── op25_gold_reference.py   # Gold standard reference generator
+│   ├── op25_gold_comparison.json
+│   ├── op25_gold_cqpsk.json
+│   ├── op25_gold_fsk4.json
+│   ├── op25_reference/          # OP25 reference data
+│   └── iq/                      # Raw IQ recordings (git-ignored)
 │
-└── docs/                        # Project documentation and references
-    ├── p25_quick_reference.md   # Field-level TSBK format reference
-    └── dsp_notes.md             # Design notes on demod/clock recovery
+└── docs/                        # TIA-102 specification PDFs
 ```
 
 ### Directory Conventions
 
-- **`src/`** — All application source code. Standard Rust layout with `main.rs` as entry point. Unit tests live in `#[cfg(test)] mod tests` blocks within each source file.
-- **`tests/`** — Integration tests that exercise the pipeline end-to-end. Rust runs these with `cargo test` automatically. Fixtures in `tests/fixtures/` are small, deterministic data files (hex vectors, short dibit sequences) committed to the repo.
-- **`samples/`** — Real radio captures used during development. These are large binary files (IQ recordings from SDR++ or similar). Use Git LFS for files over a few MB, or `.gitignore` them and document how to recreate. Each file should be named descriptively: `{system}_{type}_{freq}_{samplerate}_{format}.wav` (e.g., `srrcs_cc_852350_2400k_i16.wav`). The `samples/README.md` should document the capture conditions for each file (date, SDR hardware, gain, antenna, location).
-- **`docs/`** — Long-form documentation, protocol references, and design notes. Not API docs (those live in doc comments and are generated by `cargo doc`).
+- **`src/`** — All application source code. Standard Rust layout with `main.rs` as entry point and `lib.rs` as library root. Unit tests live in `#[cfg(test)] mod tests` blocks within each source file.
+- **`tests/`** — Integration tests that exercise the pipeline end-to-end. Rust runs these with `cargo test` automatically.
+- **`samples/`** — Radio captures and OP25 gold-standard comparison data for development and regression testing. IQ recordings in `samples/iq/` are git-ignored due to size.
+- **`docs/`** — TIA-102 specification PDFs for protocol reference.
 
 ---
 
@@ -444,22 +561,51 @@ use_try_shorthand = true
 
 ## Roadmap
 
+### Implemented
+
 - [x] Project structure and build system
-- [ ] SoapySDR source + IQ file replay
-- [ ] C4FM FM demodulator
-- [ ] Gardner clock recovery and dibit slicer
-- [ ] Frame synchronization (48-bit sync word detection)
-- [ ] Trellis 1/2 rate decoder
-- [ ] TSBK CRC validation
-- [ ] TSBK opcode parser (channel grants, affiliations, system info)
-- [ ] JSON output to stdout
-- [ ] Identifier table tracking (logical channel → frequency mapping)
-- [ ] Adjacent site tracking
+- [x] SoapySDR source + IQ file replay (`src/sdr/`)
+- [x] C4FM FM demodulator (`src/dsp/fm_demod.rs`)
+- [x] CQPSK demodulator for simulcast systems (`src/dsp/cqpsk_demod.rs`)
+- [x] Multi-stage decimation pipeline (`src/pipeline.rs`)
+- [x] Gardner clock recovery and dibit slicer (`src/dsp/timing.rs`)
+- [x] Frame synchronization (48-bit sync word detection) (`src/dsp/sync.rs`)
+- [x] Trellis 1/2 rate decoder (`src/p25/trellis.rs`)
+- [x] Error correction: Golay, Hamming, Reed-Solomon (`src/p25/coding/`)
+- [x] TSBK CRC validation (`src/p25/crc.rs`)
+- [x] TSBK opcode parser (channel grants, affiliations, system info) (`src/p25/tsbk.rs`)
+- [x] JSON output to stdout (`src/output/json.rs`)
+- [x] Identifier table tracking (logical channel → frequency mapping) (`src/p25/ident.rs`)
+- [x] Adjacent site tracking (`src/p25/tsbk.rs`)
+- [x] NID integrity gating with strict/permissive policy (`src/p25/nid.rs`)
+- [x] Voice frame decoding — IMBE frames, LDU1/LDU2, HDU, terminators (`src/p25/voice/`)
+- [x] Wideband trunked decoder — `p25 trunk` (`src/channel_manager.rs`)
+- [x] Monitor TUI — `p25 monitor` (`src/monitor/`)
+
+### Future
+
 - [ ] ZeroMQ publisher output (optional feature flag)
 - [ ] IQ file recording mode
-- [ ] Voice channel decoder (`p25 voice`)
 - [ ] Adaptive equalizer for simulcast compensation
 - [ ] Phase II TDMA support
+
+---
+
+## Troubleshooting
+
+- **No decodes on a simulcast system?** Use `--modulation cqpsk`. The default C4FM demodulator will not lock onto CQPSK signals. Simulcast systems use CQPSK (also called LSM) for control and voice channels.
+
+- **Use manual gain, not AGC.** `--gain 40` is recommended over `--auto-gain`. Automatic gain control can destabilize the CQPSK Costas PLL, causing intermittent decode failures.
+
+- **Sample rate must be a multiple of 24000 Hz.** The decoder validates this at startup and suggests the nearest valid rates. Common choices: 48000, 240000, 480000, 960000, 2400000.
+
+- **SDRplay: set `rfgain_sel` explicitly.** The default RF gain table index (4) is often too low. Use `--setting rfgain_sel=24` for better sensitivity.
+
+- **SDRplay: disable HDR mode for 800 MHz.** HDR mode only works below 2 MHz. Use `--setting hdr_ctrl=false` for 800 MHz P25 systems.
+
+- **SDRplay: disable bias-T unless needed.** Use `--setting biasT_ctrl=false` unless you are powering an external LNA through the antenna port.
+
+- **Viewing logs while piping.** When stdout is piped (e.g., `p25 cc ... | p25 monitor`), stderr is suppressed to avoid corrupting the TUI. To see decode logs: `p25 cc ... 2>decode.log | p25 monitor`. Set `RUST_LOG=debug` for verbose output.
 
 ---
 
