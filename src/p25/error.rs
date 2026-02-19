@@ -75,6 +75,17 @@ pub enum P25Error {
     /// Cyclic (16,8,5) decode failed (low-speed data fragment).
     #[error("cyclic decode failed: unrecoverable errors in low-speed data")]
     CyclicUnrecoverable,
+
+    /// NID rejected by integrity policy (parity or BCH check failed).
+    #[error("NID rejected: {reason} (NAC=0x{nac:03X}, DUID=0x{duid:X})")]
+    NidRejected {
+        /// Why the NID was rejected.
+        reason: &'static str,
+        /// The NAC from the rejected NID.
+        nac: u16,
+        /// The DUID from the rejected NID.
+        duid: u8,
+    },
 }
 
 #[cfg(test)]
@@ -126,5 +137,18 @@ mod tests {
     fn unknown_data_unit_display() {
         let err = P25Error::UnknownDataUnit { duid: 0x0F };
         assert_eq!(format!("{err}"), "unknown data unit: DUID 0xF");
+    }
+
+    #[test]
+    fn nid_rejected_display() {
+        let err = P25Error::NidRejected {
+            reason: "parity check failed",
+            nac: 0x5FC,
+            duid: 0x7,
+        };
+        assert_eq!(
+            format!("{err}"),
+            "NID rejected: parity check failed (NAC=0x5FC, DUID=0x7)"
+        );
     }
 }

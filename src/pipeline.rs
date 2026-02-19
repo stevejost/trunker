@@ -14,6 +14,7 @@ use crate::dsp::filter::DecimatingFilter;
 use crate::dsp::fm_demod::FmDemodulator;
 use crate::dsp::rrc_filter::RrcFilter;
 use crate::dsp::timing::{SymbolEvent, SymbolTiming};
+use crate::p25::nid::NidIntegrityPolicy;
 use crate::p25::receiver::{DataUnitReceiver, ReceiverEvent};
 use crate::p25::status::{StatusDeinterleaver, StreamSymbol};
 use crate::p25::types::{Dibit, Nac};
@@ -43,7 +44,9 @@ const MAX_STAGE_FACTOR: usize = 25;
 #[derive(Debug, thiserror::Error)]
 pub enum DecimationError {
     /// Sample rate is not an integer multiple of the 24 kHz channel rate.
-    #[error("sample rate {sample_rate} Hz is not a multiple of 24000; try {nearest_lower} or {nearest_higher}")]
+    #[error(
+        "sample rate {sample_rate} Hz is not a multiple of 24000; try {nearest_lower} or {nearest_higher}"
+    )]
     NotDivisible {
         /// The invalid sample rate.
         sample_rate: u32,
@@ -235,6 +238,8 @@ pub struct PipelineConfig {
     pub sample_rate: u32,
     /// Modulation type.
     pub modulation: Modulation,
+    /// NID integrity policy for accepting/rejecting data units.
+    pub nid_integrity: NidIntegrityPolicy,
 }
 
 /// Per-channel DSP and protocol decode pipeline.
@@ -281,8 +286,7 @@ impl ChannelPipeline {
         let demod_path = match config.modulation {
             Modulation::C4fm => {
                 let mut timing = SymbolTiming::new();
-                let expected_outer =
-                    2.0 * std::f32::consts::PI * 1800.0 / output_rate;
+                let expected_outer = 2.0 * std::f32::consts::PI * 1800.0 / output_rate;
                 timing.set_initial_thresholds(expected_outer, -expected_outer);
 
                 DemodPath::C4fm {
@@ -302,7 +306,7 @@ impl ChannelPipeline {
             total_decimation: decimation.total_decimation(),
             demod_path,
             status_deinterleaver: StatusDeinterleaver::new(),
-            receiver: DataUnitReceiver::new(),
+            receiver: DataUnitReceiver::new(config.nid_integrity),
             synced: false,
             current_nac: Nac::new(0),
             sample_count: 0,
@@ -415,6 +419,7 @@ mod tests {
         let config = PipelineConfig {
             sample_rate: 2_400_000,
             modulation: Modulation::C4fm,
+            nid_integrity: NidIntegrityPolicy::default(),
         };
         let pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
         assert_eq!(pipeline.sample_count(), 0);
@@ -426,6 +431,7 @@ mod tests {
         let config = PipelineConfig {
             sample_rate: 2_400_000,
             modulation: Modulation::Cqpsk,
+            nid_integrity: NidIntegrityPolicy::default(),
         };
         let pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
         assert_eq!(pipeline.sample_count(), 0);
@@ -436,6 +442,7 @@ mod tests {
         let config = PipelineConfig {
             sample_rate: 2_400_000,
             modulation: Modulation::Cqpsk,
+            nid_integrity: NidIntegrityPolicy::default(),
         };
         let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
@@ -456,6 +463,7 @@ mod tests {
         let config = PipelineConfig {
             sample_rate: 2_400_000,
             modulation: Modulation::C4fm,
+            nid_integrity: NidIntegrityPolicy::default(),
         };
         let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
