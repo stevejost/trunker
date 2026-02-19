@@ -9,6 +9,8 @@
 
 // TODO: remove #[allow(dead_code)] once vocoder has internal consumers
 #[allow(dead_code)]
+pub(crate) mod error;
+#[allow(dead_code)]
 pub(crate) mod consts;
 #[allow(dead_code)]
 pub(crate) mod frame;

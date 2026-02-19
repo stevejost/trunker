@@ -6,26 +6,30 @@
 
 use super::allocs::allocations;
 use super::consts::MAX_QUANTIZED_AMPLITUDES;
+use super::error::VocoderError;
 use super::frame::Chunks;
 use super::params::BaseParams;
 use super::scan::{ScanBits, ScanChunks, ScanSeparator};
 
 /// Descramble the given prioritized chunks u_i into the underlying quantized
 /// amplitudes b_m, voiced/unvoiced decisions, and initial gain index b_2.
+///
+/// Returns an error if the scan bit count doesn't match the bit allocation
+/// table (indicates a logic bug, not an RF condition).
 pub fn descramble(
     chunks: &Chunks,
     params: &BaseParams,
-) -> (QuantizedAmplitudes, VoiceDecisions, usize) {
+) -> Result<(QuantizedAmplitudes, VoiceDecisions, usize), VocoderError> {
     let separator = ScanSeparator::new(chunks, params);
 
-    (
+    Ok((
         QuantizedAmplitudes::new(
             ScanBits::new(ScanChunks::new(chunks, separator.scanned, params)),
             params,
-        ),
+        )?,
         VoiceDecisions::new(separator.voiced, params),
         gain_index(chunks, separator.gain_index_part),
-    )
+    ))
 }
 
 /// Decoded bootstrap value b_0 from the frame header.
@@ -102,7 +106,10 @@ impl QuantizedAmplitudes {
     /// Iterates through bit levels MSB-to-LSB per TIA-102.BABA [p39],
     /// distributing scanned bits across amplitudes according to the
     /// bit allocation table.
-    fn new(mut scan: ScanBits, params: &BaseParams) -> Self {
+    ///
+    /// Returns an error if the scan produces too few or too many bits
+    /// for the given harmonic count (indicates a logic/table bug).
+    fn new(mut scan: ScanBits, params: &BaseParams) -> Result<Self, VocoderError> {
         let count = (params.harmonic_count - 1) as usize;
         let mut values = [0u32; MAX_QUANTIZED_AMPLITUDES];
 
@@ -119,13 +126,19 @@ impl QuantizedAmplitudes {
 
                 // Shift the next scanned bit onto the LSB.
                 values[i] <<= 1;
-                values[i] |= scan.next().unwrap_or(0);
+                values[i] |= scan.next().ok_or(VocoderError::ScanExhausted {
+                    harmonic_count: params.harmonic_count,
+                })?;
             }
         }
 
-        debug_assert!(scan.next().is_none(), "scan should be exhausted");
+        if scan.next().is_some() {
+            return Err(VocoderError::ScanNotExhausted {
+                harmonic_count: params.harmonic_count,
+            });
+        }
 
-        Self { values, count }
+        Ok(Self { values, count })
     }
 
     /// Retrieve the quantized amplitude b_m where 3 <= m <= L+1.
@@ -286,7 +299,7 @@ mod tests {
 
         let bootstrap = Bootstrap::new(&chunks);
         let params = BaseParams::new(bootstrap.unwrap_period());
-        let (amplitudes, voice, gain) = descramble(&chunks, &params);
+        let (amplitudes, voice, gain) = descramble(&chunks, &params).unwrap();
 
         assert_eq!(params.harmonic_count, 16);
         assert_eq!(params.band_count, 6);
@@ -347,7 +360,7 @@ mod tests {
 
         let bootstrap = Bootstrap::new(&chunks);
         let params = BaseParams::new(bootstrap.unwrap_period());
-        let (amplitudes, voice, gain) = descramble(&chunks, &params);
+        let (amplitudes, voice, gain) = descramble(&chunks, &params).unwrap();
 
         assert_eq!(params.harmonic_count, 10);
         assert_eq!(params.band_count, 4);
@@ -396,7 +409,7 @@ mod tests {
 
         let bootstrap = Bootstrap::new(&chunks);
         let params = BaseParams::new(bootstrap.unwrap_period());
-        let (_, voice, _) = descramble(&chunks, &params);
+        let (_, voice, _) = descramble(&chunks, &params).unwrap();
 
         assert_eq!(params.harmonic_count, 16);
         assert!(voice.is_voiced(1));
@@ -527,7 +540,7 @@ mod tests {
 
         let bootstrap = Bootstrap::new(&chunks);
         let params = BaseParams::new(bootstrap.unwrap_period());
-        let (amplitudes, _, _) = descramble(&chunks, &params);
+        let (amplitudes, _, _) = descramble(&chunks, &params).unwrap();
 
         assert_eq!(params.harmonic_count, 10);
         // m=12 is out of range for L=10 (valid range: 3..=11)
