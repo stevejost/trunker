@@ -7,7 +7,7 @@
 use crate::p25::consts::{CODING_DIBITS, NID_DIBITS};
 use crate::p25::error::P25Error;
 use crate::p25::interleave;
-use crate::p25::nid::{self, DataUnit, NetworkId};
+use crate::p25::nid::{self, DataUnit, NetworkId, NidIntegrityPolicy};
 use crate::p25::trellis;
 use crate::p25::tsbk::{self, Tsbk};
 use crate::p25::types::Dibit;
@@ -80,11 +80,13 @@ pub struct DataUnitReceiver {
     header_receiver: Option<VoiceHeaderReceiver>,
     /// Voice LC terminator receiver for TDULC data units.
     terminator_receiver: Option<VoiceLcTerminatorReceiver>,
+    /// Policy for accepting/rejecting NIDs with failed integrity checks.
+    integrity_policy: NidIntegrityPolicy,
 }
 
 impl DataUnitReceiver {
-    /// Create a new receiver, ready to collect a NID.
-    pub fn new() -> Self {
+    /// Create a new receiver with the given NID integrity policy.
+    pub fn new(integrity_policy: NidIntegrityPolicy) -> Self {
         Self {
             state: State::CollectNid,
             buffer: Vec::with_capacity(CODING_DIBITS),
@@ -93,6 +95,7 @@ impl DataUnitReceiver {
             frame_group: None,
             header_receiver: None,
             terminator_receiver: None,
+            integrity_policy,
         }
     }
 
@@ -164,6 +167,29 @@ impl DataUnitReceiver {
 
         match nid::decode_nid(&dibits) {
             Ok(nid) => {
+                // Gate on NID integrity before routing to a data unit decoder.
+                if !nid.parity_ok {
+                    match self.integrity_policy {
+                        NidIntegrityPolicy::Strict => {
+                            self.state = State::Skip;
+                            return Some(ReceiverEvent::Error(
+                                P25Error::NidRejected {
+                                    reason: "parity check failed",
+                                    nac: nid.access_code.value(),
+                                    duid: nid.data_unit.to_bits(),
+                                },
+                            ));
+                        }
+                        NidIntegrityPolicy::Permissive => {
+                            tracing::warn!(
+                                nac = %nid.access_code,
+                                duid = ?nid.data_unit,
+                                "NID parity failed, continuing (permissive mode)"
+                            );
+                        }
+                    }
+                }
+
                 self.current_nid = Some(nid);
 
                 match nid.data_unit {
@@ -347,7 +373,7 @@ impl DataUnitReceiver {
 
 impl Default for DataUnitReceiver {
     fn default() -> Self {
-        Self::new()
+        Self::new(NidIntegrityPolicy::default())
     }
 }
 
@@ -445,14 +471,14 @@ mod tests {
 
     #[test]
     fn new_receiver_starts_in_collect_nid() {
-        let receiver = DataUnitReceiver::new();
+        let receiver = DataUnitReceiver::default();
         assert!(!receiver.is_done());
         assert!(matches!(receiver.state, State::CollectNid));
     }
 
     #[test]
     fn nid_decode_produces_event() {
-        let mut receiver = DataUnitReceiver::new();
+        let mut receiver = DataUnitReceiver::default();
         let nid_dibits = make_tsdu_nid_dibits(0x293);
 
         let mut events = Vec::new();
@@ -474,7 +500,7 @@ mod tests {
 
     #[test]
     fn hdu_nid_transitions_to_decode_header() {
-        let mut receiver = DataUnitReceiver::new();
+        let mut receiver = DataUnitReceiver::default();
         // Voice header (DUID = 0x0)
         let nid_dibits = u64_to_dibits(make_nid_word(0x293, 0x0));
 
@@ -489,7 +515,7 @@ mod tests {
 
     #[test]
     fn tdulc_nid_transitions_to_decode_lc_terminator() {
-        let mut receiver = DataUnitReceiver::new();
+        let mut receiver = DataUnitReceiver::default();
         // TDULC (DUID = 0xF)
         let nid_dibits = u64_to_dibits(make_nid_word(0x293, 0xF));
 
@@ -504,7 +530,7 @@ mod tests {
 
     #[test]
     fn simple_terminator_transitions_to_skip() {
-        let mut receiver = DataUnitReceiver::new();
+        let mut receiver = DataUnitReceiver::default();
         // VoiceSimpleTerminator (DUID = 0x3)
         let nid_dibits = u64_to_dibits(make_nid_word(0x293, 0x3));
 
@@ -517,7 +543,7 @@ mod tests {
 
     #[test]
     fn tsdu_nid_transitions_to_collect_tsbk() {
-        let mut receiver = DataUnitReceiver::new();
+        let mut receiver = DataUnitReceiver::default();
         let nid_dibits = make_tsdu_nid_dibits(0x293);
 
         for dibit in &nid_dibits {
@@ -530,7 +556,7 @@ mod tests {
 
     #[test]
     fn decode_single_tsbk_from_tsdu() {
-        let mut receiver = DataUnitReceiver::new();
+        let mut receiver = DataUnitReceiver::default();
 
         // Feed NID.
         let nid_dibits = make_tsdu_nid_dibits(0x293);
@@ -564,7 +590,7 @@ mod tests {
 
     #[test]
     fn decode_multiple_tsbks_in_tsdu() {
-        let mut receiver = DataUnitReceiver::new();
+        let mut receiver = DataUnitReceiver::default();
 
         // Feed NID.
         let nid_dibits = make_tsdu_nid_dibits(0x293);
@@ -618,7 +644,7 @@ mod tests {
 
     #[test]
     fn reset_returns_to_collect_nid() {
-        let mut receiver = DataUnitReceiver::new();
+        let mut receiver = DataUnitReceiver::default();
 
         // Feed NID and transition to CollectTsbk.
         let nid_dibits = make_tsdu_nid_dibits(0x293);
@@ -635,7 +661,7 @@ mod tests {
 
     #[test]
     fn skip_state_discards_dibits() {
-        let mut receiver = DataUnitReceiver::new();
+        let mut receiver = DataUnitReceiver::default();
 
         // Feed a non-TSDU NID to enter Skip state.
         let nid_dibits = u64_to_dibits(make_nid_word(0x293, 0x3)); // VoiceSimpleTerminator
@@ -653,7 +679,7 @@ mod tests {
 
     #[test]
     fn full_tsdu_sequence_nid_plus_tsbk() {
-        let mut receiver = DataUnitReceiver::new();
+        let mut receiver = DataUnitReceiver::default();
         let mut all_events = Vec::new();
 
         // Build complete TSDU: NID + one TSBK.
@@ -699,7 +725,7 @@ mod tests {
 
     #[test]
     fn ldu1_nid_transitions_to_decode_lc_frame_group() {
-        let mut receiver = DataUnitReceiver::new();
+        let mut receiver = DataUnitReceiver::default();
         // LDU1: DUID = 0x5
         let nid_dibits = u64_to_dibits(make_nid_word(0x293, 0x5));
 
@@ -724,7 +750,7 @@ mod tests {
 
     #[test]
     fn ldu2_nid_transitions_to_decode_cc_frame_group() {
-        let mut receiver = DataUnitReceiver::new();
+        let mut receiver = DataUnitReceiver::default();
         // LDU2: DUID = 0xA
         let nid_dibits = u64_to_dibits(make_nid_word(0x293, 0xA));
 
@@ -745,5 +771,114 @@ mod tests {
         assert!(!receiver.is_done());
         assert!(matches!(receiver.state, State::DecodeCcFrameGroup));
         assert!(receiver.frame_group.is_some());
+    }
+
+    // -- NID integrity policy tests --
+
+    /// Build NID dibits with broken parity (flip one bit).
+    fn make_bad_parity_nid_dibits(nac: u16, duid: u8) -> Vec<Dibit> {
+        let word = make_nid_word(nac, duid);
+        let mut dibits = u64_to_dibits(word);
+        // Flip one bit to break parity.
+        let flipped = dibits[15].bits() ^ 0x01;
+        dibits[15] = Dibit::new(flipped);
+        dibits
+    }
+
+    #[test]
+    fn strict_policy_rejects_bad_parity_nid() {
+        let mut receiver = DataUnitReceiver::new(NidIntegrityPolicy::Strict);
+        let nid_dibits = make_bad_parity_nid_dibits(0x293, 0x7);
+
+        let mut events = Vec::new();
+        for dibit in &nid_dibits {
+            if let Some(event) = receiver.feed(*dibit) {
+                events.push(event);
+            }
+        }
+
+        assert_eq!(events.len(), 1);
+        assert!(
+            matches!(&events[0], ReceiverEvent::Error(P25Error::NidRejected { .. })),
+            "strict mode should reject bad-parity NID, got {:?}",
+            events[0]
+        );
+        assert!(receiver.is_done(), "should skip to next sync after rejection");
+    }
+
+    #[test]
+    fn permissive_policy_accepts_bad_parity_nid() {
+        let mut receiver = DataUnitReceiver::new(NidIntegrityPolicy::Permissive);
+        let nid_dibits = make_bad_parity_nid_dibits(0x293, 0x7);
+
+        let mut events = Vec::new();
+        for dibit in &nid_dibits {
+            if let Some(event) = receiver.feed(*dibit) {
+                events.push(event);
+            }
+        }
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ReceiverEvent::Nid(nid) => {
+                assert!(!nid.parity_ok, "parity should be flagged as bad");
+            }
+            other => panic!("permissive mode should emit Nid event, got {other:?}"),
+        }
+        // Should have transitioned to CollectTsbk (DUID 0x7 = TSDU).
+        assert!(!receiver.is_done());
+        assert!(matches!(receiver.state, State::CollectTsbk));
+    }
+
+    #[test]
+    fn strict_policy_accepts_good_parity_nid() {
+        let mut receiver = DataUnitReceiver::new(NidIntegrityPolicy::Strict);
+        let nid_dibits = make_tsdu_nid_dibits(0x293);
+
+        let mut events = Vec::new();
+        for dibit in &nid_dibits {
+            if let Some(event) = receiver.feed(*dibit) {
+                events.push(event);
+            }
+        }
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            ReceiverEvent::Nid(nid) => {
+                assert!(nid.parity_ok);
+                assert!(nid.data_unit.is_trunking_signaling());
+            }
+            other => panic!("expected Nid event, got {other:?}"),
+        }
+        assert!(!receiver.is_done());
+    }
+
+    #[test]
+    fn strict_rejection_includes_nac_and_duid() {
+        let mut receiver = DataUnitReceiver::new(NidIntegrityPolicy::Strict);
+        let nid_dibits = make_bad_parity_nid_dibits(0x5FC, 0x5);
+
+        let mut events = Vec::new();
+        for dibit in &nid_dibits {
+            if let Some(event) = receiver.feed(*dibit) {
+                events.push(event);
+            }
+        }
+
+        match &events[0] {
+            ReceiverEvent::Error(err @ P25Error::NidRejected { nac, duid, .. }) => {
+                assert_eq!(*nac, 0x5FC);
+                assert_eq!(*duid, 0x5);
+                // Error message should contain actionable diagnostics.
+                let msg = format!("{err}");
+                assert!(msg.contains("5FC"), "error should contain NAC: {msg}");
+            }
+            other => panic!("expected NidRejected error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn default_policy_is_strict() {
+        assert_eq!(NidIntegrityPolicy::default(), NidIntegrityPolicy::Strict);
     }
 }

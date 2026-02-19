@@ -11,6 +11,7 @@ use num_complex::Complex;
 
 use crate::dsp::nco::Nco;
 use crate::p25::ident::IdentTable;
+use crate::p25::nid::NidIntegrityPolicy;
 use crate::p25::receiver::ReceiverEvent;
 use crate::p25::tsbk::{Tsbk, TsbkPayload};
 use crate::p25::types::{Frequency, Nac, SourceId, TalkgroupId};
@@ -59,6 +60,8 @@ pub struct ChannelManagerConfig {
     pub call_timeout_seconds: f64,
     /// Modulation type for voice channel pipelines.
     pub modulation: Modulation,
+    /// NID integrity policy for voice channel pipelines.
+    pub nid_integrity: NidIntegrityPolicy,
 }
 
 /// Manages voice channel pipelines for wideband trunking.
@@ -102,6 +105,7 @@ impl ChannelManager {
             pipeline_config: PipelineConfig {
                 sample_rate: config.sample_rate,
                 modulation: config.modulation,
+                nid_integrity: config.nid_integrity,
             },
             sample_count: 0,
         }
@@ -304,6 +308,7 @@ mod tests {
             sample_rate: 2_400_000,
             call_timeout_seconds: 3.0,
             modulation: Modulation::Cqpsk,
+            nid_integrity: NidIntegrityPolicy::default(),
         }
     }
 

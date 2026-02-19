@@ -13,6 +13,7 @@ use trunker::p25::ident::IdentTable;
 use trunker::p25::receiver::ReceiverEvent;
 use trunker::p25::tsbk::{TsbkOpcode, TsbkPayload};
 use trunker::p25::types::Frequency;
+use trunker::p25::nid::NidIntegrityPolicy;
 use trunker::pipeline::{self, ChannelPipeline, PipelineConfig};
 use trunker::sdr::cf32_reader::Cf32Reader;
 use trunker::sdr::soapy_source::{self, SoapySource};
@@ -39,6 +40,24 @@ impl From<CliModulation> for pipeline::Modulation {
         match m {
             CliModulation::C4fm => Self::C4fm,
             CliModulation::Cqpsk => Self::Cqpsk,
+        }
+    }
+}
+
+/// NID integrity policy for CLI argument parsing.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliNidIntegrity {
+    /// Reject data units when the NID fails integrity checks.
+    Strict,
+    /// Accept data units with failed NID integrity (for debugging).
+    Permissive,
+}
+
+impl From<CliNidIntegrity> for NidIntegrityPolicy {
+    fn from(p: CliNidIntegrity) -> Self {
+        match p {
+            CliNidIntegrity::Strict => Self::Strict,
+            CliNidIntegrity::Permissive => Self::Permissive,
         }
     }
 }
@@ -111,6 +130,11 @@ enum Command {
         /// Modulation type: c4fm (default) or cqpsk (simulcast).
         #[arg(short, long, default_value = "c4fm")]
         modulation: CliModulation,
+
+        /// NID integrity policy: strict (default) rejects data units with
+        /// failed parity; permissive continues with a warning.
+        #[arg(long, default_value = "strict")]
+        nid_integrity: CliNidIntegrity,
     },
 
     /// Decode a wideband P25 trunked system (control + voice channels).
@@ -143,6 +167,11 @@ enum Command {
         /// Seconds before tearing down an idle voice channel.
         #[arg(long, default_value_t = 3.0)]
         call_timeout: f64,
+
+        /// NID integrity policy: strict (default) rejects data units with
+        /// failed parity; permissive continues with a warning.
+        #[arg(long, default_value = "strict")]
+        nid_integrity: CliNidIntegrity,
     },
 
     /// List available SoapySDR devices.
@@ -187,6 +216,7 @@ fn main() -> Result<()> {
             sample_rate,
             frequency,
             modulation,
+            nid_integrity,
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
@@ -201,13 +231,17 @@ fn main() -> Result<()> {
             )?;
 
             let pipeline_modulation: pipeline::Modulation = modulation.into();
+            let nid_policy: NidIntegrityPolicy = nid_integrity.into();
             tracing::info!(
                 sample_rate,
                 frequency,
                 modulation = ?modulation,
+                nid_integrity = ?nid_policy,
                 "starting control channel decoder"
             );
-            decode_control_channel(sample_source, sample_rate, pipeline_modulation, &running)?;
+            decode_control_channel(
+                sample_source, sample_rate, pipeline_modulation, nid_policy, &running,
+            )?;
         }
         Command::Trunk {
             source,
@@ -218,6 +252,7 @@ fn main() -> Result<()> {
             center_freq,
             modulation,
             call_timeout,
+            nid_integrity,
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
@@ -232,10 +267,12 @@ fn main() -> Result<()> {
             )?;
 
             let pipeline_modulation: pipeline::Modulation = modulation.into();
+            let nid_policy: NidIntegrityPolicy = nid_integrity.into();
             tracing::info!(
                 sample_rate,
                 center_freq,
                 modulation = ?modulation,
+                nid_integrity = ?nid_policy,
                 call_timeout,
                 "starting wideband trunked decoder"
             );
@@ -244,6 +281,7 @@ fn main() -> Result<()> {
                 sample_rate,
                 center_freq,
                 pipeline_modulation,
+                nid_policy,
                 call_timeout,
                 &running,
             )?;
@@ -368,11 +406,13 @@ fn decode_control_channel(
     source: SampleSource,
     sample_rate: u32,
     modulation: pipeline::Modulation,
+    nid_integrity: NidIntegrityPolicy,
     running: &Arc<AtomicBool>,
 ) -> Result<()> {
     let config = PipelineConfig {
         sample_rate,
         modulation,
+        nid_integrity,
     };
     let mut pipeline = ChannelPipeline::new(config)?;
     let mut ident_table = IdentTable::new();
@@ -455,12 +495,14 @@ fn decode_trunked(
     sample_rate: u32,
     center_freq: u64,
     modulation: pipeline::Modulation,
+    nid_integrity: NidIntegrityPolicy,
     call_timeout: f64,
     running: &Arc<AtomicBool>,
 ) -> Result<()> {
     let config = PipelineConfig {
         sample_rate,
         modulation,
+        nid_integrity,
     };
     let mut cc_pipeline = ChannelPipeline::new(config)?;
     let mut ident_table = IdentTable::new();
@@ -470,6 +512,7 @@ fn decode_trunked(
         center_frequency: Frequency::from_hz(center_freq),
         sample_rate,
         call_timeout_seconds: call_timeout,
+        nid_integrity,
         modulation,
     });
 

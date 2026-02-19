@@ -187,7 +187,7 @@ fn decode_synthetic_tsdu_through_full_pipeline() {
     assert_eq!(data_dibits, raw_data);
 
     // 4. Feed into DataUnitReceiver.
-    let mut receiver = DataUnitReceiver::new();
+    let mut receiver = DataUnitReceiver::default();
     let mut events = Vec::new();
     for &dibit in &data_dibits {
         if let Some(event) = receiver.feed(dibit) {
@@ -289,7 +289,7 @@ fn decode_grant_with_frequency_resolution() {
     }
 
     // Feed into receiver.
-    let mut receiver = DataUnitReceiver::new();
+    let mut receiver = DataUnitReceiver::default();
     let mut events = Vec::new();
     for &dibit in &data_dibits {
         if let Some(event) = receiver.feed(dibit) {

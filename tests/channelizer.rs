@@ -6,6 +6,7 @@
 use num_complex::Complex;
 
 use trunker::channel_manager::{ChannelManager, ChannelManagerConfig};
+use trunker::p25::nid::NidIntegrityPolicy;
 use trunker::dsp::nco::Nco;
 use trunker::p25::ident::IdentTable;
 use trunker::p25::tsbk::{Tsbk, TsbkHeader, TsbkOpcode, TsbkPayload};
@@ -130,6 +131,7 @@ fn channel_manager_tracks_multiple_grants() {
         sample_rate: 2_400_000,
         call_timeout_seconds: 3.0,
         modulation: Modulation::Cqpsk,
+        nid_integrity: NidIntegrityPolicy::default(),
     });
     let ident_table = make_ident_table();
 
@@ -159,6 +161,7 @@ fn channel_manager_rejects_out_of_band() {
         sample_rate: 2_400_000,
         call_timeout_seconds: 3.0,
         modulation: Modulation::Cqpsk,
+        nid_integrity: NidIntegrityPolicy::default(),
     });
     let ident_table = make_ident_table();
 
@@ -187,6 +190,7 @@ fn channel_manager_timeout_lifecycle() {
         sample_rate: 2_400_000,
         call_timeout_seconds: 0.01, // Very short: 24000 samples
         modulation: Modulation::Cqpsk,
+        nid_integrity: NidIntegrityPolicy::default(),
     });
     let ident_table = make_ident_table();
 
@@ -228,6 +232,7 @@ fn channel_pipeline_processes_noise_without_events() {
     let config = PipelineConfig {
         sample_rate: 2_400_000,
         modulation: Modulation::Cqpsk,
+        nid_integrity: NidIntegrityPolicy::default(),
     };
     let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
@@ -256,6 +261,7 @@ fn both_modulation_types_process_cleanly() {
         let config = PipelineConfig {
             sample_rate: 2_400_000,
             modulation,
+            nid_integrity: NidIntegrityPolicy::default(),
         };
         let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 

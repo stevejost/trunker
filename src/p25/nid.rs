@@ -9,6 +9,21 @@ use crate::p25::consts::NID_DIBITS;
 use crate::p25::error::P25Error;
 use crate::p25::types::{Dibit, Nac};
 
+/// Policy for gating data unit routing on NID integrity.
+///
+/// Controls whether the receiver accepts or rejects NIDs that fail
+/// integrity checks (currently parity, BCH in the future).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NidIntegrityPolicy {
+    /// Reject NIDs that fail integrity checks. The receiver skips the
+    /// data unit and waits for the next frame sync.
+    #[default]
+    Strict,
+    /// Accept NIDs that fail integrity checks with a warning log.
+    /// Useful for development and debugging noisy channels.
+    Permissive,
+}
+
 /// Data Unit Identifier — identifies the type of P25 data unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataUnit {
