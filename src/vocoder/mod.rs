@@ -32,3 +32,5 @@ pub(crate) mod spectral;
 pub(crate) mod prev;
 #[allow(dead_code)]
 pub(crate) mod enhance;
+#[allow(dead_code)]
+pub(crate) mod window;
