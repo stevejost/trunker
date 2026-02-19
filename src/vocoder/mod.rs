@@ -14,3 +14,5 @@ pub(crate) mod consts;
 pub(crate) mod frame;
 #[allow(dead_code)]
 pub(crate) mod params;
+#[allow(dead_code)]
+pub(crate) mod allocs;
