@@ -64,6 +64,7 @@ impl UnvoicedDft {
         // Create a Gaussian distribution with mean 0 and variance E_w / 2.
         // Normal::new takes standard deviation, not variance.
         let stddev = (window::SYNTHESIS_ENERGY / 2.0).sqrt();
+        // Safe: stddev is derived from the constant SYNTHESIS_ENERGY, always positive and finite.
         let gaussian = Normal::new(0.0f32, stddev).unwrap();
 
         for (l, &amplitude) in enhanced.iter().enumerate() {
