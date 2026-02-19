@@ -7,8 +7,10 @@
 //! 2. Perform spectral amplitude enhancement
 //! 3. Synthesize audio via overlap-add harmonic synthesis
 
-// TODO: remove once vocoder has internal consumers (issue #41+)
+// TODO: remove #[allow(dead_code)] once vocoder has internal consumers
 #[allow(dead_code)]
 pub(crate) mod consts;
 #[allow(dead_code)]
 pub(crate) mod frame;
+#[allow(dead_code)]
+pub(crate) mod params;
