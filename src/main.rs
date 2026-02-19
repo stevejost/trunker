@@ -69,6 +69,19 @@ struct GainControl {
     auto_gain: bool,
 }
 
+/// Device-specific settings applied via SoapySDR write_setting().
+///
+/// These correspond to the "Other Settings" shown by `SoapySDRUtil --probe`.
+/// Each setting is a key=value pair. Can be specified multiple times.
+///
+/// Example: `--setting rfgain_sel=24 --setting hdr_ctrl=false`
+#[derive(Args, Clone)]
+struct DeviceSettings {
+    /// Device-specific setting as key=value (repeatable).
+    #[arg(long = "setting", value_name = "KEY=VALUE")]
+    settings: Vec<String>,
+}
+
 /// Available subcommands.
 #[derive(Subcommand)]
 enum Command {
@@ -79,6 +92,13 @@ enum Command {
 
         #[command(flatten)]
         gain_control: GainControl,
+
+        #[command(flatten)]
+        device_settings: DeviceSettings,
+
+        /// Antenna port name (e.g. "Antenna A"). See `p25 devices` output.
+        #[arg(long)]
+        antenna: Option<String>,
 
         /// Sample rate in Hz.
         #[arg(short, long, default_value_t = 2_400_000)]
@@ -100,6 +120,13 @@ enum Command {
 
         #[command(flatten)]
         gain_control: GainControl,
+
+        #[command(flatten)]
+        device_settings: DeviceSettings,
+
+        /// Antenna port name (e.g. "Antenna A"). See `p25 devices` output.
+        #[arg(long)]
+        antenna: Option<String>,
 
         /// Sample rate in Hz.
         #[arg(short, long, default_value_t = 2_400_000)]
@@ -134,8 +161,10 @@ fn main() -> Result<()> {
     // When stdout is piped (e.g., `p25 cc ... | p25 monitor`), suppress all
     // stderr output. SoapySDR and hardware drivers print directly to stderr
     // and cannot be individually silenced, corrupting downstream TUI displays.
+    // Skip suppression if RUST_LOG is set so debug output is visible.
     // To view logs while piping: `p25 cc ... 2>decode.log | p25 monitor`
-    if !std::io::stdout().is_terminal() {
+    let rust_log_set = std::env::var_os("RUST_LOG").is_some();
+    if !std::io::stdout().is_terminal() && !rust_log_set {
         suppress_stderr();
     }
 
@@ -153,14 +182,19 @@ fn main() -> Result<()> {
         Command::Cc {
             source,
             gain_control,
+            device_settings,
+            antenna,
             sample_rate,
             frequency,
             modulation,
         } => {
             let running = setup_signal_handler()?;
+            let settings = parse_settings(&device_settings.settings)?;
             let sample_source = open_sample_source(
                 source,
                 &gain_control,
+                antenna.as_deref(),
+                &settings,
                 sample_rate,
                 frequency,
                 running.clone(),
@@ -178,15 +212,20 @@ fn main() -> Result<()> {
         Command::Trunk {
             source,
             gain_control,
+            device_settings,
+            antenna,
             sample_rate,
             center_freq,
             modulation,
             call_timeout,
         } => {
             let running = setup_signal_handler()?;
+            let settings = parse_settings(&device_settings.settings)?;
             let sample_source = open_sample_source(
                 source,
                 &gain_control,
+                antenna.as_deref(),
+                &settings,
                 sample_rate,
                 center_freq,
                 running.clone(),
@@ -270,6 +309,8 @@ fn setup_signal_handler() -> Result<Arc<AtomicBool>> {
 fn open_sample_source(
     source: InputSource,
     gain_control: &GainControl,
+    antenna: Option<&str>,
+    settings: &[(String, String)],
     sample_rate: u32,
     frequency: u64,
     running: Arc<AtomicBool>,
@@ -280,12 +321,26 @@ fn open_sample_source(
     } else if let Some(device_args) = source.device {
         validate_device_args(frequency, gain_control)?;
         let gain = resolve_gain(gain_control);
-        let soapy = SoapySource::open(&device_args, frequency, sample_rate, gain, running)?;
+        let soapy = SoapySource::open(
+            &device_args, frequency, sample_rate, gain, antenna, settings, running,
+        )?;
         Ok(SampleSource::Soapy(soapy))
     } else {
         // clap's required group ensures we never reach here.
         bail!("specify --input or --device")
     }
+}
+
+/// Parse `key=value` setting strings into tuples.
+fn parse_settings(raw: &[String]) -> Result<Vec<(String, String)>> {
+    raw.iter()
+        .map(|s| {
+            let (key, value) = s
+                .split_once('=')
+                .ok_or_else(|| anyhow::anyhow!("invalid setting '{s}': expected key=value"))?;
+            Ok((key.to_string(), value.to_string()))
+        })
+        .collect()
 }
 
 /// Validate that required args are present for live SDR mode.
