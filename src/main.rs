@@ -8,6 +8,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use num_complex::Complex;
 
 use trunker::channel_manager::{ChannelManager, ChannelManagerConfig, VoiceChannelEvent};
+use trunker::dsp::nco::Nco;
 use trunker::output::json;
 use trunker::output::wav::WavWriter;
 use trunker::p25::ident::IdentTable;
@@ -125,9 +126,14 @@ enum Command {
         #[arg(short, long, default_value_t = 2_400_000)]
         sample_rate: u32,
 
-        /// Center frequency in Hz (required for live SDR mode).
+        /// Signal frequency in Hz (required for live SDR mode).
         #[arg(short, long, default_value_t = 0)]
         frequency: u64,
+
+        /// Center frequency of the IQ capture in Hz (for file input only).
+        /// When provided with --frequency, an NCO shifts the signal to baseband.
+        #[arg(long, default_value_t = 0)]
+        center_freq: u64,
 
         /// Modulation type: c4fm (default) or cqpsk (simulcast).
         #[arg(short, long, default_value = "c4fm")]
@@ -228,6 +234,7 @@ fn main() -> Result<()> {
             antenna,
             sample_rate,
             frequency,
+            center_freq,
             modulation,
             nid_integrity,
             decode_audio,
@@ -248,11 +255,19 @@ fn main() -> Result<()> {
             // --audio-file implies --decode-audio.
             let decode_audio = decode_audio || audio_file.is_some();
 
+            // Compute NCO offset when both --frequency and --center-freq are set.
+            let offset_hz = if frequency != 0 && center_freq != 0 {
+                frequency as f64 - center_freq as f64
+            } else {
+                0.0
+            };
+
             let pipeline_modulation: pipeline::Modulation = modulation.into();
             let nid_policy: NidIntegrityPolicy = nid_integrity.into();
             tracing::info!(
                 sample_rate,
                 frequency,
+                center_freq,
                 modulation = ?modulation,
                 nid_integrity = ?nid_policy,
                 "starting control channel decoder"
@@ -260,6 +275,7 @@ fn main() -> Result<()> {
             decode_control_channel(
                 sample_source,
                 sample_rate,
+                offset_hz,
                 pipeline_modulation,
                 nid_policy,
                 decode_audio,
@@ -434,9 +450,14 @@ fn resolve_gain(gain_control: &GainControl) -> Option<f64> {
 }
 
 /// Run the control channel decode pipeline.
+///
+/// * `offset_hz` - NCO frequency offset in hertz. When non-zero, each sample
+///   is shifted by this amount before entering the pipeline.
+#[allow(clippy::too_many_arguments)]
 fn decode_control_channel(
     source: SampleSource,
     sample_rate: u32,
+    offset_hz: f64,
     modulation: pipeline::Modulation,
     nid_integrity: NidIntegrityPolicy,
     decode_audio: bool,
@@ -466,13 +487,25 @@ fn decode_control_channel(
         None
     };
 
+    let mut nco = if offset_hz != 0.0 {
+        tracing::info!(offset_hz, "applying NCO shift from center");
+        Some(Nco::new(offset_hz, sample_rate as f64))
+    } else {
+        None
+    };
+
     for iq_sample in source {
         if !running.load(Ordering::SeqCst) {
             tracing::info!("interrupted by signal");
             break;
         }
 
-        if let Some(event) = pipeline.process_sample(iq_sample) {
+        let sample = match nco.as_mut() {
+            Some(nco) => nco.shift(iq_sample),
+            None => iq_sample,
+        };
+
+        if let Some(event) = pipeline.process_sample(sample) {
             let nac = pipeline.current_nac();
             handle_receiver_event(
                 nac,
@@ -1046,6 +1079,49 @@ mod tests {
         match cli.command {
             Command::Cc { audio_file, .. } => {
                 assert!(audio_file.is_none());
+            }
+            _ => panic!("expected Cc command"),
+        }
+    }
+
+    // -- center-freq CLI tests --
+
+    #[test]
+    fn cli_cc_center_freq_parses() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "cc",
+            "--input",
+            "wideband.iq",
+            "--frequency",
+            "852350000",
+            "--center-freq",
+            "851000000",
+        ]);
+        assert!(
+            cli.is_ok(),
+            "cc with --center-freq should parse: {:?}",
+            cli.err()
+        );
+        match cli.unwrap().command {
+            Command::Cc {
+                frequency,
+                center_freq,
+                ..
+            } => {
+                assert_eq!(frequency, 852_350_000);
+                assert_eq!(center_freq, 851_000_000);
+            }
+            _ => panic!("expected Cc command"),
+        }
+    }
+
+    #[test]
+    fn cli_cc_center_freq_defaults_to_zero() {
+        let cli = Cli::try_parse_from(["p25", "cc", "--input", "test.iq"]).unwrap();
+        match cli.command {
+            Command::Cc { center_freq, .. } => {
+                assert_eq!(center_freq, 0);
             }
             _ => panic!("expected Cc command"),
         }
