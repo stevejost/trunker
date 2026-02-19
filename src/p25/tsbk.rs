@@ -311,6 +311,24 @@ pub enum TsbkPayload {
         /// Control channel.
         channel: ChannelNumber,
     },
+    /// Identifier update candidate from opcode 0x20.
+    ///
+    /// Parsed with sanity checks but NOT automatically applied to the
+    /// identifier table. Downstream consumers decide whether to use it.
+    IdentCandidate {
+        /// 4-bit identifier.
+        identifier: u8,
+        /// Channel bandwidth in hertz.
+        bandwidth: u32,
+        /// Transmit offset in hertz (signed).
+        transmit_offset: i64,
+        /// Channel spacing in hertz.
+        channel_spacing: u32,
+        /// Base frequency in hertz.
+        base_frequency: u64,
+        /// Raw payload bytes for provenance.
+        raw_data: [u8; 8],
+    },
     /// Unknown or unhandled opcode (raw payload bytes).
     Unknown {
         /// Raw payload bytes (2..10).
@@ -368,7 +386,7 @@ fn parse_payload(header: &TsbkHeader, data: &[u8; 12]) -> TsbkPayload {
         TsbkOpcode::SndcpDataChannelGrant => parse_sndcp_data_channel_grant(data),
         TsbkOpcode::DenyResponse => parse_deny_response(data),
         TsbkOpcode::ChannelParametersUpdate => parse_identifier_update(data),
-        TsbkOpcode::IdentifierUpdate => parse_unknown(data),
+        TsbkOpcode::IdentifierUpdate => parse_ident_candidate(data),
         TsbkOpcode::GroupAffiliationResponse => parse_group_affiliation_response(data),
         TsbkOpcode::UnitRegistrationResponse => parse_unit_registration_response(data),
         TsbkOpcode::UnitDeregistrationAck => parse_unit_deregistration_ack(data),
@@ -408,7 +426,17 @@ fn parse_group_voice_grant_update(data: &[u8; 12]) -> TsbkPayload {
     }
 }
 
-/// Parse identifier update (opcode 0x3D).
+/// Shared identifier fields extracted from the 4+9+9+10+32 bit layout
+/// used by opcodes 0x20 and 0x3D.
+struct IdentFields {
+    identifier: u8,
+    bandwidth: u32,
+    transmit_offset: i64,
+    channel_spacing: u32,
+    base_frequency: u64,
+}
+
+/// Extract identifier fields from the standard 4+9+9+10+32 bit layout.
 ///
 /// Layout (bytes 2-9, 64 bits total):
 ///   Identifier: 4 bits
@@ -416,7 +444,7 @@ fn parse_group_voice_grant_update(data: &[u8; 12]) -> TsbkPayload {
 ///   Transmit Offset: 9 bits (x 250 kHz, MSB=sign)
 ///   Channel Spacing: 10 bits (x 125 Hz)
 ///   Base Frequency: 32 bits (x 5 Hz)
-fn parse_identifier_update(data: &[u8; 12]) -> TsbkPayload {
+fn parse_ident_fields(data: &[u8; 12]) -> IdentFields {
     let word = u64::from_be_bytes([
         data[2], data[3], data[4], data[5], data[6], data[7], data[8], data[9],
     ]);
@@ -437,12 +465,24 @@ fn parse_identifier_update(data: &[u8; 12]) -> TsbkPayload {
     let channel_spacing = ((word >> 32) & 0x3FF) as u32 * 125;
     let base_frequency = (word & 0xFFFF_FFFF) * 5;
 
-    TsbkPayload::IdentifierUpdate {
+    IdentFields {
         identifier,
         bandwidth,
         transmit_offset,
         channel_spacing,
         base_frequency,
+    }
+}
+
+/// Parse identifier update (opcode 0x3D).
+fn parse_identifier_update(data: &[u8; 12]) -> TsbkPayload {
+    let f = parse_ident_fields(data);
+    TsbkPayload::IdentifierUpdate {
+        identifier: f.identifier,
+        bandwidth: f.bandwidth,
+        transmit_offset: f.transmit_offset,
+        channel_spacing: f.channel_spacing,
+        base_frequency: f.base_frequency,
     }
 }
 
@@ -645,6 +685,41 @@ fn parse_identifier_update_vu(data: &[u8; 12]) -> TsbkPayload {
         transmit_offset,
         channel_spacing,
         base_frequency,
+    }
+}
+
+/// Minimum plausible P25 base frequency: 25 MHz.
+const MIN_BASE_FREQUENCY_HZ: u64 = 25_000_000;
+
+/// Maximum plausible P25 base frequency: 1.3 GHz.
+const MAX_BASE_FREQUENCY_HZ: u64 = 1_300_000_000;
+
+/// Parse opcode 0x20 (IDENT_UP) as a guarded identifier candidate.
+///
+/// Uses the same 4+9+9+10+32 bit layout as opcode 0x3D, but applies
+/// protocol-level sanity checks. Falls back to `Unknown` when any
+/// check fails.
+fn parse_ident_candidate(data: &[u8; 12]) -> TsbkPayload {
+    let f = parse_ident_fields(data);
+
+    let mut raw_data = [0u8; 8];
+    raw_data.copy_from_slice(&data[2..10]);
+
+    let sane = f.channel_spacing > 0
+        && f.bandwidth > 0
+        && (MIN_BASE_FREQUENCY_HZ..=MAX_BASE_FREQUENCY_HZ).contains(&f.base_frequency);
+
+    if sane {
+        TsbkPayload::IdentCandidate {
+            identifier: f.identifier,
+            bandwidth: f.bandwidth,
+            transmit_offset: f.transmit_offset,
+            channel_spacing: f.channel_spacing,
+            base_frequency: f.base_frequency,
+            raw_data,
+        }
+    } else {
+        TsbkPayload::Unknown { data: raw_data }
     }
 }
 
@@ -1387,5 +1462,133 @@ mod tests {
             }
             other => panic!("expected SndcpDataChannelGrant, got {other:?}"),
         }
+    }
+
+    // -- TSBK 0x20 guarded ident candidate tests --
+
+    #[test]
+    fn ident_candidate_valid_0x20_parses_as_candidate() {
+        // Use the same bit layout as the 0x3D test vector but with opcode 0x20.
+        // id=6, bw=12500, offset=-45MHz, spacing=6250, base=851006250
+        let data: [u8; 10] = [
+            0xA0, // last_block=1, opcode=0x20
+            0x00, // mfid
+            0x63, 0x22, 0xD0, 0x32, 0x0A, 0x25, 0x10, 0xA2,
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert_eq!(parsed.header.opcode, TsbkOpcode::IdentifierUpdate);
+        match parsed.payload {
+            TsbkPayload::IdentCandidate {
+                identifier,
+                bandwidth,
+                transmit_offset,
+                channel_spacing,
+                base_frequency,
+                raw_data,
+            } => {
+                assert_eq!(identifier, 6);
+                assert_eq!(bandwidth, 12_500);
+                assert_eq!(transmit_offset, -45_000_000);
+                assert_eq!(channel_spacing, 6_250);
+                assert_eq!(base_frequency, 851_006_250);
+                assert_eq!(raw_data, [0x63, 0x22, 0xD0, 0x32, 0x0A, 0x25, 0x10, 0xA2]);
+            }
+            other => panic!("expected IdentCandidate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ident_candidate_zero_spacing_falls_back_to_unknown() {
+        // Zero channel spacing should fail sanity check.
+        // Word: id=6, bw=100(raw)*125=12500, off=0, spacing=0, base=851006250
+        // Construct: spacing raw bits [41:32] = 0
+        let data: [u8; 10] = [
+            0xA0, // opcode=0x20
+            0x00, 0x63, 0x20, 0x00, 0x00, 0x0A, 0x25, 0x10, 0xA2,
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert!(
+            matches!(parsed.payload, TsbkPayload::Unknown { .. }),
+            "zero spacing should fall back to Unknown, got {:?}",
+            parsed.payload
+        );
+    }
+
+    #[test]
+    fn ident_candidate_zero_bandwidth_falls_back_to_unknown() {
+        // Zero bandwidth raw bits should fail sanity check.
+        // Word: id=0, bw=0, off=0, spacing=50, base=851006250
+        // Byte 2 (bits 63-56): 0000_0000 = id=0, bw_hi=0
+        // Byte 3 (bits 55-48): 0000_0000 = bw_lo=0, off_hi=0
+        // Byte 4 (bits 47-40): 0000_0000 = off=0
+        // Byte 5 (bits 39-32): 0011_0010 = spacing=50
+        // Bytes 6-9: 0x0A251082 = base raw
+        let data: [u8; 10] = [
+            0xA0, // opcode=0x20
+            0x00, 0x00, 0x00, 0x00, 0x32, 0x0A, 0x25, 0x10, 0xA2,
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert!(
+            matches!(parsed.payload, TsbkPayload::Unknown { .. }),
+            "zero bandwidth should fall back to Unknown, got {:?}",
+            parsed.payload
+        );
+    }
+
+    #[test]
+    fn ident_candidate_out_of_range_frequency_falls_back_to_unknown() {
+        // Base frequency below 25 MHz should fail.
+        // base_raw = 1_000_000 (x5 = 5MHz, below 25MHz min)
+        // 1000000 = 0x000F4240
+        let data: [u8; 10] = [
+            0xA0, // opcode=0x20
+            0x00, 0x63, 0x22, 0xD0, 0x32, 0x00, 0x0F, 0x42, 0x40,
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        assert!(
+            matches!(parsed.payload, TsbkPayload::Unknown { .. }),
+            "sub-25MHz base frequency should fall back to Unknown, got {:?}",
+            parsed.payload
+        );
+    }
+
+    #[test]
+    fn ident_candidate_preserves_raw_data() {
+        let data: [u8; 10] = [
+            0xA0, 0x00, 0x63, 0x22, 0xD0, 0x32, 0x0A, 0x25, 0x10, 0xA2,
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        match parsed.payload {
+            TsbkPayload::IdentCandidate { raw_data, .. } => {
+                assert_eq!(raw_data, data[2..10]);
+            }
+            other => panic!("expected IdentCandidate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ident_candidate_not_applied_to_ident_table() {
+        let data: [u8; 10] = [
+            0xA0, 0x00, 0x63, 0x22, 0xD0, 0x32, 0x0A, 0x25, 0x10, 0xA2,
+        ];
+        let tsbk = make_tsbk_with_crc(&data);
+        let parsed = parse(&tsbk).unwrap();
+
+        // IdentTable::update should return false for IdentCandidate.
+        let mut table = crate::p25::ident::IdentTable::new();
+        assert!(
+            !table.update(&parsed),
+            "IdentCandidate should NOT be auto-applied to ident table"
+        );
     }
 }
