@@ -196,6 +196,14 @@ impl EnhancedSpectrals {
     fn iter_mut(&mut self) -> std::slice::IterMut<'_, f32> {
         self.values.iter_mut()
     }
+
+    /// Create `EnhancedSpectrals` from a raw slice of amplitude values.
+    #[cfg(test)]
+    pub(crate) fn from_values(values: &[f32]) -> Self {
+        Self {
+            values: values.to_vec(),
+        }
+    }
 }
 
 impl Default for EnhancedSpectrals {
