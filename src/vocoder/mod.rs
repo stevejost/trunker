@@ -22,3 +22,7 @@ pub(crate) mod allocs;
 pub(crate) mod scan;
 #[allow(dead_code)]
 pub(crate) mod descramble;
+#[allow(dead_code)]
+pub(crate) mod gain;
+#[allow(dead_code)]
+pub(crate) mod coefs;
