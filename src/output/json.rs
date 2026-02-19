@@ -201,6 +201,21 @@ pub enum TsbkFields {
         /// Control channel frequency in MHz, or null.
         frequency: Option<f64>,
     },
+    /// Identifier candidate from opcode 0x20 (not auto-applied to ident table).
+    IdentCandidate {
+        /// 4-bit identifier.
+        identifier: u8,
+        /// Channel bandwidth in hertz.
+        bandwidth: u32,
+        /// Transmit offset in hertz.
+        transmit_offset: i64,
+        /// Channel spacing in hertz.
+        channel_spacing: u32,
+        /// Base frequency in hertz.
+        base_frequency: u64,
+        /// Raw payload bytes as hex string.
+        raw_data: String,
+    },
     /// Unknown opcode with raw hex payload.
     Unknown {
         /// Raw payload bytes as hex string.
@@ -386,6 +401,25 @@ pub fn to_json_value(nac: Nac, tsbk: &Tsbk, ident_table: &IdentTable) -> TsbkJso
             site_id: site_id.value(),
             channel: channel.value(),
             frequency: resolve_mhz(ident_table, *channel),
+        },
+
+        TsbkPayload::IdentCandidate {
+            identifier,
+            bandwidth,
+            transmit_offset,
+            channel_spacing,
+            base_frequency,
+            raw_data,
+        } => TsbkFields::IdentCandidate {
+            identifier: *identifier,
+            bandwidth: *bandwidth,
+            transmit_offset: *transmit_offset,
+            channel_spacing: *channel_spacing,
+            base_frequency: *base_frequency,
+            raw_data: raw_data
+                .iter()
+                .map(|b| format!("{b:02X}"))
+                .collect::<String>(),
         },
 
         TsbkPayload::Unknown { data } => TsbkFields::Unknown {
