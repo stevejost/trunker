@@ -34,3 +34,5 @@ pub(crate) mod prev;
 pub(crate) mod enhance;
 #[allow(dead_code)]
 pub(crate) mod window;
+#[allow(dead_code)]
+pub(crate) mod voiced;

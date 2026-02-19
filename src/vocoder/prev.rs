@@ -4,19 +4,30 @@
 //! the current frame. This struct accumulates those fields as vocoder
 //! modules are ported.
 
+use super::descramble::VoiceDecisions;
+use super::enhance::EnhancedSpectrals;
 use super::params::BaseParams;
 use super::spectral::Spectrals;
+use super::voiced::{Phase, PhaseBase};
 
 /// Parameters saved from the previous frame, used when constructing the
 /// current frame.
 ///
-/// Additional fields (enhanced spectrals, voice decisions, phase, etc.)
-/// will be added as the corresponding modules are ported.
+/// Additional fields (error rate, energy, unvoiced DFT, etc.) will be
+/// added as the corresponding modules are ported.
 pub(crate) struct PrevFrame {
     /// Base parameters from the previous frame.
     pub(crate) params: BaseParams,
     /// Spectral amplitudes M_l from the previous frame.
     pub(crate) spectrals: Spectrals,
+    /// Enhanced spectral amplitudes from the previous frame.
+    pub(crate) enhanced: EnhancedSpectrals,
+    /// Per-harmonic voiced/unvoiced decisions from the previous frame.
+    pub(crate) voice: VoiceDecisions,
+    /// Base phase offsets from the previous frame.
+    pub(crate) phase_base: PhaseBase,
+    /// Random phase terms from the previous frame.
+    pub(crate) phase: Phase,
 }
 
 impl Default for PrevFrame {
@@ -26,6 +37,10 @@ impl Default for PrevFrame {
         Self {
             params: BaseParams::default(),
             spectrals: Spectrals::default(),
+            enhanced: EnhancedSpectrals::default(),
+            voice: VoiceDecisions::default(),
+            phase_base: PhaseBase::default(),
+            phase: Phase::default(),
         }
     }
 }
