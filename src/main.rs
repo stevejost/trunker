@@ -9,6 +9,7 @@ use num_complex::Complex;
 
 use trunker::channel_manager::{ChannelManager, ChannelManagerConfig, VoiceChannelEvent};
 use trunker::output::json;
+use trunker::output::wav::WavWriter;
 use trunker::p25::ident::IdentTable;
 use trunker::p25::nid::NidIntegrityPolicy;
 use trunker::p25::receiver::ReceiverEvent;
@@ -140,6 +141,10 @@ enum Command {
         /// Decode IMBE voice frames into audio (CPU-intensive).
         #[arg(long)]
         decode_audio: bool,
+
+        /// Write decoded audio to a WAV file (implies --decode-audio).
+        #[arg(long)]
+        audio_file: Option<String>,
     },
 
     /// Decode a wideband P25 trunked system (control + voice channels).
@@ -226,6 +231,7 @@ fn main() -> Result<()> {
             modulation,
             nid_integrity,
             decode_audio,
+            audio_file,
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
@@ -238,6 +244,9 @@ fn main() -> Result<()> {
                 frequency,
                 running.clone(),
             )?;
+
+            // --audio-file implies --decode-audio.
+            let decode_audio = decode_audio || audio_file.is_some();
 
             let pipeline_modulation: pipeline::Modulation = modulation.into();
             let nid_policy: NidIntegrityPolicy = nid_integrity.into();
@@ -254,6 +263,7 @@ fn main() -> Result<()> {
                 pipeline_modulation,
                 nid_policy,
                 decode_audio,
+                audio_file.as_deref(),
                 &running,
             )?;
         }
@@ -430,6 +440,7 @@ fn decode_control_channel(
     modulation: pipeline::Modulation,
     nid_integrity: NidIntegrityPolicy,
     decode_audio: bool,
+    audio_file: Option<&str>,
     running: &Arc<AtomicBool>,
 ) -> Result<()> {
     let config = PipelineConfig {
@@ -446,6 +457,15 @@ fn decode_control_channel(
         None
     };
 
+    let mut wav_writer = if let Some(path) = audio_file {
+        let writer = WavWriter::create(Path::new(path))
+            .map_err(|e| anyhow::anyhow!("failed to create WAV file '{path}': {e}"))?;
+        tracing::info!(path, "writing decoded audio to WAV file");
+        Some(writer)
+    } else {
+        None
+    };
+
     for iq_sample in source {
         if !running.load(Ordering::SeqCst) {
             tracing::info!("interrupted by signal");
@@ -454,8 +474,21 @@ fn decode_control_channel(
 
         if let Some(event) = pipeline.process_sample(iq_sample) {
             let nac = pipeline.current_nac();
-            handle_receiver_event(nac, &mut ident_table, &mut tsbk_count, &mut decoder, event);
+            handle_receiver_event(
+                nac,
+                &mut ident_table,
+                &mut tsbk_count,
+                &mut decoder,
+                wav_writer.as_mut(),
+                event,
+            );
         }
+    }
+
+    if let Some(writer) = wav_writer {
+        writer.finalize()
+            .map_err(|e| anyhow::anyhow!("failed to finalize WAV file: {e}"))?;
+        tracing::info!("WAV file finalized");
     }
 
     tracing::info!(
@@ -472,6 +505,7 @@ fn handle_receiver_event(
     ident_table: &mut IdentTable,
     tsbk_count: &mut u64,
     decoder: &mut Option<ImbeDecoder>,
+    wav_writer: Option<&mut WavWriter>,
     event: ReceiverEvent,
 ) {
     match event {
@@ -497,6 +531,12 @@ fn handle_receiver_event(
                 let received = ReceivedFrame::from(&vf);
                 let mut buffer: AudioBuffer = [0.0; SAMPLES_PER_FRAME];
                 dec.decode(received, &mut buffer);
+
+                if let Some(writer) = wav_writer
+                    && let Err(e) = writer.write_samples(&buffer)
+                {
+                    tracing::warn!(error = %e, "failed to write WAV samples");
+                }
             }
 
             let line = json::voice_frame_json_line(nac, &vf);
@@ -976,6 +1016,38 @@ mod tests {
                 assert!((call_timeout - 3.0).abs() < 1e-6);
             }
             _ => panic!("expected Trunk command"),
+        }
+    }
+
+    // -- Audio file CLI tests --
+
+    #[test]
+    fn cli_cc_audio_file_parses() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "cc",
+            "--input",
+            "test.iq",
+            "--audio-file",
+            "output.wav",
+        ]);
+        assert!(cli.is_ok(), "cc with --audio-file should parse: {:?}", cli.err());
+        match cli.unwrap().command {
+            Command::Cc { audio_file, .. } => {
+                assert_eq!(audio_file.as_deref(), Some("output.wav"));
+            }
+            _ => panic!("expected Cc command"),
+        }
+    }
+
+    #[test]
+    fn cli_cc_audio_file_defaults_to_none() {
+        let cli = Cli::try_parse_from(["p25", "cc", "--input", "test.iq"]).unwrap();
+        match cli.command {
+            Command::Cc { audio_file, .. } => {
+                assert!(audio_file.is_none());
+            }
+            _ => panic!("expected Cc command"),
         }
     }
 }

@@ -1,3 +1,4 @@
-//! Output layer for JSON serialization of decoded P25 messages.
+//! Output layer for decoded P25 data (JSON, WAV audio).
 
 pub mod json;
+pub mod wav;
