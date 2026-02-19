@@ -18,3 +18,5 @@ pub(crate) mod params;
 pub(crate) mod allocs;
 #[allow(dead_code)]
 pub(crate) mod scan;
+#[allow(dead_code)]
+pub(crate) mod descramble;
