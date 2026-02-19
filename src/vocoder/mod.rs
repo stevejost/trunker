@@ -16,3 +16,5 @@ pub(crate) mod frame;
 pub(crate) mod params;
 #[allow(dead_code)]
 pub(crate) mod allocs;
+#[allow(dead_code)]
+pub(crate) mod scan;
