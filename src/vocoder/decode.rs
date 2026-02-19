@@ -290,4 +290,5 @@ mod tests {
         let has_nonzero = buffer3.iter().any(|&s| s != 0.0);
         assert!(has_nonzero, "expected non-zero output after silence");
     }
+
 }

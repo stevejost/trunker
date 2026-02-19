@@ -40,11 +40,13 @@ impl WavWriter {
 
     /// Write f32 audio samples as 16-bit signed PCM.
     ///
-    /// Samples are clamped to [-1.0, 1.0] before conversion.
+    /// Samples are clamped to the i16 range (-32768, 32767). The IMBE
+    /// vocoder outputs raw synthesis values (typical peak ~1000) which
+    /// fit within i16 range without additional scaling.
     pub fn write_samples(&mut self, samples: &[f32]) -> std::io::Result<()> {
         for &sample in samples {
-            let clamped = sample.clamp(-1.0, 1.0);
-            let pcm = (clamped * 32767.0) as i16;
+            let clamped = sample.clamp(i16::MIN as f32, i16::MAX as f32);
+            let pcm = clamped as i16;
             self.writer.write_all(&pcm.to_le_bytes())?;
         }
         self.data_bytes += (samples.len() as u32) * 2;
@@ -125,8 +127,8 @@ mod tests {
         let path = dir.path().join("test.wav");
 
         let mut writer = WavWriter::create(&path).unwrap();
-        // Write 160 samples (one IMBE frame).
-        let samples: Vec<f32> = (0..160).map(|i| (i as f32 / 160.0) * 2.0 - 1.0).collect();
+        // Write 160 samples (one IMBE frame) with typical vocoder-range values.
+        let samples: Vec<f32> = (0..160).map(|i| (i as f32 - 80.0) * 5.0).collect();
         writer.write_samples(&samples).unwrap();
         writer.finalize().unwrap();
 
@@ -163,7 +165,7 @@ mod tests {
         let path = dir.path().join("test.wav");
 
         let mut writer = WavWriter::create(&path).unwrap();
-        writer.write_samples(&[2.0, -2.0, 0.5]).unwrap();
+        writer.write_samples(&[50000.0, -50000.0, 500.0]).unwrap();
         writer.finalize().unwrap();
 
         let mut data = Vec::new();
@@ -174,8 +176,8 @@ mod tests {
         let s1 = i16::from_le_bytes([data[46], data[47]]);
         let s2 = i16::from_le_bytes([data[48], data[49]]);
 
-        assert_eq!(s0, 32767, "2.0 should clamp to max");
-        assert_eq!(s1, -32767, "-2.0 should clamp to min");
-        assert_eq!(s2, 16383, "0.5 * 32767 = 16383");
+        assert_eq!(s0, 32767, "50000.0 should clamp to i16::MAX");
+        assert_eq!(s1, -32768, "-50000.0 should clamp to i16::MIN");
+        assert_eq!(s2, 500, "500.0 should pass through as 500");
     }
 }
