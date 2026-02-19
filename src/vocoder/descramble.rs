@@ -53,7 +53,7 @@ impl Bootstrap {
     /// silence, and all other values are invalid per TIA-102.BABA [p46].
     pub fn new(chunks: &Chunks) -> Self {
         match period(chunks) {
-            0..=207 => Self::Period(period(chunks)),
+            p @ 0..=207 => Self::Period(p),
             216..=219 => Self::Silence,
             _ => Self::Invalid,
         }
