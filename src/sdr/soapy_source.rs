@@ -136,6 +136,13 @@ impl SoapySource {
         self.overflow_count
     }
 
+    /// Maximum consecutive non-timeout errors before giving up.
+    ///
+    /// Transient errors (overflow, corruption, stream error) are retried,
+    /// but if the driver returns errors indefinitely without ever delivering
+    /// data, something is fundamentally broken.
+    const MAX_CONSECUTIVE_ERRORS: u32 = 50;
+
     /// Fill the internal buffer with the next chunk of samples from the device.
     ///
     /// Returns the number of samples read, or `None` if the stream should stop.
@@ -143,6 +150,8 @@ impl SoapySource {
         if !self.running.load(Ordering::Relaxed) {
             return None;
         }
+
+        let mut consecutive_errors: u32 = 0;
 
         loop {
             match self.stream.read(&mut [&mut self.buffer], READ_TIMEOUT_US) {
@@ -159,6 +168,8 @@ impl SoapySource {
                     if !self.running.load(Ordering::Relaxed) {
                         return None;
                     }
+                    // Timeouts don't count toward consecutive errors —
+                    // they just mean no data arrived within the window.
                     continue;
                 }
                 Err(e) if e.code == ErrorCode::Overflow => {
@@ -167,15 +178,29 @@ impl SoapySource {
                         overflow_count = self.overflow_count,
                         "SoapySDR overflow: samples lost, symbol timing may be corrupted"
                     );
-                    if !self.running.load(Ordering::Relaxed) {
-                        return None;
-                    }
-                    continue;
                 }
                 Err(e) => {
-                    tracing::warn!(error = %e.message, "SoapySDR stream read error");
-                    return None;
+                    // StreamError, Corruption, and other transient errors
+                    // from the SDRplay driver can occur after sustained
+                    // overflows. Retry instead of terminating the stream.
+                    consecutive_errors += 1;
+                    tracing::warn!(
+                        error = %e.message,
+                        code = ?e.code,
+                        consecutive_errors,
+                        "SoapySDR stream read error (retrying)"
+                    );
+                    if consecutive_errors >= Self::MAX_CONSECUTIVE_ERRORS {
+                        tracing::error!(
+                            "SoapySDR stream failed after {consecutive_errors} consecutive errors, giving up"
+                        );
+                        return None;
+                    }
                 }
+            }
+
+            if !self.running.load(Ordering::Relaxed) {
+                return None;
             }
         }
     }
