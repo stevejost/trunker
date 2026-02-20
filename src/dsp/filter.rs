@@ -11,13 +11,20 @@ use num_complex::Complex;
 ///
 /// Applies a windowed-sinc filter to complex IQ samples, then keeps
 /// every `decimation_factor`-th output sample.
+///
+/// The delay line is sized to a power of two so that circular buffer
+/// indexing uses a bitmask instead of modulo division.
 #[derive(Debug)]
 pub struct DecimatingFilter {
     coefficients: Vec<f32>,
     delay_line: Vec<Complex<f32>>,
     delay_index: usize,
+    /// Bitmask for circular buffer indexing (`delay_line.len() - 1`).
+    delay_mask: usize,
+    /// Number of filter taps (may be less than `delay_line.len()`).
+    num_taps: usize,
     decimation_factor: usize,
-    input_count: usize,
+    decimation_counter: usize,
 }
 
 impl DecimatingFilter {
@@ -34,12 +41,15 @@ impl DecimatingFilter {
         decimation_factor: usize,
     ) -> Self {
         let coefficients = design_lowpass(cutoff_hz, sample_rate, num_taps);
+        let buf_len = coefficients.len().next_power_of_two();
         Self {
-            delay_line: vec![Complex::new(0.0, 0.0); coefficients.len()],
+            num_taps: coefficients.len(),
+            delay_line: vec![Complex::new(0.0, 0.0); buf_len],
             delay_index: 0,
+            delay_mask: buf_len - 1,
             coefficients,
             decimation_factor,
-            input_count: 0,
+            decimation_counter: decimation_factor,
         }
     }
 
@@ -47,22 +57,23 @@ impl DecimatingFilter {
     /// sample lands on a decimation boundary.
     pub fn process(&mut self, sample: Complex<f32>) -> Option<Complex<f32>> {
         self.delay_line[self.delay_index] = sample;
-        self.delay_index = (self.delay_index + 1) % self.delay_line.len();
-        self.input_count += 1;
+        self.delay_index = (self.delay_index + 1) & self.delay_mask;
 
-        if !self.input_count.is_multiple_of(self.decimation_factor) {
+        self.decimation_counter -= 1;
+        if self.decimation_counter != 0 {
             return None;
         }
+        self.decimation_counter = self.decimation_factor;
 
         Some(self.convolve())
     }
 
     /// Compute the FIR convolution over the delay line.
     fn convolve(&self) -> Complex<f32> {
-        let len = self.coefficients.len();
+        let mask = self.delay_mask;
         let mut sum = Complex::new(0.0, 0.0);
-        for i in 0..len {
-            let delay_pos = (self.delay_index + len - 1 - i) % len;
+        for i in 0..self.num_taps {
+            let delay_pos = (self.delay_index + mask - i) & mask;
             sum += self.delay_line[delay_pos] * self.coefficients[i];
         }
         sum
@@ -256,5 +267,27 @@ mod tests {
             rejection_ratio > 100.0,
             "100 kHz noise not sufficiently rejected: tone={tone_power}, noise={noise_power}, ratio={rejection_ratio}"
         );
+    }
+
+    #[test]
+    fn delay_line_is_power_of_two() {
+        // 101 taps should round up to 128-element delay line.
+        let filter = DecimatingFilter::new(6250.0, 2_400_000.0, 101, 10);
+        assert!(filter.delay_line.len().is_power_of_two());
+        assert_eq!(filter.delay_line.len(), 128);
+        assert_eq!(filter.delay_mask, 127);
+        assert_eq!(filter.num_taps, 101);
+
+        // 201 taps should round up to 256.
+        let filter = DecimatingFilter::new(6250.0, 2_400_000.0, 201, 10);
+        assert!(filter.delay_line.len().is_power_of_two());
+        assert_eq!(filter.delay_line.len(), 256);
+        assert_eq!(filter.delay_mask, 255);
+        assert_eq!(filter.num_taps, 201);
+
+        // Already a power of two (64 taps) stays at 64.
+        let filter = DecimatingFilter::new(6250.0, 2_400_000.0, 64, 1);
+        assert_eq!(filter.delay_line.len(), 64);
+        assert_eq!(filter.delay_mask, 63);
     }
 }
