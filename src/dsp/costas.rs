@@ -29,6 +29,15 @@ const DEFAULT_BETA: f32 = 0.000253;
 /// offsets within one quadrant; larger errors require re-acquisition.
 const MAX_PHASE: f32 = FRAC_PI_2;
 
+/// Maximum frequency accumulator magnitude (radians/sample).
+///
+/// Prevents unbounded drift from noise or signal disruptions (e.g.,
+/// SDR overflows). 0.01 rad/sample corresponds to ±38 Hz at 24 kHz,
+/// well beyond the loop's ~15 Hz tracking bandwidth (with alpha=0.008,
+/// beta=0.000016). Without this clamp, the frequency accumulator can
+/// grow until the phase is permanently pegged at its clamp limit.
+const MAX_FREQUENCY: f32 = 0.01;
+
 /// Order-4 Costas loop for QPSK carrier recovery.
 ///
 /// Applies a phase correction to each input sample via an NCO
@@ -103,6 +112,7 @@ impl CostasLoop {
     /// Advance the loop filter and NCO by one sample.
     fn advance(&mut self, error: f32) {
         self.frequency += self.beta * error;
+        self.frequency = self.frequency.clamp(-MAX_FREQUENCY, MAX_FREQUENCY);
         self.phase += self.frequency + self.alpha * error;
         self.phase = self.phase.clamp(-MAX_PHASE, MAX_PHASE);
     }
