@@ -20,6 +20,7 @@ use trunker::p25::types::Frequency;
 use trunker::pipeline::{self, ChannelPipeline, PipelineConfig};
 use trunker::sdr::cf32_reader::Cf32Reader;
 use trunker::sdr::soapy_source::{self, SoapySource};
+use trunker::sdr::u8_reader::U8Reader;
 use trunker::vocoder::ImbeDecoder;
 
 /// P25 trunked radio decoder — RF in, JSON out.
@@ -70,13 +71,23 @@ impl From<CliNidIntegrity> for NidIntegrityPolicy {
 #[derive(Args)]
 #[group(required = true, multiple = false)]
 struct InputSource {
-    /// Path to an IQ sample file (CF32 format).
+    /// Path to an IQ sample file.
     #[arg(short, long)]
     input: Option<String>,
 
     /// SoapySDR device argument string (e.g. "driver=rtlsdr").
     #[arg(short, long)]
     device: Option<String>,
+}
+
+/// IQ file sample format.
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+enum CliFormat {
+    /// Interleaved 32-bit float I/Q pairs (8 bytes per sample).
+    #[default]
+    Cf32,
+    /// Unsigned 8-bit I/Q pairs (2 bytes per sample, RTL-SDR native).
+    U8,
 }
 
 /// Gain control for live SDR mode (mutually exclusive).
@@ -122,6 +133,10 @@ enum Command {
         /// Antenna port name (e.g. "Antenna A"). See `p25 devices` output.
         #[arg(long)]
         antenna: Option<String>,
+
+        /// IQ file format: cf32 (default) or u8 (RTL-SDR native / .cu8).
+        #[arg(long, default_value = "cf32")]
+        format: CliFormat,
 
         /// Sample rate in Hz.
         #[arg(short, long, default_value_t = 2_400_000)]
@@ -169,9 +184,18 @@ enum Command {
         #[arg(long)]
         antenna: Option<String>,
 
+        /// IQ file format: cf32 (default) or u8 (RTL-SDR native / .cu8).
+        #[arg(long, default_value = "cf32")]
+        format: CliFormat,
+
         /// Sample rate in Hz.
         #[arg(short, long, default_value_t = 2_400_000)]
         sample_rate: u32,
+
+        /// Control channel frequency in Hz. When different from
+        /// --center-freq, an NCO shifts the CC to baseband.
+        #[arg(long, default_value_t = 0)]
+        frequency: u64,
 
         /// Center frequency of the capture in Hz.
         #[arg(short = 'f', long)]
@@ -239,6 +263,7 @@ fn main() -> Result<()> {
             gain_control,
             device_settings,
             antenna,
+            format,
             sample_rate,
             frequency,
             center_freq,
@@ -251,6 +276,7 @@ fn main() -> Result<()> {
             let settings = parse_settings(&device_settings.settings)?;
             let sample_source = open_sample_source(
                 source,
+                format,
                 &gain_control,
                 antenna.as_deref(),
                 &settings,
@@ -295,7 +321,9 @@ fn main() -> Result<()> {
             gain_control,
             device_settings,
             antenna,
+            format,
             sample_rate,
+            frequency,
             center_freq,
             modulation,
             call_timeout,
@@ -306,6 +334,7 @@ fn main() -> Result<()> {
             let settings = parse_settings(&device_settings.settings)?;
             let sample_source = open_sample_source(
                 source,
+                format,
                 &gain_control,
                 antenna.as_deref(),
                 &settings,
@@ -314,11 +343,21 @@ fn main() -> Result<()> {
                 running.clone(),
             )?;
 
+            // Compute NCO offset to shift the CC to baseband when
+            // --frequency (CC freq) differs from --center-freq.
+            let cc_offset_hz = if frequency != 0 {
+                frequency as f64 - center_freq as f64
+            } else {
+                0.0
+            };
+
             let pipeline_modulation: pipeline::Modulation = modulation.into();
             let nid_policy: NidIntegrityPolicy = nid_integrity.into();
             tracing::info!(
                 sample_rate,
                 center_freq,
+                ?frequency,
+                cc_offset_hz,
                 modulation = ?modulation,
                 nid_integrity = ?nid_policy,
                 call_timeout,
@@ -328,6 +367,7 @@ fn main() -> Result<()> {
                 sample_source,
                 sample_rate,
                 center_freq,
+                cc_offset_hz,
                 pipeline_modulation,
                 nid_policy,
                 call_timeout,
@@ -355,7 +395,9 @@ fn main() -> Result<()> {
 /// IQ sample source: file or live SDR hardware.
 enum SampleSource {
     /// Read from a CF32 IQ file.
-    File(Cf32Reader),
+    Cf32(Cf32Reader),
+    /// Read from a U8 IQ file (RTL-SDR native / .cu8).
+    U8(U8Reader),
     /// Stream from a SoapySDR device.
     Soapy(SoapySource),
 }
@@ -365,7 +407,8 @@ impl Iterator for SampleSource {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
-            SampleSource::File(reader) => reader.next(),
+            SampleSource::Cf32(reader) => reader.next(),
+            SampleSource::U8(reader) => reader.next(),
             SampleSource::Soapy(source) => source.next(),
         }
     }
@@ -396,8 +439,10 @@ fn setup_signal_handler() -> Result<Arc<AtomicBool>> {
 }
 
 /// Open the appropriate sample source based on CLI arguments.
+#[allow(clippy::too_many_arguments)]
 fn open_sample_source(
     source: InputSource,
+    format: CliFormat,
     gain_control: &GainControl,
     antenna: Option<&str>,
     settings: &[(String, String)],
@@ -406,8 +451,17 @@ fn open_sample_source(
     running: Arc<AtomicBool>,
 ) -> Result<SampleSource> {
     if let Some(input_path) = source.input {
-        let reader = Cf32Reader::open(Path::new(&input_path), sample_rate)?;
-        Ok(SampleSource::File(reader))
+        let path = Path::new(&input_path);
+        match format {
+            CliFormat::Cf32 => {
+                let reader = Cf32Reader::open(path, sample_rate)?;
+                Ok(SampleSource::Cf32(reader))
+            }
+            CliFormat::U8 => {
+                let reader = U8Reader::open(path, sample_rate)?;
+                Ok(SampleSource::U8(reader))
+            }
+        }
     } else if let Some(device_args) = source.device {
         validate_device_args(frequency, gain_control)?;
         let gain = resolve_gain(gain_control);
@@ -549,6 +603,7 @@ fn decode_trunked(
     source: SampleSource,
     sample_rate: u32,
     center_freq: u64,
+    cc_offset_hz: f64,
     modulation: pipeline::Modulation,
     nid_integrity: NidIntegrityPolicy,
     call_timeout: f64,
@@ -563,6 +618,13 @@ fn decode_trunked(
     let mut cc_pipeline = ChannelPipeline::new(config)?;
     let mut ident_table = IdentTable::new();
     let mut tsbk_count: u64 = 0;
+
+    // NCO to shift the CC to baseband when it's not at DC.
+    let mut cc_nco = if cc_offset_hz.abs() > 0.1 {
+        Some(Nco::new(cc_offset_hz, f64::from(sample_rate)))
+    } else {
+        None
+    };
 
     let mut channel_manager = ChannelManager::new(ChannelManagerConfig {
         center_frequency: Frequency::from_hz(center_freq),
@@ -579,8 +641,12 @@ fn decode_trunked(
             break;
         }
 
-        // Feed to CC pipeline (CC is at DC / center frequency).
-        if let Some(event) = cc_pipeline.process_sample(iq_sample) {
+        // Shift CC to baseband if needed, then feed to CC pipeline.
+        let cc_sample = match &mut cc_nco {
+            Some(nco) => nco.shift(iq_sample),
+            None => iq_sample,
+        };
+        if let Some(event) = cc_pipeline.process_sample(cc_sample) {
             let nac = cc_pipeline.current_nac();
 
             // Keep voice channel Costas seed in sync with CC's locked state.
@@ -873,7 +939,7 @@ mod tests {
         assert_eq!(resolve_gain(&gain), None);
     }
 
-    // -- SampleSource::File delegation test --
+    // -- SampleSource::Cf32 delegation test --
 
     fn write_test_cf32(samples: &[Complex<f32>]) -> NamedTempFile {
         let mut file = NamedTempFile::new().expect("create temp file");
@@ -895,7 +961,7 @@ mod tests {
         let temp = write_test_cf32(&expected);
 
         let reader = Cf32Reader::open(temp.path(), 2_400_000).unwrap();
-        let source = SampleSource::File(reader);
+        let source = SampleSource::Cf32(reader);
         let samples: Vec<_> = source.collect();
 
         assert_eq!(samples.len(), 3);
@@ -909,7 +975,7 @@ mod tests {
     fn sample_source_file_empty_yields_none() {
         let temp = write_test_cf32(&[]);
         let reader = Cf32Reader::open(temp.path(), 48_000).unwrap();
-        let source = SampleSource::File(reader);
+        let source = SampleSource::Cf32(reader);
         let samples: Vec<_> = source.collect();
         assert!(samples.is_empty());
     }
