@@ -86,7 +86,10 @@ impl CallRecorder {
                 source: displaced.source,
                 frequency: displaced.frequency,
                 frame_count: displaced.frame_count,
-                end_reason: displaced.end_reason.unwrap_or(EndReason::Timeout),
+                end_reason: displaced.end_reason.unwrap_or_else(|| {
+                    tracing::warn!("displaced call missing end_reason, defaulting to Timeout");
+                    EndReason::Timeout
+                }),
                 audio_file,
             });
 
@@ -168,7 +171,10 @@ impl CallRecorder {
                     source: call.source,
                     frequency: call.frequency,
                     frame_count: call.frame_count,
-                    end_reason: call.end_reason.unwrap_or(EndReason::Timeout),
+                    end_reason: call.end_reason.unwrap_or_else(|| {
+                        tracing::warn!("finalized call missing end_reason, defaulting to Timeout");
+                        EndReason::Timeout
+                    }),
                     audio_file,
                 });
             }
@@ -210,7 +216,10 @@ impl CallRecorder {
             source: call.source,
             frequency: call.frequency,
             frame_count: call.frame_count,
-            end_reason: call.end_reason.unwrap_or(EndReason::Timeout),
+            end_reason: call.end_reason.unwrap_or_else(|| {
+                tracing::warn!("completed call missing end_reason, defaulting to Timeout");
+                EndReason::Timeout
+            }),
             audio_file,
         }
     }
