@@ -262,7 +262,7 @@ impl ChannelManager {
 
     /// Activate or refresh a voice channel at the given frequency.
     fn activate_channel(&mut self, frequency: Frequency, talkgroup: TalkgroupId, source: SourceId) {
-        if !self.is_in_band(frequency.hz()) {
+        if !self.is_in_band(frequency) {
             tracing::debug!(
                 frequency = %frequency,
                 "grant frequency out of capture bandwidth, skipping"
@@ -345,8 +345,8 @@ impl ChannelManager {
     }
 
     /// Check whether a frequency falls within the usable capture bandwidth.
-    fn is_in_band(&self, frequency_hz: u64) -> bool {
-        let offset = (frequency_hz as f64 - self.center_frequency_hz).abs();
+    pub fn is_in_band(&self, frequency: Frequency) -> bool {
+        let offset = (frequency.hz() as f64 - self.center_frequency_hz).abs();
         offset <= self.usable_bandwidth / 2.0
     }
 
@@ -585,11 +585,11 @@ mod tests {
         let manager = ChannelManager::new(make_config());
         // Center = 852M, usable = 2.4M * 0.8 = 1.92M
         // In band: 852M +/- 960kHz = [851040000, 852960000]
-        assert!(manager.is_in_band(852_000_000)); // center
-        assert!(manager.is_in_band(851_050_000)); // just inside
-        assert!(manager.is_in_band(852_950_000)); // just inside
-        assert!(!manager.is_in_band(850_000_000)); // way out
-        assert!(!manager.is_in_band(854_000_000)); // way out
+        assert!(manager.is_in_band(Frequency::from_hz(852_000_000))); // center
+        assert!(manager.is_in_band(Frequency::from_hz(851_050_000))); // just inside
+        assert!(manager.is_in_band(Frequency::from_hz(852_950_000))); // just inside
+        assert!(!manager.is_in_band(Frequency::from_hz(850_000_000))); // way out
+        assert!(!manager.is_in_band(Frequency::from_hz(854_000_000))); // way out
     }
 
     #[test]

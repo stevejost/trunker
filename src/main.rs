@@ -745,12 +745,12 @@ fn handle_cc_event(
                     | TsbkOpcode::GroupVoiceChannelGrantUpdateExplicit
             );
             if is_grant {
-                // Start a new recording if this is a new channel activation
-                // (not a periodic refresh of an existing channel).
-                if let Some(recorder) = recorder {
-                    start_recording_for_grant(recorder, &tsbk, ident_table);
-                }
                 channel_manager.handle_grant(&tsbk, ident_table);
+                // Start a new recording only for in-band channels that the
+                // channel manager actually activated.
+                if let Some(recorder) = recorder {
+                    start_recording_for_grant(recorder, &tsbk, ident_table, channel_manager);
+                }
             }
 
             let line = json::to_json_line(nac, &tsbk, ident_table);
@@ -766,8 +766,13 @@ fn handle_cc_event(
 }
 
 /// Start a call recording for a grant TSBK if it represents a new channel
-/// activation (not a periodic refresh).
-fn start_recording_for_grant(recorder: &mut CallRecorder, tsbk: &Tsbk, ident_table: &IdentTable) {
+/// activation (not a periodic refresh) and the frequency is within capture bandwidth.
+fn start_recording_for_grant(
+    recorder: &mut CallRecorder,
+    tsbk: &Tsbk,
+    ident_table: &IdentTable,
+    channel_manager: &ChannelManager,
+) {
     match &tsbk.payload {
         TsbkPayload::GroupVoiceChannelGrant {
             channel,
@@ -775,6 +780,7 @@ fn start_recording_for_grant(recorder: &mut CallRecorder, tsbk: &Tsbk, ident_tab
             source,
         } => {
             if let Some(freq) = ident_table.resolve_frequency(*channel)
+                && channel_manager.is_in_band(freq)
                 && !recorder.has_active_recording(&freq)
                 && let Some(displaced) = recorder.start_call(freq, *talkgroup, *source)
             {
@@ -789,12 +795,14 @@ fn start_recording_for_grant(recorder: &mut CallRecorder, tsbk: &Tsbk, ident_tab
         } => {
             let zero_source = trunker::p25::types::SourceId::new(0);
             if let Some(freq) = ident_table.resolve_frequency(*channel_a)
+                && channel_manager.is_in_band(freq)
                 && !recorder.has_active_recording(&freq)
                 && let Some(displaced) = recorder.start_call(freq, *talkgroup_a, zero_source)
             {
                 log_completed_recording(&displaced);
             }
             if let Some(freq) = ident_table.resolve_frequency(*channel_b)
+                && channel_manager.is_in_band(freq)
                 && !recorder.has_active_recording(&freq)
                 && let Some(displaced) = recorder.start_call(freq, *talkgroup_b, zero_source)
             {
@@ -808,6 +816,7 @@ fn start_recording_for_grant(recorder: &mut CallRecorder, tsbk: &Tsbk, ident_tab
         } => {
             let zero_source = trunker::p25::types::SourceId::new(0);
             if let Some(freq) = ident_table.resolve_frequency(*receive_channel)
+                && channel_manager.is_in_band(freq)
                 && !recorder.has_active_recording(&freq)
                 && let Some(displaced) = recorder.start_call(freq, *talkgroup, zero_source)
             {

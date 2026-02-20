@@ -258,6 +258,30 @@ fn log_device_state(device: &Device, requested_antenna: Option<&str>) {
         "device state after configuration"
     );
 
+    // Log available stream arguments (buffer sizing, etc.)
+    if let Ok(args) = device.stream_args_info(Direction::Rx, RX_CHANNEL) {
+        for arg in &args {
+            tracing::debug!(
+                key = %arg.key,
+                name = arg.name.as_deref().unwrap_or(""),
+                description = arg.description.as_deref().unwrap_or(""),
+                value = %arg.value,
+                "stream argument"
+            );
+        }
+    }
+
+    // Log available sample rate range
+    if let Ok(rates) = device.get_sample_rate_range(Direction::Rx, RX_CHANNEL) {
+        for range in &rates {
+            tracing::debug!(
+                min = range.minimum,
+                max = range.maximum,
+                "supported sample rate range"
+            );
+        }
+    }
+
     // Log stream format negotiation
     if let Ok((native_fmt, fullscale)) = device.native_stream_format(Direction::Rx, RX_CHANNEL) {
         let available = device
