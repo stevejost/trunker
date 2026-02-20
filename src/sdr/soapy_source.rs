@@ -87,24 +87,24 @@ impl SoapySource {
         // directly to stderr, which corrupts TUI displays when piped to a monitor.
         let (device, mut stream, mtu) = suppress_stderr(|| -> Result<_, SdrError> {
             let device = open_device(device_args)?;
+            // Match rx_sdr init order: sample_rate -> frequency -> gain ->
+            // antenna -> stream -> settings -> activate. Setting sample rate
+            // first ensures the hardware's bandwidth filter is configured
+            // before the PLL locks to the target frequency.
+            configure_sample_rate(&device, sample_rate_hz)?;
+            configure_frequency(&device, frequency_hz)?;
+            configure_gain(&device, gain)?;
             if let Some(ant) = antenna {
                 configure_antenna(&device, ant)?;
             }
-            configure_frequency(&device, frequency_hz)?;
-            configure_sample_rate(&device, sample_rate_hz)?;
-            configure_gain(&device, gain)?;
             let mut stream = create_stream(&device)?;
             let mtu = stream
                 .mtu()
                 .map_err(|e| SdrError::StreamCreate(e.message))?;
+            apply_settings(&device, settings)?;
             stream
                 .activate(None)
                 .map_err(|e| SdrError::StreamActivate(e.message))?;
-            // Apply device settings after activation — some drivers (e.g.
-            // SDRplay rfgain_sel) only commit via sdrplay_api_Update when
-            // the stream is active, and writing them earlier can corrupt
-            // driver state and prevent activation.
-            apply_settings(&device, settings)?;
             Ok((device, stream, mtu))
         })?;
 
