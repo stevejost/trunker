@@ -161,53 +161,60 @@ p25 trunk ... | jq 'select(.type == "voice_frame")'
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│                  SDR Hardware                    │
-│         (RTL-SDR, SDRplay, Airspy, ...)         │
-└──────────────────────┬──────────────────────────┘
-                       │ IQ samples
+┌──────────────────────────────────────────────────────────────┐
+│              IQ Source (SDR or File)                          │
+│  RTL-SDR (CS8) · SDRplay (CS16) · CF32 file · U8 file       │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ Complex<f32> @ input rate
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│           Multi-Stage Decimation (≤10x per stage)            │
+│  LPF 6250 Hz ──►  LPF 6250 Hz ──► ··· ──► LPF 6250 Hz      │
+│  e.g. 6M: [5x, 5x, 10x] = 250x total                       │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ Complex<f32> @ 24 kHz
+                            ▼
+              ┌─────────────┴──────────────┐
+              │                            │
+      C4FM    ▼                            ▼   CQPSK
+┌──────────────────────┐    ┌──────────────────────────────┐
+│  FM Discriminator     │    │  AGC → RRC → Gardner TED     │
+│  DC Block → RRC       │    │  Diff Decoder → Costas PLL   │
+│  M&M Timing → Slicer  │    │  arg() → Rescale → Slicer    │
+└──────────┬───────────┘    └──────────────┬───────────────┘
+           │                               │
+           └───────────┬───────────────────┘
+                       │ Dibits + Sync
                        ▼
-┌─────────────────────────────────────────────────┐
-│              SoapySDR Abstraction                │
-└──────────────────────┬──────────────────────────┘
-                       │ Complex f32 samples
-                       ▼
-┌─────────────────────────────────────────────────┐
-│                 DSP Pipeline                     │
-│  ┌───────────┐  ┌──────────┐  ┌──────────────┐ │
-│  │ FM Demod  ├─►│  Clock   ├─►│    Dibit     │ │
-│  │ (C4FM)    │  │ Recovery │  │   Slicer     │ │
-│  └───────────┘  └──────────┘  └──────┬───────┘ │
-└──────────────────────────────────────┼──────────┘
-                                       │ Dibit stream
-                                       ▼
-┌─────────────────────────────────────────────────┐
-│              Protocol Decoder                    │
-│  ┌───────────┐  ┌──────────┐  ┌──────────────┐ │
-│  │  Frame    ├─►│ Trellis  ├─►│    TSBK      │ │
-│  │  Sync     │  │ Decode   │  │   Parser     │ │
-│  └───────────┘  └──────────┘  └──────┬───────┘ │
-└──────────────────────────────────────┼──────────┘
-                                       │ Structured messages
-                                       ▼
-┌─────────────────────────────────────────────────┐
-│                JSON Serializer                   │
-│            (JSON lines to stdout)                 │
-└─────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    Protocol Decoder                           │
+│  Status Deinterleave → NID [BCH(63,16,23)] → Route by DUID  │
+│                                                              │
+│  TSDU: Deinterleave → Trellis → CRC → TSBK parser           │
+│  Voice: LDU1/LDU2 → Golay/RS FEC → IMBE vocoder → PCM      │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ Structured events
+                            ▼
+┌──────────────────────────────────────────────────────────────┐
+│                JSON Serializer → stdout                       │
+└──────────────────────────────────────────────────────────────┘
 ```
+
+For a detailed description of every pipeline stage with parameters, see [docs/DECODER.md](docs/DECODER.md).
 
 ### Layer Responsibilities
 
 | Layer | Input | Output | Testable With |
 |---|---|---|---|
-| SDR Source | Hardware/File | Complex IQ samples | Recorded `.iq` files |
-| FM Demodulator | IQ samples | Baseband signal | Synthetic IQ test vectors |
-| Clock Recovery | Baseband signal | Symbol stream | Synthetic baseband signals |
-| Dibit Slicer | Symbol stream | Dibit stream (0-3) | Raw symbol arrays |
+| SDR Source | Hardware/File | Complex IQ samples | Recorded `.iq`/`.cf32`/`.u8` files |
+| Decimation | IQ @ input rate | IQ @ 24 kHz | `DecimationConfig` unit tests |
+| Demodulator (C4FM or CQPSK) | IQ @ 24 kHz | Dibit stream | Synthetic IQ, CQPSK modulator |
 | Frame Sync | Dibit stream | Aligned data units | Recorded dibit streams |
-| Trellis Decoder | Raw data unit bits | Corrected data bits | Known test vectors from spec |
-| TSBK Parser | Corrected bits | Typed message structs | Hex-encoded TSBK fixtures |
-| JSON Serializer | Message structs | JSON lines | Unit tests on structs |
+| NID + BCH | 32 dibits | NAC + DUID (corrected) | BCH encode/decode roundtrips |
+| Trellis Decoder | 96 coded dibits | 12 corrected bytes | Known test vectors from spec |
+| TSBK Parser | 12 bytes | Typed message structs | Hex-encoded TSBK fixtures |
+| IMBE Vocoder | 88-bit frames | PCM audio (8 kHz) | Bit-exact reference frames |
+| JSON Serializer | Event structs | JSON lines | Unit tests on structs |
 
 Each layer boundary is a clean interface with a well-defined data type. No layer reaches into another layer's internals.
 
@@ -318,7 +325,7 @@ trunker/
 ├── .gitignore
 │
 ├── src/
-│   ├── main.rs                  # CLI entry point (p25 cc, trunk, devices, monitor)
+│   ├── main.rs                  # CLI entry point (p25 cc, trunk, debug, devices, monitor)
 │   ├── lib.rs                   # Library root, re-exports all modules
 │   ├── pipeline.rs              # Per-channel DSP + protocol decode pipeline
 │   ├── channel_manager.rs       # Wideband trunked decoder (CC + voice channels)
@@ -327,6 +334,7 @@ trunker/
 │   │   ├── mod.rs
 │   │   ├── soapy_source.rs      # Live SDR via SoapySDR
 │   │   ├── cf32_reader.rs       # IQ file replay (CF32 format)
+│   │   ├── u8_reader.rs         # IQ file replay (U8 / RTL-SDR native format)
 │   │   └── error.rs
 │   │
 │   ├── dsp/
@@ -353,7 +361,8 @@ trunker/
 │   │   ├── types.rs             # Newtypes: Nac, TalkgroupId, Frequency, etc.
 │   │   ├── consts.rs            # Protocol constants
 │   │   ├── error.rs             # P25 error types (thiserror)
-│   │   ├── nid.rs               # Network ID decode + integrity gating
+│   │   ├── bch.rs               # BCH(63,16,23) decoder for NID error correction
+│   │   ├── nid.rs               # Network ID decode (BCH + integrity gating)
 │   │   ├── receiver.rs          # Data unit receiver state machine
 │   │   ├── tsbk.rs              # TSBK opcode parser (all message types)
 │   │   ├── trellis.rs           # 1/2 rate trellis codec
@@ -381,6 +390,30 @@ trunker/
 │   │       ├── crypto.rs        # Crypto Control word (LDU2)
 │   │       ├── descramble.rs    # Voice frame descrambling
 │   │       └── pn.rs            # PN sequence generation
+│   │
+│   ├── vocoder/                 # IMBE vocoder (voice frame → PCM audio)
+│   │   ├── mod.rs
+│   │   ├── decode.rs            # Frame decoder (88-bit IMBE → 160 PCM samples)
+│   │   ├── frame.rs             # Bit unpacking and parameter extraction
+│   │   ├── params.rs            # Vocoder parameter structures
+│   │   ├── spectral.rs          # Spectral amplitude reconstruction
+│   │   ├── enhance.rs           # Spectral enhancement
+│   │   ├── voiced.rs            # Voiced synthesis (harmonic oscillators)
+│   │   ├── unvoiced.rs          # Unvoiced synthesis (shaped noise)
+│   │   ├── gain.rs              # Adaptive gain control
+│   │   ├── prev.rs              # Previous frame state
+│   │   ├── window.rs            # Synthesis window functions
+│   │   ├── consts.rs            # Vocoder constants
+│   │   ├── coefs.rs             # Coefficient tables
+│   │   ├── allocs.rs            # Band allocation tables
+│   │   ├── scan.rs              # Bit scanning utilities
+│   │   ├── descramble.rs        # Frame descrambling
+│   │   └── error.rs             # Vocoder error types
+│   │
+│   ├── debug/                   # p25 debug subcommand (diagnostic tools)
+│   │   ├── mod.rs               # CLI types, dispatch, decode-cc/decode-voice
+│   │   ├── info.rs              # File inspection (format, duration, stats)
+│   │   └── filter.rs            # Channel extraction (NCO + LPF + decimate)
 │   │
 │   ├── output/
 │   │   ├── mod.rs
@@ -411,7 +444,8 @@ trunker/
 │   ├── op25_reference/          # OP25 reference data
 │   └── iq/                      # Raw IQ recordings (git-ignored)
 │
-└── docs/                        # TIA-102 specification PDFs
+└── docs/                        # Documentation and TIA-102 spec PDFs
+    └── DECODER.md               # Detailed decoder pipeline reference
 ```
 
 ### Directory Conventions
@@ -419,7 +453,7 @@ trunker/
 - **`src/`** — All application source code. Standard Rust layout with `main.rs` as entry point and `lib.rs` as library root. Unit tests live in `#[cfg(test)] mod tests` blocks within each source file.
 - **`tests/`** — Integration tests that exercise the pipeline end-to-end. Rust runs these with `cargo test` automatically.
 - **`samples/`** — Radio captures and OP25 gold-standard comparison data for development and regression testing. IQ recordings in `samples/iq/` are git-ignored due to size.
-- **`docs/`** — TIA-102 specification PDFs for protocol reference.
+- **`docs/`** — Detailed decoder pipeline documentation (`DECODER.md`) and TIA-102 specification PDFs for protocol reference.
 
 ---
 
@@ -564,14 +598,15 @@ use_try_shorthand = true
 ### Implemented
 
 - [x] Project structure and build system
-- [x] SoapySDR source + IQ file replay (`src/sdr/`)
+- [x] SoapySDR source + IQ file replay — CF32 and U8 formats (`src/sdr/`)
 - [x] C4FM FM demodulator (`src/dsp/fm_demod.rs`)
 - [x] CQPSK demodulator for simulcast systems (`src/dsp/cqpsk_demod.rs`)
-- [x] Multi-stage decimation pipeline (`src/pipeline.rs`)
+- [x] Multi-stage decimation pipeline, ≤10x per stage (`src/pipeline.rs`)
 - [x] Gardner clock recovery and dibit slicer (`src/dsp/timing.rs`)
 - [x] Frame synchronization (48-bit sync word detection) (`src/dsp/sync.rs`)
 - [x] Trellis 1/2 rate decoder (`src/p25/trellis.rs`)
 - [x] Error correction: Golay, Hamming, Reed-Solomon (`src/p25/coding/`)
+- [x] BCH(63,16,23) NID error correction — corrects up to 11 bit errors (`src/p25/bch.rs`)
 - [x] TSBK CRC validation (`src/p25/crc.rs`)
 - [x] TSBK opcode parser (channel grants, affiliations, system info) (`src/p25/tsbk.rs`)
 - [x] JSON output to stdout (`src/output/json.rs`)
@@ -579,8 +614,10 @@ use_try_shorthand = true
 - [x] Adjacent site tracking (`src/p25/tsbk.rs`)
 - [x] NID integrity gating with strict/permissive policy (`src/p25/nid.rs`)
 - [x] Voice frame decoding — IMBE frames, LDU1/LDU2, HDU, terminators (`src/p25/voice/`)
+- [x] IMBE vocoder — 88-bit voice frames to 8 kHz PCM audio (`src/vocoder/`)
 - [x] Wideband trunked decoder — `p25 trunk` (`src/channel_manager.rs`)
 - [x] Monitor TUI — `p25 monitor` (`src/monitor/`)
+- [x] Debug subcommand — file info, channel filter, decode tools (`src/debug/`)
 
 ### Future
 
