@@ -168,6 +168,12 @@ enum Command {
         /// Write decoded audio to a WAV file (implies --decode-audio).
         #[arg(long)]
         audio_file: Option<String>,
+
+        /// SDR read buffer depth in milliseconds (live SDR mode only).
+        ///
+        /// Larger values absorb more processing jitter but add latency.
+        #[arg(long, default_value_t = 250)]
+        buffer_ms: u32,
     },
 
     /// Decode a wideband P25 trunked system (control + voice channels).
@@ -226,6 +232,12 @@ enum Command {
         /// Implies --decode-audio.
         #[arg(long)]
         output_dir: Option<String>,
+
+        /// SDR read buffer depth in milliseconds (live SDR mode only).
+        ///
+        /// Larger values absorb more processing jitter but add latency.
+        #[arg(long, default_value_t = 250)]
+        buffer_ms: u32,
     },
 
     /// Diagnostic tools for inspecting IQ files and debugging the DSP pipeline.
@@ -280,6 +292,7 @@ fn main() -> Result<()> {
             nid_integrity,
             decode_audio,
             audio_file,
+            buffer_ms,
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
@@ -291,6 +304,7 @@ fn main() -> Result<()> {
                 &settings,
                 sample_rate,
                 frequency,
+                buffer_ms,
                 running.clone(),
             )?;
 
@@ -339,6 +353,7 @@ fn main() -> Result<()> {
             nid_integrity,
             decode_audio,
             output_dir,
+            buffer_ms,
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
@@ -350,6 +365,7 @@ fn main() -> Result<()> {
                 &settings,
                 sample_rate,
                 center_freq,
+                buffer_ms,
                 running.clone(),
             )?;
 
@@ -463,6 +479,7 @@ fn open_sample_source(
     settings: &[(String, String)],
     sample_rate: u32,
     frequency: u64,
+    buffer_ms: u32,
     running: Arc<AtomicBool>,
 ) -> Result<SampleSource> {
     if let Some(input_path) = source.input {
@@ -487,6 +504,7 @@ fn open_sample_source(
             gain,
             antenna,
             settings,
+            buffer_ms,
             running,
         )?;
         Ok(SampleSource::Soapy(soapy))
