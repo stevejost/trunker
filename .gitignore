@@ -10,6 +10,8 @@ samples/iq/*.raw
 samples/*.raw
 samples/iq/*.cf32
 samples/iq/*.u8
+samples/iq/*.cu8
+samples/iq/audio/
 !samples/iq/.gitkeep
 
 # Debug/runtime artifacts
