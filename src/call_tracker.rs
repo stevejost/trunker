@@ -427,8 +427,8 @@ mod tests {
         let ended = tracker.timeout_call(freq).unwrap();
         assert!(ended.end_time.is_some());
         let duration = ended.duration().expect("ended call should have duration");
-        // Duration should be non-negative (just created).
-        assert!(duration.as_nanos() >= 0);
+        // Duration should be positive (start and end are distinct instants).
+        assert!(duration.as_nanos() > 0);
     }
 
     #[test]

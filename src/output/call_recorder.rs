@@ -232,6 +232,7 @@ mod tests {
     use crate::p25::receiver::ReceiverEvent;
     use crate::p25::types::Nac;
     use crate::p25::voice::frame::VoiceFrame;
+    use crate::vocoder::{AudioBuffer, ImbeDecoder, ReceivedFrame, SAMPLES_PER_FRAME};
 
     fn test_frequency() -> Frequency {
         Frequency::from_hz(851_062_500)
@@ -432,6 +433,75 @@ mod tests {
         assert_eq!(
             initial_size, after_size,
             "file should not grow without audio"
+        );
+    }
+
+    #[test]
+    fn vocoder_decoded_audio_produces_non_silent_wav() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut recorder = CallRecorder::new(dir.path());
+        let freq = test_frequency();
+
+        recorder.start_call(freq, test_talkgroup(), test_source());
+
+        // Decode a real IMBE voice frame through the vocoder.
+        let mut decoder = ImbeDecoder::new();
+        let frame = ReceivedFrame::new(
+            [
+                0b001000010010,
+                0b110011001100,
+                0b111000111000,
+                0b111111111111,
+                0b10100110101,
+                0b00101111010,
+                0b01110111011,
+                0b00001000,
+            ],
+            [0; 7],
+        );
+        let mut buffer: AudioBuffer = [0.0; SAMPLES_PER_FRAME];
+        decoder.decode(frame, &mut buffer);
+
+        // Feed vocoder output through the recorder.
+        let event = VoiceChannelEvent {
+            frequency: freq,
+            talkgroup: test_talkgroup(),
+            source: test_source(),
+            nac: Nac::new(0x293),
+            event: ReceiverEvent::VoiceFrame(VoiceFrame {
+                chunks: [0; 8],
+                errors: [0; 7],
+            }),
+            audio: Some(buffer.to_vec()),
+        };
+        recorder.process_event(&event);
+
+        // Finalize the recording.
+        let completed = recorder.timeout_call(freq).unwrap();
+        let path = completed.audio_file.unwrap();
+
+        // WAV should contain header + audio data.
+        let file_size = std::fs::metadata(&path).unwrap().len();
+        assert_eq!(
+            file_size, 364,
+            "WAV file should be 44-byte header + 160 samples * 2 bytes"
+        );
+
+        // Read the PCM samples from the WAV file (skip 44-byte header).
+        let file_data = std::fs::read(&path).unwrap();
+        let pcm_data = &file_data[44..];
+        let samples: Vec<i16> = pcm_data
+            .chunks_exact(2)
+            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect();
+
+        assert_eq!(samples.len(), 160);
+
+        // At least some samples should be non-zero (real IMBE produces audio).
+        let has_nonzero = samples.iter().any(|&s| s != 0);
+        assert!(
+            has_nonzero,
+            "vocoder-decoded audio should produce non-silent WAV output"
         );
     }
 }
