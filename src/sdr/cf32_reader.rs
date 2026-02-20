@@ -1,7 +1,10 @@
 //! Reader for CF32 (complex float32) IQ sample files.
 //!
 //! CF32 format stores interleaved f32 pairs (I, Q, I, Q, ...) in
-//! native byte order. Each I/Q pair becomes a `Complex<f32>` sample.
+//! native byte order at 8 bytes per complex sample (4 bytes per
+//! component). Values are IEEE 754 single-precision floats, typically
+//! in the range [-1.0, +1.0]. This is the internal working format
+//! used throughout the DSP pipeline.
 
 use std::fs::File;
 use std::io::{BufReader, Read};

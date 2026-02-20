@@ -9,6 +9,7 @@ use num_complex::Complex;
 
 use trunker::channel_manager::{ChannelManager, ChannelManagerConfig, VoiceChannelEvent};
 use trunker::dsp::nco::Nco;
+use trunker::output::event_handler;
 use trunker::output::json;
 use trunker::output::wav::WavWriter;
 use trunker::p25::ident::IdentTable;
@@ -19,7 +20,7 @@ use trunker::p25::types::Frequency;
 use trunker::pipeline::{self, ChannelPipeline, PipelineConfig};
 use trunker::sdr::cf32_reader::Cf32Reader;
 use trunker::sdr::soapy_source::{self, SoapySource};
-use trunker::vocoder::{AudioBuffer, ImbeDecoder, ReceivedFrame, SAMPLES_PER_FRAME};
+use trunker::vocoder::ImbeDecoder;
 
 /// P25 trunked radio decoder — RF in, JSON out.
 #[derive(Parser)]
@@ -194,6 +195,12 @@ enum Command {
         decode_audio: bool,
     },
 
+    /// Diagnostic tools for inspecting IQ files and debugging the DSP pipeline.
+    Debug {
+        #[command(subcommand)]
+        action: trunker::debug::DebugAction,
+    },
+
     /// List available SoapySDR devices.
     Devices,
 
@@ -327,6 +334,9 @@ fn main() -> Result<()> {
                 decode_audio,
                 &running,
             )?;
+        }
+        Command::Debug { action } => {
+            trunker::debug::run(action)?;
         }
         Command::Devices => {
             soapy_source::list_devices();
@@ -507,13 +517,14 @@ fn decode_control_channel(
 
         if let Some(event) = pipeline.process_sample(sample) {
             let nac = pipeline.current_nac();
-            handle_receiver_event(
+            event_handler::handle_receiver_event(
                 nac,
                 &mut ident_table,
                 &mut tsbk_count,
                 &mut decoder,
                 wav_writer.as_mut(),
                 event,
+                &mut std::io::stdout(),
             );
         }
     }
@@ -530,71 +541,6 @@ fn decode_control_channel(
         "decode complete"
     );
     Ok(())
-}
-
-/// Dispatch a decoded protocol event (NID, TSBK, voice frame, or error).
-fn handle_receiver_event(
-    nac: trunker::p25::types::Nac,
-    ident_table: &mut IdentTable,
-    tsbk_count: &mut u64,
-    decoder: &mut Option<ImbeDecoder>,
-    wav_writer: Option<&mut WavWriter>,
-    event: ReceiverEvent,
-) {
-    match event {
-        ReceiverEvent::Nid(nid) => {
-            tracing::debug!(
-                nac = %nid.access_code,
-                duid = ?nid.data_unit,
-                parity_ok = nid.parity_ok,
-                "NID decoded"
-            );
-        }
-        ReceiverEvent::Tsbk(tsbk) => {
-            if matches!(tsbk.payload, TsbkPayload::IdentifierUpdate { .. }) {
-                ident_table.update(&tsbk);
-            }
-
-            let line = json::to_json_line(nac, &tsbk, ident_table);
-            println!("{line}");
-            *tsbk_count += 1;
-        }
-        ReceiverEvent::VoiceFrame(vf) => {
-            if let Some(dec) = decoder.as_mut() {
-                let received = ReceivedFrame::from(&vf);
-                let mut buffer: AudioBuffer = [0.0; SAMPLES_PER_FRAME];
-                dec.decode(received, &mut buffer);
-
-                if let Some(writer) = wav_writer
-                    && let Err(e) = writer.write_samples(&buffer)
-                {
-                    tracing::warn!(error = %e, "failed to write WAV samples");
-                }
-            }
-
-            let line = json::voice_frame_json_line(nac, &vf);
-            println!("{line}");
-        }
-        ReceiverEvent::LinkControl(lc) => {
-            let line = json::link_control_json_line(nac, &lc);
-            println!("{line}");
-        }
-        ReceiverEvent::CryptoControl(cc) => {
-            let line = json::crypto_control_json_line(nac, &cc);
-            println!("{line}");
-        }
-        ReceiverEvent::VoiceHeader(hdr) => {
-            let line = json::voice_header_json_line(nac, &hdr);
-            println!("{line}");
-        }
-        ReceiverEvent::DataFragment(frag) => {
-            let line = json::data_fragment_json_line(nac, frag);
-            println!("{line}");
-        }
-        ReceiverEvent::Error(err) => {
-            tracing::debug!(error = %err, "decode error");
-        }
-    }
 }
 
 /// Run the wideband trunked decoder (CC + voice channels).
