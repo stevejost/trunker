@@ -67,6 +67,23 @@ impl GardnerTed {
         }
     }
 
+    /// Current fractional sample offset within the symbol period.
+    ///
+    /// When `mu` crosses below 1.0, a symbol decision is made. Values
+    /// near 0.0 indicate the interpolation point is close to an actual
+    /// sample instant.
+    pub fn mu(&self) -> f32 {
+        self.mu
+    }
+
+    /// Current estimated samples per symbol.
+    ///
+    /// Tracks near the nominal value (5.0 for P25 at 24 kHz) and is
+    /// clamped to within 0.2% of nominal by the PI loop filter.
+    pub fn omega(&self) -> f32 {
+        self.omega
+    }
+
     /// Process one complex input sample.
     ///
     /// Returns `Some(symbol)` when a symbol boundary is crossed,
@@ -342,6 +359,40 @@ mod tests {
             gardner.omega >= min_omega && gardner.omega <= max_omega,
             "omega out of bounds: {} (expected {min_omega}..{max_omega})",
             gardner.omega
+        );
+    }
+
+    #[test]
+    fn mu_accessor_returns_fractional_offset() {
+        let mut gardner = GardnerTed::new();
+        // Initial mu equals nominal omega.
+        assert!((gardner.mu() - NOMINAL_OMEGA).abs() < 1e-6);
+
+        // After processing samples, mu changes.
+        let signal = generate_qpsk_signal(&qpsk_symbols(), 5.0, 0.0);
+        for &sample in &signal[..10] {
+            gardner.process(sample);
+        }
+        // mu should have moved from its initial value.
+        assert!((gardner.mu() - NOMINAL_OMEGA).abs() > 1e-6);
+    }
+
+    #[test]
+    fn omega_accessor_matches_field() {
+        let mut gardner = GardnerTed::new();
+        assert!((gardner.omega() - NOMINAL_OMEGA).abs() < 1e-6);
+
+        let signal = generate_qpsk_signal(&qpsk_symbols(), 5.0, 2.0);
+        for &sample in &signal {
+            gardner.process(sample);
+        }
+        // omega accessor should match the clamped field value.
+        let min_omega = NOMINAL_OMEGA * (1.0 - OMEGA_RELATIVE_LIMIT);
+        let max_omega = NOMINAL_OMEGA * (1.0 + OMEGA_RELATIVE_LIMIT);
+        assert!(
+            gardner.omega() >= min_omega && gardner.omega() <= max_omega,
+            "omega() out of bounds: {}",
+            gardner.omega()
         );
     }
 }

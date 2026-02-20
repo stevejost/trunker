@@ -47,6 +47,14 @@ impl Agc {
         }
     }
 
+    /// Current gain factor applied to input samples.
+    ///
+    /// Computed as `reference / sqrt(power_estimate)`. Higher values
+    /// indicate weaker input signal being boosted.
+    pub fn gain(&self) -> f32 {
+        self.reference / self.power_estimate.max(MIN_POWER).sqrt()
+    }
+
     /// Process one complex sample, returning the gain-normalized output.
     pub fn process(&mut self, sample: Complex<f32>) -> Complex<f32> {
         let power = sample.norm_sqr();
@@ -175,5 +183,27 @@ mod tests {
         let agc = Agc::default();
         assert!((agc.alpha - DEFAULT_ALPHA).abs() < 1e-6);
         assert!((agc.reference - DEFAULT_REFERENCE).abs() < 1e-6);
+    }
+
+    #[test]
+    fn gain_accessor_matches_applied_gain() {
+        let reference = 0.85;
+        let mut agc = Agc::new(0.45, reference);
+        let input = Complex::new(2.0, 0.0);
+
+        // Let the AGC settle.
+        for _ in 0..200 {
+            agc.process(input);
+        }
+
+        // gain() should match reference / sqrt(power_estimate).
+        // After settling on constant input of amplitude 2.0,
+        // power_estimate converges to 4.0, so gain ~ 0.85 / 2.0 = 0.425.
+        let gain = agc.gain();
+        let expected = reference / 2.0;
+        assert!(
+            (gain - expected).abs() < 0.05,
+            "expected gain near {expected}, got {gain}"
+        );
     }
 }

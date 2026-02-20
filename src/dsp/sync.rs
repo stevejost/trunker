@@ -59,7 +59,7 @@ impl SyncDetector {
     }
 
     /// Count mismatches between the current window and the sync pattern.
-    fn error_count(&self) -> usize {
+    pub fn error_count(&self) -> usize {
         SYNC_DIBITS_PATTERN
             .iter()
             .enumerate()
@@ -240,5 +240,27 @@ mod tests {
             }
         }
         assert!(detected);
+    }
+
+    #[test]
+    fn error_count_reports_mismatches() {
+        let mut detector = SyncDetector::new();
+
+        // Feed exact sync pattern — zero errors.
+        for &dibit in &sync_dibits() {
+            detector.feed(dibit);
+        }
+        assert_eq!(detector.error_count(), 0);
+
+        // Corrupt 2 dibits and re-feed.
+        let mut corrupted = sync_dibits();
+        corrupted[3] = Dibit::new(corrupted[3].bits() ^ 0x02);
+        corrupted[17] = Dibit::new(corrupted[17].bits() ^ 0x02);
+
+        let mut detector2 = SyncDetector::new();
+        for &dibit in &corrupted {
+            detector2.feed(dibit);
+        }
+        assert_eq!(detector2.error_count(), 2);
     }
 }
