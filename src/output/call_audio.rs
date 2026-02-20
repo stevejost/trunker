@@ -22,7 +22,7 @@ pub fn call_audio_path(
     talkgroup: TalkgroupId,
     timestamp: SystemTime,
 ) -> std::io::Result<PathBuf> {
-    let (date_dir, filename) = format_path_components(talkgroup, timestamp);
+    let (date_dir, filename) = format_path_components(talkgroup, timestamp)?;
     let dir = output_dir.join(&date_dir);
     fs::create_dir_all(&dir)?;
     Ok(dir.join(filename))
@@ -33,23 +33,30 @@ pub fn call_audio_path(
 /// Returns `(date_dir, filename)` where:
 /// - `date_dir` is `"YYYY-MM-DD"`
 /// - `filename` is `"{talkgroup}_{YYYYMMDD_HHMMSS}.wav"`
-fn format_path_components(talkgroup: TalkgroupId, timestamp: SystemTime) -> (String, String) {
-    let (year, month, day, hour, minute, second) = decompose_system_time(timestamp);
+///
+/// Returns an error if the timestamp is before the Unix epoch.
+fn format_path_components(
+    talkgroup: TalkgroupId,
+    timestamp: SystemTime,
+) -> std::io::Result<(String, String)> {
+    let (year, month, day, hour, minute, second) = decompose_system_time(timestamp)?;
     let date_dir = format!("{year:04}-{month:02}-{day:02}");
     let filename = format!(
         "{tg}_{year:04}{month:02}{day:02}_{hour:02}{minute:02}{second:02}.wav",
         tg = talkgroup.value(),
     );
-    (date_dir, filename)
+    Ok((date_dir, filename))
 }
 
 /// Decompose a `SystemTime` into calendar components (UTC).
 ///
 /// Returns `(year, month, day, hour, minute, second)`.
-fn decompose_system_time(time: SystemTime) -> (i32, u32, u32, u32, u32, u32) {
+///
+/// Returns an error if the timestamp is before the Unix epoch.
+fn decompose_system_time(time: SystemTime) -> std::io::Result<(i32, u32, u32, u32, u32, u32)> {
     let duration = time
         .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     let total_seconds = duration.as_secs();
 
     // Days since epoch and time of day.
@@ -61,7 +68,7 @@ fn decompose_system_time(time: SystemTime) -> (i32, u32, u32, u32, u32, u32) {
 
     // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
     let (year, month, day) = civil_from_days(days);
-    (year, month, day, hour, minute, second)
+    Ok((year, month, day, hour, minute, second))
 }
 
 /// Convert days since 1970-01-01 to a civil date (year, month, day).
@@ -95,7 +102,7 @@ mod tests {
     fn format_components_epoch() {
         // 1970-01-01 00:00:00 UTC
         let ts = system_time_from_epoch_secs(0);
-        let (date_dir, filename) = format_path_components(TalkgroupId::new(100), ts);
+        let (date_dir, filename) = format_path_components(TalkgroupId::new(100), ts).unwrap();
         assert_eq!(date_dir, "1970-01-01");
         assert_eq!(filename, "100_19700101_000000.wav");
     }
@@ -104,7 +111,7 @@ mod tests {
     fn format_components_known_timestamp() {
         // 2026-02-20 15:30:45 UTC = 1771601445 epoch seconds
         let ts = system_time_from_epoch_secs(1771601445);
-        let (date_dir, filename) = format_path_components(TalkgroupId::new(42), ts);
+        let (date_dir, filename) = format_path_components(TalkgroupId::new(42), ts).unwrap();
         assert_eq!(date_dir, "2026-02-20");
         assert_eq!(filename, "42_20260220_153045.wav");
     }
@@ -112,7 +119,7 @@ mod tests {
     #[test]
     fn format_components_large_talkgroup() {
         let ts = system_time_from_epoch_secs(1771601445);
-        let (_, filename) = format_path_components(TalkgroupId::new(65535), ts);
+        let (_, filename) = format_path_components(TalkgroupId::new(65535), ts).unwrap();
         assert_eq!(filename, "65535_20260220_153045.wav");
     }
 
@@ -148,7 +155,7 @@ mod tests {
 
     #[test]
     fn decompose_epoch() {
-        let (y, m, d, h, min, s) = decompose_system_time(SystemTime::UNIX_EPOCH);
+        let (y, m, d, h, min, s) = decompose_system_time(SystemTime::UNIX_EPOCH).unwrap();
         assert_eq!((y, m, d, h, min, s), (1970, 1, 1, 0, 0, 0));
     }
 
@@ -156,7 +163,7 @@ mod tests {
     fn decompose_known_date() {
         // 2026-02-20 15:30:45 UTC
         let ts = system_time_from_epoch_secs(1771601445);
-        let (y, m, d, h, min, s) = decompose_system_time(ts);
+        let (y, m, d, h, min, s) = decompose_system_time(ts).unwrap();
         assert_eq!((y, m, d, h, min, s), (2026, 2, 20, 15, 30, 45));
     }
 
@@ -164,7 +171,7 @@ mod tests {
     fn decompose_leap_year() {
         // 2024-02-29 12:00:00 UTC = 1709208000 epoch seconds
         let ts = system_time_from_epoch_secs(1709208000);
-        let (y, m, d, _, _, _) = decompose_system_time(ts);
+        let (y, m, d, _, _, _) = decompose_system_time(ts).unwrap();
         assert_eq!((y, m, d), (2024, 2, 29));
     }
 
@@ -172,7 +179,7 @@ mod tests {
     fn decompose_end_of_year() {
         // 2025-12-31 23:59:59 UTC = 1767225599 epoch seconds
         let ts = system_time_from_epoch_secs(1767225599);
-        let (y, m, d, h, min, s) = decompose_system_time(ts);
+        let (y, m, d, h, min, s) = decompose_system_time(ts).unwrap();
         assert_eq!((y, m, d, h, min, s), (2025, 12, 31, 23, 59, 59));
     }
 
