@@ -11,7 +11,7 @@
 //! terminator (TDU) NID, or grant timeout (fallback).
 
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::channel_manager::VoiceChannelEvent;
 use crate::p25::nid::DataUnit;
@@ -51,12 +51,23 @@ pub struct Call {
     pub source: SourceId,
     /// Wall-clock time when the grant was received.
     pub start_time: Instant,
+    /// Wall-clock time when the call ended.
+    pub end_time: Option<Instant>,
     /// Number of decoded voice frames in this call.
     pub frame_count: u32,
     /// Current lifecycle state.
     pub state: CallState,
     /// Why the call ended (set when state transitions to Ended).
     pub end_reason: Option<EndReason>,
+}
+
+impl Call {
+    /// Duration of the call from start to end.
+    ///
+    /// Returns `None` if the call has not ended yet.
+    pub fn duration(&self) -> Option<Duration> {
+        self.end_time.map(|end| end.duration_since(self.start_time))
+    }
 }
 
 /// Tracks voice call lifecycles across frequencies.
@@ -79,18 +90,31 @@ impl CallTracker {
 
     /// Start tracking a new call from a control channel grant.
     ///
-    /// If a call already exists at this frequency, it is replaced.
-    pub fn start_call(&mut self, frequency: Frequency, talkgroup: TalkgroupId, source: SourceId) {
+    /// If a call already exists at this frequency, the displaced call is
+    /// returned with state `Ended` so the caller can finalize its recording.
+    pub fn start_call(
+        &mut self,
+        frequency: Frequency,
+        talkgroup: TalkgroupId,
+        source: SourceId,
+    ) -> Option<Call> {
         let call = Call {
             frequency,
             talkgroup,
             source,
             start_time: Instant::now(),
+            end_time: None,
             frame_count: 0,
             state: CallState::Pending,
             end_reason: None,
         };
-        self.calls.insert(frequency, call);
+        let displaced = self.calls.insert(frequency, call);
+        displaced.map(|mut old| {
+            old.state = CallState::Ended;
+            old.end_reason = Some(EndReason::Timeout);
+            old.end_time = Some(Instant::now());
+            old
+        })
     }
 
     /// Process a voice channel event and update call state.
@@ -148,6 +172,7 @@ impl CallTracker {
         self.calls.remove(&frequency).map(|mut call| {
             call.state = CallState::Ended;
             call.end_reason = Some(reason);
+            call.end_time = Some(Instant::now());
             call
         })
     }
@@ -320,15 +345,28 @@ mod tests {
     }
 
     #[test]
-    fn start_call_replaces_existing() {
+    fn start_call_returns_displaced_call() {
         let mut tracker = CallTracker::new();
         let freq = test_frequency();
 
-        tracker.start_call(freq, TalkgroupId::new(100), test_source());
+        let displaced = tracker.start_call(freq, TalkgroupId::new(100), test_source());
+        assert!(
+            displaced.is_none(),
+            "first call should not displace anything"
+        );
+
         tracker.process_event(&make_voice_frame_event(freq));
 
         // Replace with new call on same frequency.
-        tracker.start_call(freq, TalkgroupId::new(200), test_source());
+        let displaced = tracker.start_call(freq, TalkgroupId::new(200), test_source());
+        let old_call = displaced.expect("should return displaced call");
+        assert_eq!(old_call.talkgroup, TalkgroupId::new(100));
+        assert_eq!(old_call.state, CallState::Ended);
+        assert_eq!(old_call.end_reason, Some(EndReason::Timeout));
+        assert_eq!(old_call.frame_count, 1);
+        assert!(old_call.end_time.is_some());
+
+        // New call should be in place.
         let call = tracker.get_call(&freq).unwrap();
         assert_eq!(call.talkgroup, TalkgroupId::new(200));
         assert_eq!(call.state, CallState::Pending);
@@ -368,5 +406,42 @@ mod tests {
     fn default_creates_empty_tracker() {
         let tracker = CallTracker::default();
         assert_eq!(tracker.active_call_count(), 0);
+    }
+
+    #[test]
+    fn pending_call_has_no_end_time() {
+        let mut tracker = CallTracker::new();
+        tracker.start_call(test_frequency(), test_talkgroup(), test_source());
+
+        let call = tracker.get_call(&test_frequency()).unwrap();
+        assert!(call.end_time.is_none());
+        assert!(call.duration().is_none());
+    }
+
+    #[test]
+    fn ended_call_has_end_time_and_duration() {
+        let mut tracker = CallTracker::new();
+        let freq = test_frequency();
+        tracker.start_call(freq, test_talkgroup(), test_source());
+
+        let ended = tracker.timeout_call(freq).unwrap();
+        assert!(ended.end_time.is_some());
+        let duration = ended.duration().expect("ended call should have duration");
+        // Duration should be non-negative (just created).
+        assert!(duration.as_nanos() >= 0);
+    }
+
+    #[test]
+    fn terminator_sets_end_time() {
+        let mut tracker = CallTracker::new();
+        let freq = test_frequency();
+        tracker.start_call(freq, test_talkgroup(), test_source());
+        tracker.process_event(&make_voice_frame_event(freq));
+
+        let event = make_nid_event(freq, DataUnit::VoiceLcTerminator);
+        let ended = tracker.process_event(&event).unwrap();
+
+        assert!(ended.end_time.is_some());
+        assert!(ended.duration().is_some());
     }
 }

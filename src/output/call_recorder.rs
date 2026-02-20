@@ -62,14 +62,33 @@ impl CallRecorder {
     /// Start recording a new call.
     ///
     /// Opens a WAV file in the output directory. If a recording already
-    /// exists at this frequency, it is finalized first.
-    pub fn start_call(&mut self, frequency: Frequency, talkgroup: TalkgroupId, source: SourceId) {
-        // Finalize any existing recording at this frequency.
-        if self.writers.contains_key(&frequency) {
-            self.finalize_writer(frequency);
-        }
+    /// exists at this frequency, it is finalized and returned as a
+    /// completed recording.
+    pub fn start_call(
+        &mut self,
+        frequency: Frequency,
+        talkgroup: TalkgroupId,
+        source: SourceId,
+    ) -> Option<CompletedRecording> {
+        // Finalize any existing WAV writer at this frequency.
+        let audio_file = if self.writers.contains_key(&frequency) {
+            self.finalize_writer(frequency)
+        } else {
+            None
+        };
 
-        self.tracker.start_call(frequency, talkgroup, source);
+        // Start tracking; get the displaced call if one existed.
+        let completed = self
+            .tracker
+            .start_call(frequency, talkgroup, source)
+            .map(|displaced| CompletedRecording {
+                talkgroup: displaced.talkgroup,
+                source: displaced.source,
+                frequency: displaced.frequency,
+                frame_count: displaced.frame_count,
+                end_reason: displaced.end_reason.unwrap_or(EndReason::Timeout),
+                audio_file,
+            });
 
         let timestamp = SystemTime::now();
         match call_audio::call_audio_path(&self.output_dir, talkgroup, timestamp) {
@@ -100,6 +119,8 @@ impl CallRecorder {
                 );
             }
         }
+
+        completed
     }
 
     /// Process a voice channel event, writing audio and tracking state.
@@ -159,6 +180,11 @@ impl CallRecorder {
     /// Return the number of currently active recordings.
     pub fn active_recording_count(&self) -> usize {
         self.writers.len()
+    }
+
+    /// Check whether a recording is active at the given frequency.
+    pub fn has_active_recording(&self, frequency: &Frequency) -> bool {
+        self.writers.contains_key(frequency)
     }
 
     /// Finalize a WAV writer and return the file path.
@@ -342,18 +368,27 @@ mod tests {
     }
 
     #[test]
-    fn start_call_replaces_existing_recording() {
+    fn start_call_returns_displaced_recording() {
         let dir = tempfile::tempdir().unwrap();
         let mut recorder = CallRecorder::new(dir.path());
         let freq = test_frequency();
 
-        recorder.start_call(freq, TalkgroupId::new(100), test_source());
+        // First call: no displacement.
+        let displaced = recorder.start_call(freq, TalkgroupId::new(100), test_source());
+        assert!(
+            displaced.is_none(),
+            "first call should not displace anything"
+        );
         let first_path = recorder.paths.get(&freq).unwrap().clone();
 
         // Starting a new call at the same frequency finalizes the old one.
-        recorder.start_call(freq, TalkgroupId::new(200), test_source());
-        let second_path = recorder.paths.get(&freq).unwrap().clone();
+        let displaced = recorder.start_call(freq, TalkgroupId::new(200), test_source());
+        let recording = displaced.expect("should return displaced recording");
+        assert_eq!(recording.talkgroup, TalkgroupId::new(100));
+        assert_eq!(recording.end_reason, EndReason::Timeout);
+        assert!(recording.audio_file.is_some());
 
+        let second_path = recorder.paths.get(&freq).unwrap().clone();
         assert_eq!(recorder.active_recording_count(), 1);
         assert!(first_path.exists(), "first WAV should be finalized on disk");
         assert!(second_path.exists(), "second WAV should exist");
