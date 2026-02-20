@@ -8,7 +8,7 @@
 //! Each operates on 6-bit symbols (hexbits) using the GF(2^6) Galois field.
 
 use super::bmcf;
-use super::galois::{impl_polynomial_coefs, Codeword, Polynomial, PolynomialCoefs};
+use super::galois::{Codeword, Polynomial, PolynomialCoefs, impl_polynomial_coefs};
 use crate::p25::types::Hexbit;
 
 // ---------------------------------------------------------------------------
@@ -31,18 +31,42 @@ pub mod short {
 
     /// Transpose of the generator matrix G_LC (12 parity rows x 12 data columns).
     const GENERATOR: [[u8; 12]; 12] = [
-        [0o62, 0o11, 0o03, 0o21, 0o30, 0o01, 0o61, 0o24, 0o72, 0o72, 0o73, 0o71],
-        [0o44, 0o12, 0o01, 0o70, 0o22, 0o41, 0o76, 0o22, 0o42, 0o14, 0o65, 0o05],
-        [0o03, 0o11, 0o05, 0o27, 0o03, 0o27, 0o21, 0o71, 0o05, 0o65, 0o36, 0o55],
-        [0o25, 0o11, 0o75, 0o45, 0o75, 0o56, 0o55, 0o56, 0o20, 0o54, 0o61, 0o03],
-        [0o14, 0o16, 0o14, 0o16, 0o15, 0o76, 0o76, 0o21, 0o43, 0o35, 0o42, 0o71],
-        [0o16, 0o64, 0o06, 0o67, 0o15, 0o64, 0o01, 0o35, 0o47, 0o25, 0o22, 0o34],
-        [0o27, 0o67, 0o20, 0o23, 0o33, 0o21, 0o63, 0o73, 0o33, 0o41, 0o17, 0o60],
-        [0o03, 0o55, 0o44, 0o64, 0o15, 0o53, 0o35, 0o42, 0o56, 0o16, 0o04, 0o11],
-        [0o53, 0o01, 0o66, 0o73, 0o51, 0o04, 0o30, 0o57, 0o01, 0o15, 0o44, 0o74],
-        [0o04, 0o76, 0o06, 0o33, 0o03, 0o25, 0o13, 0o74, 0o16, 0o40, 0o20, 0o02],
-        [0o36, 0o26, 0o70, 0o44, 0o53, 0o01, 0o64, 0o43, 0o13, 0o71, 0o25, 0o41],
-        [0o47, 0o73, 0o66, 0o21, 0o50, 0o12, 0o70, 0o76, 0o76, 0o26, 0o05, 0o50],
+        [
+            0o62, 0o11, 0o03, 0o21, 0o30, 0o01, 0o61, 0o24, 0o72, 0o72, 0o73, 0o71,
+        ],
+        [
+            0o44, 0o12, 0o01, 0o70, 0o22, 0o41, 0o76, 0o22, 0o42, 0o14, 0o65, 0o05,
+        ],
+        [
+            0o03, 0o11, 0o05, 0o27, 0o03, 0o27, 0o21, 0o71, 0o05, 0o65, 0o36, 0o55,
+        ],
+        [
+            0o25, 0o11, 0o75, 0o45, 0o75, 0o56, 0o55, 0o56, 0o20, 0o54, 0o61, 0o03,
+        ],
+        [
+            0o14, 0o16, 0o14, 0o16, 0o15, 0o76, 0o76, 0o21, 0o43, 0o35, 0o42, 0o71,
+        ],
+        [
+            0o16, 0o64, 0o06, 0o67, 0o15, 0o64, 0o01, 0o35, 0o47, 0o25, 0o22, 0o34,
+        ],
+        [
+            0o27, 0o67, 0o20, 0o23, 0o33, 0o21, 0o63, 0o73, 0o33, 0o41, 0o17, 0o60,
+        ],
+        [
+            0o03, 0o55, 0o44, 0o64, 0o15, 0o53, 0o35, 0o42, 0o56, 0o16, 0o04, 0o11,
+        ],
+        [
+            0o53, 0o01, 0o66, 0o73, 0o51, 0o04, 0o30, 0o57, 0o01, 0o15, 0o44, 0o74,
+        ],
+        [
+            0o04, 0o76, 0o06, 0o33, 0o03, 0o25, 0o13, 0o74, 0o16, 0o40, 0o20, 0o02,
+        ],
+        [
+            0o36, 0o26, 0o70, 0o44, 0o53, 0o01, 0o64, 0o43, 0o13, 0o71, 0o25, 0o41,
+        ],
+        [
+            0o47, 0o73, 0o66, 0o21, 0o50, 0o12, 0o70, 0o76, 0o76, 0o26, 0o05, 0o50,
+        ],
     ];
 
     /// Compute 12 parity hexbits from the first 12 data hexbits.
@@ -56,9 +80,8 @@ pub mod short {
     /// Returns `Some((data_slice, error_count))` on success, or `None` if
     /// the errors are unrecoverable.
     pub fn decode(buf: &mut [Hexbit; 24]) -> Option<(&[Hexbit], usize)> {
-        super::decode::<ShortCoefs>(buf).map(move |(poly, err)| {
-            (super::extract_data(poly, &mut buf[..12]), err)
-        })
+        super::decode::<ShortCoefs>(buf)
+            .map(move |(poly, err)| (super::extract_data(poly, &mut buf[..12]), err))
     }
 }
 
@@ -74,14 +97,38 @@ pub mod medium {
 
     /// Transpose of the generator matrix G_ES (8 parity rows x 16 data columns).
     const GENERATOR: [[u8; 16]; 8] = [
-        [0o51, 0o57, 0o05, 0o73, 0o75, 0o20, 0o02, 0o24, 0o42, 0o32, 0o65, 0o64, 0o62, 0o55, 0o24, 0o67],
-        [0o45, 0o25, 0o01, 0o07, 0o15, 0o32, 0o75, 0o74, 0o64, 0o32, 0o36, 0o06, 0o63, 0o43, 0o23, 0o75],
-        [0o67, 0o63, 0o31, 0o47, 0o51, 0o14, 0o43, 0o15, 0o07, 0o55, 0o25, 0o54, 0o74, 0o34, 0o23, 0o45],
-        [0o15, 0o73, 0o04, 0o14, 0o51, 0o42, 0o05, 0o72, 0o22, 0o41, 0o07, 0o32, 0o70, 0o71, 0o05, 0o60],
-        [0o64, 0o71, 0o16, 0o41, 0o17, 0o75, 0o01, 0o24, 0o61, 0o57, 0o50, 0o76, 0o05, 0o57, 0o50, 0o57],
-        [0o67, 0o22, 0o54, 0o77, 0o67, 0o42, 0o40, 0o26, 0o20, 0o66, 0o16, 0o46, 0o27, 0o76, 0o70, 0o24],
-        [0o52, 0o40, 0o25, 0o47, 0o17, 0o70, 0o12, 0o74, 0o40, 0o21, 0o40, 0o14, 0o37, 0o50, 0o42, 0o06],
-        [0o12, 0o15, 0o76, 0o11, 0o57, 0o54, 0o64, 0o61, 0o65, 0o77, 0o51, 0o36, 0o46, 0o64, 0o23, 0o26],
+        [
+            0o51, 0o57, 0o05, 0o73, 0o75, 0o20, 0o02, 0o24, 0o42, 0o32, 0o65, 0o64, 0o62, 0o55,
+            0o24, 0o67,
+        ],
+        [
+            0o45, 0o25, 0o01, 0o07, 0o15, 0o32, 0o75, 0o74, 0o64, 0o32, 0o36, 0o06, 0o63, 0o43,
+            0o23, 0o75,
+        ],
+        [
+            0o67, 0o63, 0o31, 0o47, 0o51, 0o14, 0o43, 0o15, 0o07, 0o55, 0o25, 0o54, 0o74, 0o34,
+            0o23, 0o45,
+        ],
+        [
+            0o15, 0o73, 0o04, 0o14, 0o51, 0o42, 0o05, 0o72, 0o22, 0o41, 0o07, 0o32, 0o70, 0o71,
+            0o05, 0o60,
+        ],
+        [
+            0o64, 0o71, 0o16, 0o41, 0o17, 0o75, 0o01, 0o24, 0o61, 0o57, 0o50, 0o76, 0o05, 0o57,
+            0o50, 0o57,
+        ],
+        [
+            0o67, 0o22, 0o54, 0o77, 0o67, 0o42, 0o40, 0o26, 0o20, 0o66, 0o16, 0o46, 0o27, 0o76,
+            0o70, 0o24,
+        ],
+        [
+            0o52, 0o40, 0o25, 0o47, 0o17, 0o70, 0o12, 0o74, 0o40, 0o21, 0o40, 0o14, 0o37, 0o50,
+            0o42, 0o06,
+        ],
+        [
+            0o12, 0o15, 0o76, 0o11, 0o57, 0o54, 0o64, 0o61, 0o65, 0o77, 0o51, 0o36, 0o46, 0o64,
+            0o23, 0o26,
+        ],
     ];
 
     /// Compute 8 parity hexbits from the first 16 data hexbits.
@@ -95,9 +142,8 @@ pub mod medium {
     /// Returns `Some((data_slice, error_count))` on success, or `None` if
     /// the errors are unrecoverable.
     pub fn decode(buf: &mut [Hexbit; 24]) -> Option<(&[Hexbit], usize)> {
-        super::decode::<MediumCoefs>(buf).map(move |(poly, err)| {
-            (super::extract_data(poly, &mut buf[..16]), err)
-        })
+        super::decode::<MediumCoefs>(buf)
+            .map(move |(poly, err)| (super::extract_data(poly, &mut buf[..16]), err))
     }
 }
 
@@ -113,22 +159,70 @@ pub mod long {
 
     /// Transpose of the generator matrix P_HDR (16 parity rows x 20 data columns).
     const GENERATOR: [[u8; 20]; 16] = [
-        [0o74, 0o04, 0o07, 0o26, 0o23, 0o24, 0o52, 0o55, 0o54, 0o74, 0o54, 0o51, 0o01, 0o11, 0o06, 0o34, 0o63, 0o71, 0o02, 0o34],
-        [0o37, 0o17, 0o23, 0o05, 0o73, 0o51, 0o33, 0o62, 0o51, 0o41, 0o70, 0o07, 0o65, 0o70, 0o02, 0o31, 0o43, 0o21, 0o01, 0o35],
-        [0o34, 0o50, 0o37, 0o07, 0o73, 0o25, 0o14, 0o56, 0o32, 0o30, 0o11, 0o72, 0o32, 0o05, 0o65, 0o01, 0o25, 0o70, 0o53, 0o02],
-        [0o06, 0o24, 0o46, 0o63, 0o41, 0o23, 0o02, 0o25, 0o65, 0o41, 0o03, 0o30, 0o70, 0o10, 0o11, 0o15, 0o44, 0o44, 0o74, 0o23],
-        [0o02, 0o11, 0o56, 0o63, 0o72, 0o22, 0o20, 0o73, 0o77, 0o43, 0o13, 0o65, 0o13, 0o65, 0o41, 0o44, 0o77, 0o56, 0o02, 0o21],
-        [0o07, 0o05, 0o75, 0o27, 0o34, 0o41, 0o06, 0o60, 0o12, 0o22, 0o22, 0o54, 0o44, 0o24, 0o20, 0o64, 0o63, 0o04, 0o14, 0o27],
-        [0o44, 0o30, 0o43, 0o63, 0o21, 0o74, 0o14, 0o15, 0o54, 0o51, 0o16, 0o06, 0o73, 0o15, 0o45, 0o16, 0o17, 0o30, 0o52, 0o22],
-        [0o64, 0o57, 0o45, 0o40, 0o51, 0o66, 0o25, 0o30, 0o13, 0o06, 0o57, 0o21, 0o24, 0o77, 0o42, 0o24, 0o17, 0o74, 0o74, 0o33],
-        [0o26, 0o33, 0o55, 0o06, 0o67, 0o74, 0o52, 0o13, 0o35, 0o64, 0o03, 0o36, 0o12, 0o22, 0o46, 0o52, 0o64, 0o04, 0o12, 0o64],
-        [0o14, 0o03, 0o21, 0o04, 0o16, 0o65, 0o23, 0o17, 0o32, 0o33, 0o45, 0o63, 0o52, 0o24, 0o54, 0o16, 0o14, 0o23, 0o57, 0o42],
-        [0o26, 0o02, 0o50, 0o40, 0o31, 0o70, 0o35, 0o20, 0o56, 0o03, 0o72, 0o50, 0o21, 0o24, 0o35, 0o06, 0o40, 0o71, 0o24, 0o05],
-        [0o44, 0o02, 0o31, 0o45, 0o74, 0o36, 0o74, 0o02, 0o12, 0o47, 0o31, 0o61, 0o55, 0o74, 0o12, 0o62, 0o74, 0o70, 0o63, 0o73],
-        [0o54, 0o15, 0o45, 0o47, 0o11, 0o67, 0o75, 0o70, 0o75, 0o27, 0o30, 0o64, 0o12, 0o07, 0o40, 0o20, 0o31, 0o63, 0o15, 0o51],
-        [0o13, 0o16, 0o27, 0o30, 0o21, 0o45, 0o75, 0o55, 0o01, 0o12, 0o56, 0o52, 0o35, 0o44, 0o64, 0o13, 0o72, 0o45, 0o42, 0o46],
-        [0o77, 0o25, 0o71, 0o75, 0o12, 0o64, 0o43, 0o14, 0o72, 0o55, 0o35, 0o01, 0o14, 0o07, 0o65, 0o55, 0o54, 0o56, 0o52, 0o73],
-        [0o05, 0o26, 0o62, 0o07, 0o21, 0o01, 0o27, 0o47, 0o63, 0o47, 0o22, 0o60, 0o72, 0o46, 0o33, 0o57, 0o06, 0o43, 0o33, 0o60],
+        [
+            0o74, 0o04, 0o07, 0o26, 0o23, 0o24, 0o52, 0o55, 0o54, 0o74, 0o54, 0o51, 0o01, 0o11,
+            0o06, 0o34, 0o63, 0o71, 0o02, 0o34,
+        ],
+        [
+            0o37, 0o17, 0o23, 0o05, 0o73, 0o51, 0o33, 0o62, 0o51, 0o41, 0o70, 0o07, 0o65, 0o70,
+            0o02, 0o31, 0o43, 0o21, 0o01, 0o35,
+        ],
+        [
+            0o34, 0o50, 0o37, 0o07, 0o73, 0o25, 0o14, 0o56, 0o32, 0o30, 0o11, 0o72, 0o32, 0o05,
+            0o65, 0o01, 0o25, 0o70, 0o53, 0o02,
+        ],
+        [
+            0o06, 0o24, 0o46, 0o63, 0o41, 0o23, 0o02, 0o25, 0o65, 0o41, 0o03, 0o30, 0o70, 0o10,
+            0o11, 0o15, 0o44, 0o44, 0o74, 0o23,
+        ],
+        [
+            0o02, 0o11, 0o56, 0o63, 0o72, 0o22, 0o20, 0o73, 0o77, 0o43, 0o13, 0o65, 0o13, 0o65,
+            0o41, 0o44, 0o77, 0o56, 0o02, 0o21,
+        ],
+        [
+            0o07, 0o05, 0o75, 0o27, 0o34, 0o41, 0o06, 0o60, 0o12, 0o22, 0o22, 0o54, 0o44, 0o24,
+            0o20, 0o64, 0o63, 0o04, 0o14, 0o27,
+        ],
+        [
+            0o44, 0o30, 0o43, 0o63, 0o21, 0o74, 0o14, 0o15, 0o54, 0o51, 0o16, 0o06, 0o73, 0o15,
+            0o45, 0o16, 0o17, 0o30, 0o52, 0o22,
+        ],
+        [
+            0o64, 0o57, 0o45, 0o40, 0o51, 0o66, 0o25, 0o30, 0o13, 0o06, 0o57, 0o21, 0o24, 0o77,
+            0o42, 0o24, 0o17, 0o74, 0o74, 0o33,
+        ],
+        [
+            0o26, 0o33, 0o55, 0o06, 0o67, 0o74, 0o52, 0o13, 0o35, 0o64, 0o03, 0o36, 0o12, 0o22,
+            0o46, 0o52, 0o64, 0o04, 0o12, 0o64,
+        ],
+        [
+            0o14, 0o03, 0o21, 0o04, 0o16, 0o65, 0o23, 0o17, 0o32, 0o33, 0o45, 0o63, 0o52, 0o24,
+            0o54, 0o16, 0o14, 0o23, 0o57, 0o42,
+        ],
+        [
+            0o26, 0o02, 0o50, 0o40, 0o31, 0o70, 0o35, 0o20, 0o56, 0o03, 0o72, 0o50, 0o21, 0o24,
+            0o35, 0o06, 0o40, 0o71, 0o24, 0o05,
+        ],
+        [
+            0o44, 0o02, 0o31, 0o45, 0o74, 0o36, 0o74, 0o02, 0o12, 0o47, 0o31, 0o61, 0o55, 0o74,
+            0o12, 0o62, 0o74, 0o70, 0o63, 0o73,
+        ],
+        [
+            0o54, 0o15, 0o45, 0o47, 0o11, 0o67, 0o75, 0o70, 0o75, 0o27, 0o30, 0o64, 0o12, 0o07,
+            0o40, 0o20, 0o31, 0o63, 0o15, 0o51,
+        ],
+        [
+            0o13, 0o16, 0o27, 0o30, 0o21, 0o45, 0o75, 0o55, 0o01, 0o12, 0o56, 0o52, 0o35, 0o44,
+            0o64, 0o13, 0o72, 0o45, 0o42, 0o46,
+        ],
+        [
+            0o77, 0o25, 0o71, 0o75, 0o12, 0o64, 0o43, 0o14, 0o72, 0o55, 0o35, 0o01, 0o14, 0o07,
+            0o65, 0o55, 0o54, 0o56, 0o52, 0o73,
+        ],
+        [
+            0o05, 0o26, 0o62, 0o07, 0o21, 0o01, 0o27, 0o47, 0o63, 0o47, 0o22, 0o60, 0o72, 0o46,
+            0o33, 0o57, 0o06, 0o43, 0o33, 0o60,
+        ],
     ];
 
     /// Compute 16 parity hexbits from the first 20 data hexbits.
@@ -142,9 +236,8 @@ pub mod long {
     /// Returns `Some((data_slice, error_count))` on success, or `None` if
     /// the errors are unrecoverable.
     pub fn decode(buf: &mut [Hexbit; 36]) -> Option<(&[Hexbit], usize)> {
-        super::decode::<LongCoefs>(buf).map(move |(poly, err)| {
-            (super::extract_data(poly, &mut buf[..20]), err)
-        })
+        super::decode::<LongCoefs>(buf)
+            .map(move |(poly, err)| (super::extract_data(poly, &mut buf[..20]), err))
     }
 }
 
@@ -192,9 +285,7 @@ fn decode<P: PolynomialCoefs>(word: &[Hexbit]) -> Option<(Polynomial<P>, usize)>
 
 /// Compute the syndrome polynomial s(x) = s_1 + s_2*x + ... + s_{2t}*x^{2t-1}.
 fn syndromes<P: PolynomialCoefs>(word: &Polynomial<P>) -> Polynomial<P> {
-    Polynomial::new(
-        (1..=P::syndromes()).map(|p| word.eval(Codeword::for_power(p))),
-    )
+    Polynomial::new((1..=P::syndromes()).map(|p| word.eval(Codeword::for_power(p))))
 }
 
 /// Extract data hexbits from the corrected polynomial back into a buffer.
@@ -231,21 +322,13 @@ mod tests {
         // but the polynomial coefficients match the reference.
         let p = Polynomial::<ShortCoefs>::new(
             [Codeword::for_power(1), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(2), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(3), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(4), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(5), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(6), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(7), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(8), Codeword::for_power(0)].into_iter(),
-        );
+        ) * Polynomial::new([Codeword::for_power(2), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(3), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(4), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(5), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(6), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(7), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(8), Codeword::for_power(0)].into_iter());
 
         assert_eq!(p.degree().unwrap(), 8);
         assert_eq!(p.coef(0).bits(), 0o26);
@@ -263,29 +346,17 @@ mod tests {
     fn verify_medium_generator_polynomial() {
         let p = Polynomial::<MediumCoefs>::new(
             [Codeword::for_power(1), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(2), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(3), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(4), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(5), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(6), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(7), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(8), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(9), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(10), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(11), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(12), Codeword::for_power(0)].into_iter(),
-        );
+        ) * Polynomial::new([Codeword::for_power(2), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(3), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(4), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(5), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(6), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(7), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(8), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(9), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(10), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(11), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(12), Codeword::for_power(0)].into_iter());
 
         assert_eq!(p.degree().unwrap(), 12);
         assert_eq!(p.coef(0).bits(), 0o50);
@@ -417,12 +488,30 @@ mod tests {
     fn short_out_of_bounds_correction_returns_none() {
         // This word caused attempted access at location 61 in p25.rs.
         let mut w = [
-            Hexbit::new(0), Hexbit::new(0), Hexbit::new(0), Hexbit::new(4),
-            Hexbit::new(0), Hexbit::new(3), Hexbit::new(34), Hexbit::new(28),
-            Hexbit::new(7), Hexbit::new(13), Hexbit::new(61), Hexbit::new(32),
-            Hexbit::new(27), Hexbit::new(55), Hexbit::new(49), Hexbit::new(7),
-            Hexbit::new(0), Hexbit::new(0), Hexbit::new(0), Hexbit::new(0),
-            Hexbit::new(0), Hexbit::new(0), Hexbit::new(0), Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(4),
+            Hexbit::new(0),
+            Hexbit::new(3),
+            Hexbit::new(34),
+            Hexbit::new(28),
+            Hexbit::new(7),
+            Hexbit::new(13),
+            Hexbit::new(61),
+            Hexbit::new(32),
+            Hexbit::new(27),
+            Hexbit::new(55),
+            Hexbit::new(49),
+            Hexbit::new(7),
+            Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(0),
         ];
         assert_eq!(short::decode(&mut w), None);
     }
@@ -431,12 +520,30 @@ mod tests {
     fn medium_out_of_bounds_correction_returns_none() {
         // This word caused attempted access at location 34 in p25.rs.
         let mut w = [
-            Hexbit::new(0), Hexbit::new(0), Hexbit::new(0), Hexbit::new(0),
-            Hexbit::new(51), Hexbit::new(19), Hexbit::new(8), Hexbit::new(35),
-            Hexbit::new(48), Hexbit::new(61), Hexbit::new(0), Hexbit::new(1),
-            Hexbit::new(11), Hexbit::new(44), Hexbit::new(10), Hexbit::new(0),
-            Hexbit::new(11), Hexbit::new(0), Hexbit::new(15), Hexbit::new(56),
-            Hexbit::new(50), Hexbit::new(0), Hexbit::new(0), Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(51),
+            Hexbit::new(19),
+            Hexbit::new(8),
+            Hexbit::new(35),
+            Hexbit::new(48),
+            Hexbit::new(61),
+            Hexbit::new(0),
+            Hexbit::new(1),
+            Hexbit::new(11),
+            Hexbit::new(44),
+            Hexbit::new(10),
+            Hexbit::new(0),
+            Hexbit::new(11),
+            Hexbit::new(0),
+            Hexbit::new(15),
+            Hexbit::new(56),
+            Hexbit::new(50),
+            Hexbit::new(0),
+            Hexbit::new(0),
+            Hexbit::new(0),
         ];
         assert_eq!(medium::decode(&mut w), None);
     }
@@ -518,37 +625,21 @@ mod tests {
     fn verify_long_generator_polynomial() {
         let p = Polynomial::<LongCoefs>::new(
             [Codeword::for_power(1), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(2), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(3), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(4), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(5), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(6), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(7), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(8), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(9), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(10), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(11), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(12), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(13), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(14), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(15), Codeword::for_power(0)].into_iter(),
-        ) * Polynomial::new(
-            [Codeword::for_power(16), Codeword::for_power(0)].into_iter(),
-        );
+        ) * Polynomial::new([Codeword::for_power(2), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(3), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(4), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(5), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(6), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(7), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(8), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(9), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(10), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(11), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(12), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(13), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(14), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(15), Codeword::for_power(0)].into_iter())
+            * Polynomial::new([Codeword::for_power(16), Codeword::for_power(0)].into_iter());
 
         assert_eq!(p.degree().unwrap(), 16);
         assert_eq!(p.coef(0).bits(), 0o60);

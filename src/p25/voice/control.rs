@@ -213,25 +213,23 @@ impl GroupVoiceTraffic {
 
     /// Manufacturer ID.
     pub fn manufacturer_id(&self) -> u8 {
-        self.0 .0[1]
+        self.0.0[1]
     }
 
     /// Service options byte.
     pub fn service_options(&self) -> ServiceOptions {
-        ServiceOptions(self.0 .0[2])
+        ServiceOptions(self.0.0[2])
     }
 
     /// Talkgroup on the traffic channel.
     pub fn talkgroup(&self) -> TalkgroupId {
-        TalkgroupId::new(u16::from_be_bytes([self.0 .0[4], self.0 .0[5]]))
+        TalkgroupId::new(u16::from_be_bytes([self.0.0[4], self.0.0[5]]))
     }
 
     /// Source unit (subscriber radio) address.
     pub fn source_unit(&self) -> SourceId {
-        let bytes = &self.0 .0;
-        SourceId::new(
-            ((bytes[6] as u32) << 16) | ((bytes[7] as u32) << 8) | (bytes[8] as u32),
-        )
+        let bytes = &self.0.0;
+        SourceId::new(((bytes[6] as u32) << 16) | ((bytes[7] as u32) << 8) | (bytes[8] as u32))
     }
 }
 
@@ -312,14 +310,7 @@ mod tests {
     #[test]
     fn link_control_basic_fields() {
         let lc = LinkControlFields::new([
-            0b00000000,
-            0b00000000,
-            0b10110101,
-            0b00000000,
-            0b00000000,
-            0b00000001,
-            0xDE,
-            0xAD,
+            0b00000000, 0b00000000, 0b10110101, 0b00000000, 0b00000000, 0b00000001, 0xDE, 0xAD,
             0xBE,
         ]);
 
@@ -327,38 +318,29 @@ mod tests {
         assert!(!lc.protected());
         assert_eq!(
             lc.payload(),
-            &[0b00000000, 0b10110101, 0b00000000, 0b00000000, 0b00000001, 0xDE, 0xAD, 0xBE]
+            &[
+                0b00000000, 0b10110101, 0b00000000, 0b00000000, 0b00000001, 0xDE, 0xAD, 0xBE
+            ]
         );
     }
 
     #[test]
     fn link_control_protected_flag() {
-        let lc = LinkControlFields::new([
-            0b10100010, 0, 0, 0, 0, 0, 0, 0, 0,
-        ]);
+        let lc = LinkControlFields::new([0b10100010, 0, 0, 0, 0, 0, 0, 0, 0]);
         assert!(lc.protected());
         assert_eq!(lc.opcode(), LinkControlOpcode::AdjacentSite);
     }
 
     #[test]
     fn link_control_unknown_opcode() {
-        let lc = LinkControlFields::new([
-            0b00001010, 0, 0, 0, 0, 0, 0, 0, 0,
-        ]);
+        let lc = LinkControlFields::new([0b00001010, 0, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(lc.opcode(), LinkControlOpcode::Unknown(0x0A));
     }
 
     #[test]
     fn group_voice_traffic_parsing() {
         let lc = LinkControlFields::new([
-            0b00000000,
-            0b00000000,
-            0b10110101,
-            0b00000000,
-            0b00000000,
-            0b00000001,
-            0xDE,
-            0xAD,
+            0b00000000, 0b00000000, 0b10110101, 0b00000000, 0b00000000, 0b00000001, 0xDE, 0xAD,
             0xBE,
         ]);
         assert_eq!(lc.opcode(), LinkControlOpcode::GroupVoiceTraffic);
@@ -440,8 +422,14 @@ mod tests {
 
     #[test]
     fn opcode_unknown_values() {
-        assert_eq!(LinkControlOpcode::from_bits(0x01), LinkControlOpcode::Unknown(0x01));
-        assert_eq!(LinkControlOpcode::from_bits(0x3F), LinkControlOpcode::Unknown(0x3F));
+        assert_eq!(
+            LinkControlOpcode::from_bits(0x01),
+            LinkControlOpcode::Unknown(0x01)
+        );
+        assert_eq!(
+            LinkControlOpcode::from_bits(0x3F),
+            LinkControlOpcode::Unknown(0x3F)
+        );
     }
 
     #[test]

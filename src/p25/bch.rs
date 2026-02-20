@@ -263,9 +263,8 @@ pub fn extract_data(codeword: u64) -> u16 {
 /// Generator polynomial roots: powers of α whose conjugacy classes
 /// intersect {1..22}. These 47 roots define the BCH(63,16,23) code.
 const GENERATOR_ROOTS: [usize; 47] = [
-    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
-    20, 21, 22, 24, 25, 26, 28, 30, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-    41, 42, 44, 48, 49, 50, 51, 52, 56, 57, 60,
+    1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 24, 25, 26, 28,
+    30, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 44, 48, 49, 50, 51, 52, 56, 57, 60,
 ];
 
 /// Compute the generator polynomial g(x) as a u64 bitmask.
@@ -291,10 +290,7 @@ fn compute_generator_poly() -> u64 {
     // Convert to u64 bitmask (all coefficients must be 0 or 1).
     let mut result = 0u64;
     for (i, &c) in poly.iter().enumerate().take(48) {
-        debug_assert!(
-            c == 0 || c == 1,
-            "non-binary coefficient at x^{i}: {c}"
-        );
+        debug_assert!(c == 0 || c == 1, "non-binary coefficient at x^{i}: {c}");
         if c == 1 {
             result |= 1u64 << i;
         }
@@ -394,14 +390,20 @@ mod tests {
     #[test]
     fn syndromes_zero_for_zero_codeword() {
         let s = compute_syndromes(0);
-        assert!(s.iter().all(|&v| v == 0), "zero word should have zero syndromes");
+        assert!(
+            s.iter().all(|&v| v == 0),
+            "zero word should have zero syndromes"
+        );
     }
 
     #[test]
     fn syndromes_nonzero_for_single_bit_error() {
         let word = 1u64; // single bit set at position 0
         let s = compute_syndromes(word);
-        assert!(!s.iter().all(|&v| v == 0), "single bit should produce nonzero syndromes");
+        assert!(
+            !s.iter().all(|&v| v == 0),
+            "single bit should produce nonzero syndromes"
+        );
     }
 
     // -- BCH decoder tests --
@@ -542,7 +544,10 @@ mod tests {
         // Syndromes of a valid codeword must all be zero.
         let codeword = encode(0x5FC7);
         let s = compute_syndromes(codeword);
-        assert!(s.iter().all(|&v| v == 0), "encoded word should have zero syndromes");
+        assert!(
+            s.iter().all(|&v| v == 0),
+            "encoded word should have zero syndromes"
+        );
     }
 
     #[test]

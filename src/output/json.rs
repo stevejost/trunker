@@ -547,10 +547,7 @@ fn imbe_to_hex(frame: &VoiceFrame) -> String {
     // 88 bits = 11 bytes
     let bytes = bits.to_be_bytes();
     // u128 is 16 bytes; our 11 bytes start at offset 5
-    bytes[5..16]
-        .iter()
-        .map(|b| format!("{b:02X}"))
-        .collect()
+    bytes[5..16].iter().map(|b| format!("{b:02X}")).collect()
 }
 
 /// Build a JSON line for a voice frame event.
@@ -574,7 +571,10 @@ pub fn link_control_json_line(nac: Nac, lc: &LinkControlFields) -> String {
     let opcode = lc.opcode();
     let (talkgroup, source) = if opcode == LinkControlOpcode::GroupVoiceTraffic {
         let gvt = GroupVoiceTraffic::new(*lc);
-        (Some(gvt.talkgroup().value()), Some(gvt.source_unit().value()))
+        (
+            Some(gvt.talkgroup().value()),
+            Some(gvt.source_unit().value()),
+        )
     } else {
         (None, None)
     };
@@ -645,7 +645,11 @@ pub fn data_fragment_json_line(nac: Nac, data: u16) -> String {
 }
 
 /// Build [`CallContext`] from grant metadata.
-fn make_call_context(frequency: Frequency, talkgroup: TalkgroupId, source: SourceId) -> CallContext {
+fn make_call_context(
+    frequency: Frequency,
+    talkgroup: TalkgroupId,
+    source: SourceId,
+) -> CallContext {
     CallContext {
         frequency: format_mhz(frequency.hz()),
         talkgroup: talkgroup.value(),
@@ -686,7 +690,10 @@ pub fn link_control_with_context(
     let opcode = lc.opcode();
     let (lc_talkgroup, lc_source) = if opcode == LinkControlOpcode::GroupVoiceTraffic {
         let gvt = GroupVoiceTraffic::new(*lc);
-        (Some(gvt.talkgroup().value()), Some(gvt.source_unit().value()))
+        (
+            Some(gvt.talkgroup().value()),
+            Some(gvt.source_unit().value()),
+        )
     } else {
         (None, None)
     };

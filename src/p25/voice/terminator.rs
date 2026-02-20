@@ -10,7 +10,7 @@ use crate::p25::coding::{golay, reed_solomon};
 use crate::p25::consts::{EXTRA_HEXBITS, LC_TERM_WORD_DIBITS};
 use crate::p25::error::P25Error;
 use crate::p25::types::{Dibit, Hexbit};
-use crate::p25::voice::control::{LinkControlFields, LINK_CONTROL_BYTES};
+use crate::p25::voice::control::{LINK_CONTROL_BYTES, LinkControlFields};
 use crate::p25::voice::frame_group::hexbits_to_bytes;
 
 /// Streaming receiver for voice LC terminator (TDULC) data units.
@@ -172,10 +172,8 @@ mod tests {
 
     #[test]
     fn decode_tdulc_with_bit_errors() {
-        let lc_bytes: [u8; LINK_CONTROL_BYTES] = [
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x42,
-            0xDE, 0xAD, 0xBE,
-        ];
+        let lc_bytes: [u8; LINK_CONTROL_BYTES] =
+            [0x00, 0x00, 0x00, 0x00, 0x00, 0x42, 0xDE, 0xAD, 0xBE];
 
         let mut dibits = build_tdulc_dibits(&lc_bytes);
 

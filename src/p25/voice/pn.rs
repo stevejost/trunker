@@ -24,9 +24,7 @@ impl PseudoRandom {
     /// voice frame. It occupies bits 15..4 of the initial state.
     pub fn new(seed: u16) -> Self {
         debug_assert!(seed >> 12 == 0, "seed must be 12 bits, got {seed:#X}");
-        Self {
-            state: seed << 4,
-        }
+        Self { state: seed << 4 }
     }
 
     /// Generate the next 23-bit scrambling word for Golay-protected chunks.
@@ -46,9 +44,7 @@ impl PseudoRandom {
     /// Generate a scrambling word of the given bit width.
     fn next_bits(&mut self, count: usize) -> u32 {
         debug_assert!(count <= 32);
-        (0..count).fold(0u32, |word, _| {
-            (word << 1) | self.advance() as u32
-        })
+        (0..count).fold(0u32, |word, _| (word << 1) | self.advance() as u32)
     }
 
     /// Step the LCG and return the next random bit (MSB of new state).
@@ -91,14 +87,8 @@ mod tests {
 
         for (i, &(expected_state, expected_bit)) in expected.iter().enumerate() {
             let bit = pn.advance();
-            assert_eq!(
-                pn.state, expected_state,
-                "state mismatch at step {i}"
-            );
-            assert_eq!(
-                bit, expected_bit,
-                "bit mismatch at step {i}"
-            );
+            assert_eq!(pn.state, expected_state, "state mismatch at step {i}");
+            assert_eq!(bit, expected_bit, "bit mismatch at step {i}");
         }
     }
 

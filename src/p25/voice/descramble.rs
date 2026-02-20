@@ -59,15 +59,27 @@ struct Segment {
 
 impl Segment {
     const fn hi(start: usize, count: usize) -> Self {
-        Self { start, start_high: true, count }
+        Self {
+            start,
+            start_high: true,
+            count,
+        }
     }
 
     const fn lo(start: usize, count: usize) -> Self {
-        Self { start, start_high: false, count }
+        Self {
+            start,
+            start_high: false,
+            count,
+        }
     }
 
     const fn empty() -> Self {
-        Self { start: 0, start_high: false, count: 0 }
+        Self {
+            start: 0,
+            start_high: false,
+            count: 0,
+        }
     }
 }
 
@@ -127,10 +139,7 @@ mod tests {
         let expected_sizes: [usize; 8] = [23, 23, 23, 23, 15, 15, 15, 7];
 
         for (i, expected) in expected_sizes.iter().enumerate() {
-            let total: usize = CHUNKS[i]
-                .iter()
-                .map(|s| s.count)
-                .sum();
+            let total: usize = CHUNKS[i].iter().map(|s| s.count).sum();
             assert_eq!(total, *expected, "chunk u_{i} size mismatch");
         }
     }

@@ -45,8 +45,7 @@ impl<P: PolynomialCoefs> ErrorLocator<P> {
     fn new(syn: Polynomial<P>) -> Self {
         // q_saved = 1 + s(x)
         let q_saved = Polynomial::new(
-            std::iter::once(Codeword::for_power(0))
-                .chain(syn.iter().take(P::syndromes()).copied()),
+            std::iter::once(Codeword::for_power(0)).chain(syn.iter().take(P::syndromes()).copied()),
         );
 
         Self {
@@ -288,16 +287,9 @@ mod tests {
     #[test]
     fn chien_search_finds_known_roots() {
         // p(x) = (1 + alpha^42 * x)(1 + alpha^13 * x)(1 + alpha^57 * x)
-        let p = TestPoly::new(
-            [Codeword::for_power(0), Codeword::for_power(42)]
-                .into_iter(),
-        ) * TestPoly::new(
-            [Codeword::for_power(0), Codeword::for_power(13)]
-                .into_iter(),
-        ) * TestPoly::new(
-            [Codeword::for_power(0), Codeword::for_power(57)]
-                .into_iter(),
-        );
+        let p = TestPoly::new([Codeword::for_power(0), Codeword::for_power(42)].into_iter())
+            * TestPoly::new([Codeword::for_power(0), Codeword::for_power(13)].into_iter())
+            * TestPoly::new([Codeword::for_power(0), Codeword::for_power(57)].into_iter());
 
         let roots: Vec<Codeword> = PolynomialRoots::new(p).collect();
         assert_eq!(roots.len(), 3);
@@ -333,9 +325,9 @@ mod tests {
         let error_pos: usize = 5;
         let error_val = Codeword::for_power(10);
 
-        let syn = TestPoly::new((1..=TestCoefs::syndromes()).map(|i| {
-            error_val * Codeword::for_power(error_pos * i)
-        }));
+        let syn = TestPoly::new(
+            (1..=TestCoefs::syndromes()).map(|i| error_val * Codeword::for_power(error_pos * i)),
+        );
 
         let (nerr, mut errs) = Errors::new(syn).unwrap();
         assert_eq!(nerr, 1);
@@ -355,9 +347,10 @@ mod tests {
         let e1 = Codeword::for_power(7);
         let e2 = Codeword::for_power(20);
 
-        let syn = TestPoly::new((1..=TestCoefs::syndromes()).map(|i| {
-            e1 * Codeword::for_power(p1 * i) + e2 * Codeword::for_power(p2 * i)
-        }));
+        let syn = TestPoly::new(
+            (1..=TestCoefs::syndromes())
+                .map(|i| e1 * Codeword::for_power(p1 * i) + e2 * Codeword::for_power(p2 * i)),
+        );
 
         let (nerr, errs) = Errors::new(syn).unwrap();
         assert_eq!(nerr, 2);

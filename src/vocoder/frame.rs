@@ -44,10 +44,7 @@ impl ReceivedFrame {
     /// - u_7: 7 bits
     pub fn new(chunks: Chunks, errors: Errors) -> Self {
         for (i, &chunk) in chunks[..4].iter().enumerate() {
-            debug_assert!(
-                chunk >> 12 == 0,
-                "chunk u_{i} exceeds 12 bits: {chunk:#X}",
-            );
+            debug_assert!(chunk >> 12 == 0, "chunk u_{i} exceeds 12 bits: {chunk:#X}",);
         }
         for (i, &chunk) in chunks[4..7].iter().enumerate() {
             debug_assert!(

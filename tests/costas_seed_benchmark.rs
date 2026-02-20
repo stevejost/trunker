@@ -8,9 +8,9 @@
 //! into a new voice channel's Costas loop skips the slow frequency ramp-up
 //! (the integrator path, beta=0.000253, takes many symbols cold).
 
+use num_complex::Complex;
 use std::f32::consts::PI;
 use trunker::dsp::costas::CostasLoop;
-use num_complex::Complex;
 
 /// Generate a QPSK signal with a frequency offset, simulating SDR LO error.
 fn generate_offset_signal(
@@ -20,12 +20,7 @@ fn generate_offset_signal(
     sample_rate: f32,
 ) -> Vec<Complex<f32>> {
     let freq_offset_rad = 2.0 * PI * freq_offset_hz / sample_rate;
-    let phases = [
-        PI / 4.0,
-        3.0 * PI / 4.0,
-        -3.0 * PI / 4.0,
-        -PI / 4.0,
-    ];
+    let phases = [PI / 4.0, 3.0 * PI / 4.0, -3.0 * PI / 4.0, -PI / 4.0];
 
     let mut samples = Vec::with_capacity(num_symbols * samples_per_symbol);
     for i in 0..num_symbols {
@@ -143,7 +138,10 @@ fn frequency_seed_benefit_increases_with_offset() {
     }
 
     println!("\nCostas seed benchmark across frequency offsets:");
-    println!("  {:>10} {:>12} {:>12} {:>10}", "Offset Hz", "Cold (sym)", "Seeded (sym)", "Saved");
+    println!(
+        "  {:>10} {:>12} {:>12} {:>10}",
+        "Offset Hz", "Cold (sym)", "Seeded (sym)", "Saved"
+    );
     for &(offset, cold, seeded) in &results {
         println!(
             "  {:>10.0} {:>12} {:>12} {:>10}",

@@ -200,7 +200,7 @@ impl<'a> Voiced<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vocoder::descramble::{descramble, Bootstrap};
+    use crate::vocoder::descramble::{Bootstrap, descramble};
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 

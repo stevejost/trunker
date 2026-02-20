@@ -22,8 +22,8 @@ use crate::p25::consts::{
 };
 use crate::p25::error::P25Error;
 use crate::p25::types::{Dibit, Hexbit};
-use crate::p25::voice::control::{LinkControlFields, LINK_CONTROL_BYTES};
-use crate::p25::voice::crypto::{CryptoControlFields, CRYPTO_CONTROL_BYTES};
+use crate::p25::voice::control::{LINK_CONTROL_BYTES, LinkControlFields};
+use crate::p25::voice::crypto::{CRYPTO_CONTROL_BYTES, CryptoControlFields};
 use crate::p25::voice::frame::VoiceFrame;
 
 // ---------------------------------------------------------------------------
@@ -113,8 +113,8 @@ impl ExtraReceiver {
 
     /// Decode as Link Control (RS short). Consumes the accumulated hexbits.
     fn decode_link_control(&mut self) -> Result<LinkControlFields, P25Error> {
-        let (_data, _errors) = reed_solomon::short::decode(&mut self.hexbits)
-            .ok_or(P25Error::RsShortUnrecoverable)?;
+        let (_data, _errors) =
+            reed_solomon::short::decode(&mut self.hexbits).ok_or(P25Error::RsShortUnrecoverable)?;
 
         // Convert first 12 hexbits (72 bits) to 9 bytes.
         let mut bytes = [0u8; LINK_CONTROL_BYTES];
@@ -317,10 +317,10 @@ impl FrameGroupReceiver {
 
         // Determine next state based on frame position.
         self.state = match self.frame_index {
-            1 => State::VoiceFrame,       // After frame 1: frame 2
-            2..=7 => State::Extra,        // After frames 2-7: extra piece
-            8 => State::DataFragment,     // After frame 8: data fragment
-            9 => State::Done,             // After frame 9: done
+            1 => State::VoiceFrame,   // After frame 1: frame 2
+            2..=7 => State::Extra,    // After frames 2-7: extra piece
+            8 => State::DataFragment, // After frame 8: data fragment
+            9 => State::Done,         // After frame 9: done
             _ => State::Done,
         };
 
@@ -347,12 +347,10 @@ impl FrameGroupReceiver {
                         Ok(lc) => FrameGroupEvent::LinkControl(lc),
                         Err(err) => FrameGroupEvent::Error(err),
                     },
-                    FrameGroupType::CryptoControl => {
-                        match self.extra.decode_crypto_control() {
-                            Ok(cc) => FrameGroupEvent::CryptoControl(cc),
-                            Err(err) => FrameGroupEvent::Error(err),
-                        }
-                    }
+                    FrameGroupType::CryptoControl => match self.extra.decode_crypto_control() {
+                        Ok(cc) => FrameGroupEvent::CryptoControl(cc),
+                        Err(err) => FrameGroupEvent::Error(err),
+                    },
                 };
                 return Some(event);
             }
@@ -559,7 +557,10 @@ mod tests {
 
         assert!(extra.complete());
         let lc = extra.decode_link_control().unwrap();
-        assert_eq!(lc.opcode(), crate::p25::voice::control::LinkControlOpcode::GroupVoiceTraffic);
+        assert_eq!(
+            lc.opcode(),
+            crate::p25::voice::control::LinkControlOpcode::GroupVoiceTraffic
+        );
     }
 
     #[test]
@@ -625,85 +626,135 @@ mod tests {
 
         // Frame 1
         for dibit in &frame {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Frame 2
         for dibit in &frame {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Extra 1
         for dibit in &extra_pieces[0] {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Frame 3
         for dibit in &frame {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Extra 2
         for dibit in &extra_pieces[1] {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Frame 4
         for dibit in &frame {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Extra 3
         for dibit in &extra_pieces[2] {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Frame 5
         for dibit in &frame {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Extra 4
         for dibit in &extra_pieces[3] {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Frame 6
         for dibit in &frame {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Extra 5
         for dibit in &extra_pieces[4] {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Frame 7
         for dibit in &frame {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Extra 6 (should produce LC event)
         for dibit in &extra_pieces[5] {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Frame 8
         for dibit in &frame {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Data fragment
         for dibit in &data_frag {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
         // Frame 9
         for dibit in &frame {
-            if let Some(e) = recv.feed(*dibit) { events.push(e); }
+            if let Some(e) = recv.feed(*dibit) {
+                events.push(e);
+            }
         }
 
         assert!(recv.is_done());
 
         // Count event types.
-        let voice_frames = events.iter().filter(|e| matches!(e, FrameGroupEvent::VoiceFrame(_))).count();
-        let lc_events = events.iter().filter(|e| matches!(e, FrameGroupEvent::LinkControl(_))).count();
-        let data_events = events.iter().filter(|e| matches!(e, FrameGroupEvent::DataFragment(_))).count();
-        let error_events = events.iter().filter(|e| matches!(e, FrameGroupEvent::Error(_))).count();
+        let voice_frames = events
+            .iter()
+            .filter(|e| matches!(e, FrameGroupEvent::VoiceFrame(_)))
+            .count();
+        let lc_events = events
+            .iter()
+            .filter(|e| matches!(e, FrameGroupEvent::LinkControl(_)))
+            .count();
+        let data_events = events
+            .iter()
+            .filter(|e| matches!(e, FrameGroupEvent::DataFragment(_)))
+            .count();
+        let error_events = events
+            .iter()
+            .filter(|e| matches!(e, FrameGroupEvent::Error(_)))
+            .count();
 
         assert_eq!(voice_frames, 9, "expected 9 voice frames");
         assert_eq!(lc_events, 1, "expected 1 link control event");
         assert_eq!(data_events, 1, "expected 1 data fragment event");
-        assert_eq!(error_events, 0, "expected no errors, got: {:?}",
-            events.iter().filter_map(|e| match e {
-                FrameGroupEvent::Error(err) => Some(format!("{err}")),
-                _ => None,
-            }).collect::<Vec<_>>()
+        assert_eq!(
+            error_events,
+            0,
+            "expected no errors, got: {:?}",
+            events
+                .iter()
+                .filter_map(|e| match e {
+                    FrameGroupEvent::Error(err) => Some(format!("{err}")),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
         );
     }
 

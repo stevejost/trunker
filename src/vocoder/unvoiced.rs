@@ -79,10 +79,7 @@ impl UnvoicedDft {
 
             // Populate the current band with random spectrum.
             for bin in &mut bins[lower..upper] {
-                *bin = Complex::new(
-                    gaussian.sample(&mut rng),
-                    gaussian.sample(&mut rng),
-                );
+                *bin = Complex::new(gaussian.sample(&mut rng), gaussian.sample(&mut rng));
             }
 
             // Compute energy of current band according to Eq 120.
@@ -187,8 +184,8 @@ impl<'a> Unvoiced<'a> {
         // Compute denominator in Eq 126.
         // Always positive: w_s(n) and w_s(n-N) overlap such that at least
         // one is non-zero for all 0 <= n < N.
-        let denominator = self.window.get(n).powi(2)
-            + self.window.get(n - SAMPLES_PER_FRAME as isize).powi(2);
+        let denominator =
+            self.window.get(n).powi(2) + self.window.get(n - SAMPLES_PER_FRAME as isize).powi(2);
 
         numerator / denominator
     }
@@ -263,7 +260,8 @@ mod tests {
             let (_, upper) = edges(l, &params);
             let (lower_next, _) = edges(l + 1, &params);
             assert_eq!(
-                upper, lower_next,
+                upper,
+                lower_next,
                 "band edge gap between harmonics {l} and {}",
                 l + 1
             );
@@ -297,8 +295,8 @@ mod tests {
         voice.force_voiced(14);
 
         let enhanced = EnhancedSpectrals::from_values(&[
-            2.0, 1.0, 4.0, 6.0, 42.0, 8.0, 1.5, 0.5, 24.0, 32.0, 3.0, 7.0, 13.0, 5.0, 4.2,
-            11.0, 9.0, 18.0,
+            2.0, 1.0, 4.0, 6.0, 42.0, 8.0, 1.5, 0.5, 24.0, 32.0, 3.0, 7.0, 13.0, 5.0, 4.2, 11.0,
+            9.0, 18.0,
         ]);
 
         let rng = SmallRng::seed_from_u64(42);
@@ -352,8 +350,8 @@ mod tests {
         voice.force_voiced(14);
 
         let enhanced = EnhancedSpectrals::from_values(&[
-            2.0, 1.0, 4.0, 6.0, 42.0, 8.0, 1.5, 0.5, 24.0, 32.0, 3.0, 7.0, 13.0, 5.0, 4.2,
-            11.0, 9.0, 18.0,
+            2.0, 1.0, 4.0, 6.0, 42.0, 8.0, 1.5, 0.5, 24.0, 32.0, 3.0, 7.0, 13.0, 5.0, 4.2, 11.0,
+            9.0, 18.0,
         ]);
 
         let rng = SmallRng::seed_from_u64(42);
@@ -381,8 +379,8 @@ mod tests {
         let voice = VoiceDecisions::new(0, &params);
 
         let enhanced = EnhancedSpectrals::from_values(&[
-            10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0,
-            10.0, 10.0, 10.0, 10.0, 10.0,
+            10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0,
+            10.0, 10.0, 10.0, 10.0,
         ]);
 
         let rng = SmallRng::seed_from_u64(123);
@@ -396,10 +394,7 @@ mod tests {
         for l in 1..=params.harmonic_count as usize {
             let (lower, upper) = edges(l, &params);
             let bandwidth = (upper - lower) as f32;
-            let band_energy: f32 = dft.bins[lower..upper]
-                .iter()
-                .map(|c| c.norm_sqr())
-                .sum();
+            let band_energy: f32 = dft.bins[lower..upper].iter().map(|c| c.norm_sqr()).sum();
             let average_power = band_energy / bandwidth;
 
             assert!(
@@ -470,8 +465,8 @@ mod tests {
         let voice = VoiceDecisions::new(0, &params); // all unvoiced
 
         let enhanced = EnhancedSpectrals::from_values(&[
-            10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0,
-            10.0, 10.0, 10.0, 10.0, 10.0,
+            10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 10.0,
+            10.0, 10.0, 10.0, 10.0,
         ]);
 
         let rng = SmallRng::seed_from_u64(42);
@@ -492,8 +487,7 @@ mod tests {
 
         for n in 0..SAMPLES_PER_FRAME {
             let n = n as isize;
-            let denom =
-                w.get(n).powi(2) + w.get(n - SAMPLES_PER_FRAME as isize).powi(2);
+            let denom = w.get(n).powi(2) + w.get(n - SAMPLES_PER_FRAME as isize).powi(2);
             assert!(
                 denom > 0.0,
                 "denominator must be positive at n={n}, got {denom}"

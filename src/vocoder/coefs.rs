@@ -212,9 +212,7 @@ static AMPLITUDES_USED: [[usize; 6]; 48] = [
 
 /// Each `DCT_STEP_SIZE[b]` is the uniform quantizer step size [p31] for the
 /// bit allocation b = B_m - 1.
-const DCT_STEP_SIZE: [f32; 10] = [
-    1.2, 0.85, 0.65, 0.40, 0.28, 0.15, 0.08, 0.04, 0.02, 0.01,
-];
+const DCT_STEP_SIZE: [f32; 10] = [1.2, 0.85, 0.65, 0.40, 0.28, 0.15, 0.08, 0.04, 0.02, 0.01];
 
 /// Each `DCT_STANDARD_DEVIATION[j]` is the DCT standard deviation [p32] for
 /// the coefficient C_i,j+2.
@@ -225,7 +223,7 @@ const DCT_STANDARD_DEVIATION: [f32; 9] = [
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vocoder::descramble::{descramble, Bootstrap};
+    use crate::vocoder::descramble::{Bootstrap, descramble};
 
     #[test]
     fn verify_amplitudes_used_table() {
@@ -456,11 +454,7 @@ mod tests {
         for l in 9..=56usize {
             let blocks = &AMPLITUDES_USED[l - 9];
             let total_consumed: usize = blocks.iter().sum();
-            assert_eq!(
-                8 + total_consumed,
-                l + 2,
-                "cursor mismatch for L={l}"
-            );
+            assert_eq!(8 + total_consumed, l + 2, "cursor mismatch for L={l}");
         }
     }
 }

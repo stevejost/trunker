@@ -33,8 +33,7 @@ impl Spectrals {
         previous: &PrevFrame,
     ) -> Self {
         // Compute L(-1) / L(0): ratio of previous to current harmonic count.
-        let scale =
-            previous.params.harmonic_count as f32 / params.harmonic_count as f32;
+        let scale = previous.params.harmonic_count as f32 / params.harmonic_count as f32;
 
         // Compute (k_l, delta_l) for the given harmonic l [p35].
         // k_l is the integer part and delta_l is the fractional part of the
@@ -124,7 +123,7 @@ impl Default for Spectrals {
 mod tests {
     use super::*;
     use crate::vocoder::coefs::Coefficients;
-    use crate::vocoder::descramble::{descramble, Bootstrap};
+    use crate::vocoder::descramble::{Bootstrap, descramble};
     use crate::vocoder::gain::Gains;
 
     #[test]

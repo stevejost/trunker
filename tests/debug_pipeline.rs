@@ -396,8 +396,8 @@ fn u8_reader_gold_file_samples_in_range() {
         return;
     }
 
-    let reader = U8Reader::open(Path::new(GOLD_U8_PATH), 2_400_000)
-        .expect("failed to open gold u8 file");
+    let reader =
+        U8Reader::open(Path::new(GOLD_U8_PATH), 2_400_000).expect("failed to open gold u8 file");
 
     let mut count: u64 = 0;
     let mut any_nonzero = false;
@@ -433,8 +433,8 @@ fn u8_reader_gold_file_signal_statistics() {
         return;
     }
 
-    let reader = U8Reader::open(Path::new(GOLD_U8_PATH), 2_400_000)
-        .expect("failed to open gold u8 file");
+    let reader =
+        U8Reader::open(Path::new(GOLD_U8_PATH), 2_400_000).expect("failed to open gold u8 file");
 
     let stats = compute_signal_stats(reader);
 
@@ -534,8 +534,8 @@ fn pipeline_2400k_cqpsk_processes_wideband_u8_without_panic() {
         return;
     }
 
-    let reader = U8Reader::open(Path::new(GOLD_U8_PATH), 2_400_000)
-        .expect("failed to open gold u8 file");
+    let reader =
+        U8Reader::open(Path::new(GOLD_U8_PATH), 2_400_000).expect("failed to open gold u8 file");
 
     let config = PipelineConfig {
         sample_rate: 2_400_000,
@@ -576,8 +576,8 @@ fn strict_nid_produces_fewer_or_equal_events_vs_permissive() {
         return;
     }
 
-    let reader_permissive = Cf32Reader::open(Path::new(GOLD_CF32_48K_PATH), 48_000)
-        .expect("failed to open gold file");
+    let reader_permissive =
+        Cf32Reader::open(Path::new(GOLD_CF32_48K_PATH), 48_000).expect("failed to open gold file");
     let config_permissive = PipelineConfig {
         sample_rate: 48_000,
         modulation: Modulation::Cqpsk,
@@ -592,8 +592,8 @@ fn strict_nid_produces_fewer_or_equal_events_vs_permissive() {
         }
     }
 
-    let reader_strict = Cf32Reader::open(Path::new(GOLD_CF32_48K_PATH), 48_000)
-        .expect("failed to open gold file");
+    let reader_strict =
+        Cf32Reader::open(Path::new(GOLD_CF32_48K_PATH), 48_000).expect("failed to open gold file");
     let config_strict = PipelineConfig {
         sample_rate: 48_000,
         modulation: Modulation::Cqpsk,
@@ -692,11 +692,11 @@ fn filter_gold_u8_to_24k_cf32_round_trip() {
         return;
     }
 
-    let reader = U8Reader::open(Path::new(GOLD_U8_PATH), 2_400_000)
-        .expect("failed to open gold u8 file");
+    let reader =
+        U8Reader::open(Path::new(GOLD_U8_PATH), 2_400_000).expect("failed to open gold u8 file");
 
-    let decimation = DecimationConfig::compute_to(2_400_000, 24_000)
-        .expect("2.4M -> 24k should be valid");
+    let decimation =
+        DecimationConfig::compute_to(2_400_000, 24_000).expect("2.4M -> 24k should be valid");
 
     let mut filters: Vec<DecimatingFilter> = decimation
         .stages
@@ -784,8 +784,8 @@ fn decode_cc_with_offset_from_gold_wideband() {
         return;
     }
 
-    let reader = U8Reader::open(Path::new(GOLD_U8_PATH), 2_400_000)
-        .expect("failed to open gold u8 file");
+    let reader =
+        U8Reader::open(Path::new(GOLD_U8_PATH), 2_400_000).expect("failed to open gold u8 file");
 
     // CC is at 852.350 MHz, capture center is 852.4625 MHz.
     // Offset = 852350000 - 852462500 = -112500 Hz.
@@ -796,8 +796,7 @@ fn decode_cc_with_offset_from_gold_wideband() {
         modulation: Modulation::C4fm,
         nid_integrity: NidIntegrityPolicy::Strict,
     };
-    let mut pipeline = ChannelPipeline::new(config)
-        .expect("2.4M should be valid");
+    let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
     let mut events = Vec::new();
     for sample in reader {

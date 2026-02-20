@@ -220,12 +220,7 @@ impl Default for VoiceDecisions {
 fn generate_harmonics_bitmap(voiced: u32, params: &BaseParams) -> u64 {
     // Expand each band bit into 3 harmonic bits.
     let bits = (0..params.band_count).rev().fold(0u64, |bits, i| {
-        bits << 3
-            | if voiced >> i & 1 == 1 {
-                0b111
-            } else {
-                0
-            }
+        bits << 3 | if voiced >> i & 1 == 1 { 0b111 } else { 0 }
     });
 
     // Check if the last band contains fewer than 3 harmonics.
@@ -276,11 +271,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn invalid_period_panics_on_unwrap() {
-        let chunks = [
-            0b111111000000,
-            0, 0, 0, 0, 0, 0,
-            0b00000010,
-        ];
+        let chunks = [0b111111000000, 0, 0, 0, 0, 0, 0, 0b00000010];
         Bootstrap::new(&chunks).unwrap_period();
     }
 
