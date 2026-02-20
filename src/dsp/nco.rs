@@ -39,7 +39,11 @@ impl Nco {
         let (sin, cos) = self.phase.sin_cos();
         let rotator = Complex::new(cos as f32, sin as f32);
         self.phase += self.phase_increment;
-        self.phase = self.phase.rem_euclid(TAU);
+        if self.phase >= TAU {
+            self.phase -= TAU;
+        } else if self.phase < 0.0 {
+            self.phase += TAU;
+        }
         sample * rotator
     }
 }
@@ -91,7 +95,7 @@ mod tests {
             nco.shift(input);
         }
 
-        // Phase should still be within [0, TAU) due to rem_euclid wrapping.
+        // Phase should still be within [0, TAU) due to conditional wrapping.
         assert!(
             nco.phase >= 0.0 && nco.phase < TAU,
             "phase out of range: {}",
