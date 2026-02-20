@@ -87,6 +87,22 @@ impl CqpskDemodulator {
         self.slicer.thresholds()
     }
 
+    /// Return the current Costas loop phase and frequency estimates.
+    ///
+    /// Returns `(phase_radians, frequency_radians_per_sample)`.
+    pub fn costas_state(&self) -> (f32, f32) {
+        (self.costas.phase(), self.costas.frequency())
+    }
+
+    /// Seed the Costas loop with phase and frequency from another
+    /// locked demodulator (e.g., the control channel pipeline).
+    ///
+    /// This reduces acquisition time for new voice channels by giving
+    /// the loop a starting point close to the locked state.
+    pub fn seed_costas(&mut self, phase: f32, frequency: f32) {
+        self.costas.seed(phase, frequency);
+    }
+
     /// Process one complex IF sample through the CQPSK chain.
     ///
     /// Returns `Some(SymbolEvent)` at symbol boundaries, or `None`

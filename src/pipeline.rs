@@ -369,6 +369,27 @@ impl ChannelPipeline {
         self.sample_count
     }
 
+    /// Return the Costas loop state from a CQPSK pipeline.
+    ///
+    /// Returns `Some((phase, frequency))` for CQPSK pipelines, `None`
+    /// for C4FM (which has no Costas loop).
+    pub fn costas_state(&self) -> Option<(f32, f32)> {
+        match &self.demod_path {
+            DemodPath::Cqpsk { demod } => Some(demod.costas_state()),
+            DemodPath::C4fm { .. } => None,
+        }
+    }
+
+    /// Seed the Costas loop with phase and frequency from another
+    /// locked pipeline (e.g., the control channel).
+    ///
+    /// No-op for C4FM pipelines.
+    pub fn seed_costas(&mut self, phase: f32, frequency: f32) {
+        if let DemodPath::Cqpsk { demod } = &mut self.demod_path {
+            demod.seed_costas(phase, frequency);
+        }
+    }
+
     /// Reset protocol state when a new frame sync is detected.
     fn handle_sync(&mut self) {
         self.status_deinterleaver = StatusDeinterleaver::new();

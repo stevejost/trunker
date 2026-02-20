@@ -94,6 +94,9 @@ pub struct ChannelManager {
     decode_audio: bool,
     /// Global sample counter.
     sample_count: u64,
+    /// Costas loop state from the CC pipeline, used to seed new voice
+    /// channel pipelines for faster carrier acquisition.
+    cc_costas_seed: Option<(f32, f32)>,
 }
 
 /// Fraction of sample rate considered usable bandwidth.
@@ -121,6 +124,7 @@ impl ChannelManager {
             },
             decode_audio: config.decode_audio,
             sample_count: 0,
+            cc_costas_seed: None,
         }
     }
 
@@ -229,6 +233,15 @@ impl ChannelManager {
         self.sample_count
     }
 
+    /// Update the Costas loop seed from the control channel pipeline.
+    ///
+    /// Call this periodically (e.g., on each CC pipeline event) so that
+    /// newly spawned voice channels start with the CC's locked Costas
+    /// state, reducing acquisition from ~22 frames to ~2-5 frames.
+    pub fn update_costas_seed(&mut self, cc_pipeline: &ChannelPipeline) {
+        self.cc_costas_seed = cc_pipeline.costas_state();
+    }
+
     /// Activate or refresh a voice channel at the given frequency.
     fn activate_channel(
         &mut self,
@@ -263,7 +276,7 @@ impl ChannelManager {
         // New channel: compute NCO offset and create pipeline.
         let offset_hz = frequency.hz() as f64 - self.center_frequency_hz;
         let nco = Nco::new(offset_hz, self.sample_rate);
-        let pipeline = match ChannelPipeline::new(self.pipeline_config) {
+        let mut pipeline = match ChannelPipeline::new(self.pipeline_config) {
             Ok(p) => p,
             Err(e) => {
                 tracing::error!(
@@ -274,6 +287,20 @@ impl ChannelManager {
                 return;
             }
         };
+
+        // Seed the Costas loop frequency from the CC's locked state.
+        // The CC's frequency estimate reflects the SDR's LO error, which
+        // is the same for all channels. Phase is NOT transferred because
+        // the differential decoder makes absolute phase non-transferable
+        // between independent signal paths.
+        if let Some((_phase, freq)) = self.cc_costas_seed {
+            pipeline.seed_costas(0.0, freq);
+            tracing::debug!(
+                frequency = %frequency,
+                seed_freq = freq,
+                "seeded voice channel Costas frequency from CC"
+            );
+        }
 
         tracing::info!(
             frequency = %frequency,
@@ -577,6 +604,78 @@ mod tests {
             manager.active_channel_count(),
             0,
             "unresolvable channel should not be activated"
+        );
+    }
+
+    #[test]
+    fn costas_seed_is_none_by_default() {
+        let manager = ChannelManager::new(make_config());
+        assert!(manager.cc_costas_seed.is_none());
+    }
+
+    #[test]
+    fn update_costas_seed_from_cqpsk_pipeline() {
+        let mut manager = ChannelManager::new(make_config());
+        let config = PipelineConfig {
+            sample_rate: 2_400_000,
+            modulation: Modulation::Cqpsk,
+            nid_integrity: NidIntegrityPolicy::default(),
+        };
+        let cc_pipeline = ChannelPipeline::new(config).unwrap();
+
+        manager.update_costas_seed(&cc_pipeline);
+        assert!(
+            manager.cc_costas_seed.is_some(),
+            "CQPSK pipeline should provide Costas seed"
+        );
+    }
+
+    #[test]
+    fn update_costas_seed_from_c4fm_pipeline_is_none() {
+        let mut manager = ChannelManager::new(make_config());
+        let config = PipelineConfig {
+            sample_rate: 2_400_000,
+            modulation: Modulation::C4fm,
+            nid_integrity: NidIntegrityPolicy::default(),
+        };
+        let cc_pipeline = ChannelPipeline::new(config).unwrap();
+
+        manager.update_costas_seed(&cc_pipeline);
+        assert!(
+            manager.cc_costas_seed.is_none(),
+            "C4FM pipeline has no Costas loop"
+        );
+    }
+
+    #[test]
+    fn activated_channel_receives_costas_frequency_seed() {
+        let mut manager = ChannelManager::new(make_config());
+        let ident_table = make_ident_table();
+
+        // Manually set a Costas seed as if the CC loop had locked.
+        let seed_freq = 0.005_f32;
+        manager.cc_costas_seed = Some((0.3, seed_freq));
+
+        // Activate a voice channel via grant.
+        let grant = make_grant_tsbk(0x6009, 100, 12345);
+        manager.handle_grant(&grant, &ident_table);
+        assert_eq!(manager.active_channel_count(), 1);
+
+        // The activated pipeline should have been seeded with frequency
+        // only (phase=0.0 per RF expert recommendation).
+        let channel = manager.active_channels.values().next().unwrap();
+        let costas_state = channel.pipeline.costas_state();
+        let (phase, freq) = costas_state.expect("CQPSK pipeline should have Costas state");
+
+        // Phase should be near zero (not the CC's phase).
+        assert!(
+            phase.abs() < 0.01,
+            "seeded phase should be ~0.0, got {phase}"
+        );
+        // Frequency should match the seed.
+        assert!(
+            (freq - seed_freq).abs() < 1e-6,
+            "seeded frequency should be {seed_freq}, got {freq}"
         );
     }
 }

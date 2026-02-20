@@ -582,6 +582,10 @@ fn decode_trunked(
         // Feed to CC pipeline (CC is at DC / center frequency).
         if let Some(event) = cc_pipeline.process_sample(iq_sample) {
             let nac = cc_pipeline.current_nac();
+
+            // Keep voice channel Costas seed in sync with CC's locked state.
+            channel_manager.update_costas_seed(&cc_pipeline);
+
             handle_cc_event(
                 nac,
                 &mut ident_table,

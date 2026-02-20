@@ -78,6 +78,16 @@ impl CostasLoop {
         self.phase
     }
 
+    /// Seed the loop with an initial phase and frequency estimate.
+    ///
+    /// Use this to pre-load the loop state from another locked Costas
+    /// loop (e.g., the control channel), reducing acquisition time from
+    /// ~22 frames to ~2-5 frames.
+    pub fn seed(&mut self, phase: f32, frequency: f32) {
+        self.phase = phase.clamp(-MAX_PHASE, MAX_PHASE);
+        self.frequency = frequency;
+    }
+
     /// QPSK phase error detector: `sgn(I)*Q - sgn(Q)*I`.
     ///
     /// This is the standard decision-directed error for order-4 loops.
@@ -288,5 +298,88 @@ mod tests {
         let costas = CostasLoop::default();
         assert!((costas.alpha - DEFAULT_ALPHA).abs() < 1e-6);
         assert!((costas.beta - DEFAULT_BETA).abs() < 1e-6);
+    }
+
+    #[test]
+    fn seed_sets_phase_and_frequency() {
+        let mut costas = CostasLoop::default();
+        costas.seed(0.3, 0.001);
+        assert!((costas.phase() - 0.3).abs() < 1e-6);
+        assert!((costas.frequency() - 0.001).abs() < 1e-6);
+    }
+
+    #[test]
+    fn seed_clamps_phase_to_max() {
+        let mut costas = CostasLoop::default();
+        costas.seed(3.0, 0.0); // exceeds MAX_PHASE (pi/2)
+        assert!(costas.phase() <= MAX_PHASE + 1e-6);
+    }
+
+    #[test]
+    fn seeded_loop_acquires_faster_than_cold() {
+        let sample_rate = 24_000.0;
+        let freq_offset = 30.0; // Hz
+        let phase_offset = 0.4; // radians
+        let samples_per_symbol = 5;
+        let signal =
+            generate_qpsk_signal(200, samples_per_symbol, freq_offset, sample_rate, phase_offset);
+
+        // Cold start: measure samples to reach low error.
+        let mut cold = CostasLoop::default();
+        let cold_acquisition = measure_acquisition(&mut cold, &signal, samples_per_symbol);
+
+        // Seeded start: pre-load with the known offsets.
+        let expected_freq_rad = 2.0 * PI * freq_offset / sample_rate;
+        let mut seeded = CostasLoop::default();
+        seeded.seed(phase_offset, expected_freq_rad);
+        let seeded_acquisition = measure_acquisition(&mut seeded, &signal, samples_per_symbol);
+
+        // Frequency-only seed (phase=0): matches what channel_manager does.
+        let mut freq_only = CostasLoop::default();
+        freq_only.seed(0.0, expected_freq_rad);
+        let freq_only_acquisition =
+            measure_acquisition(&mut freq_only, &signal, samples_per_symbol);
+
+        println!(
+            "Cold: {cold_acquisition} symbols, Freq-only seed: {freq_only_acquisition} symbols, Full seed: {seeded_acquisition} symbols"
+        );
+        assert!(
+            seeded_acquisition < cold_acquisition,
+            "seeded ({seeded_acquisition}) should acquire faster than cold ({cold_acquisition})"
+        );
+        assert!(
+            freq_only_acquisition < cold_acquisition,
+            "freq-only ({freq_only_acquisition}) should acquire faster than cold ({cold_acquisition})"
+        );
+    }
+
+    /// Count the number of symbols until the mean phase error drops below
+    /// a threshold, as a proxy for acquisition time.
+    fn measure_acquisition(
+        costas: &mut CostasLoop,
+        signal: &[Complex<f32>],
+        samples_per_symbol: usize,
+    ) -> usize {
+        let threshold = 0.15;
+        let window = 10; // symbols to average over
+        let mut errors: Vec<f32> = Vec::new();
+        let mut symbol_count = 0;
+
+        for (i, &sample) in signal.iter().enumerate() {
+            let corrected = costas.process(sample);
+            if i % samples_per_symbol == samples_per_symbol / 2 {
+                errors.push(CostasLoop::phase_error(corrected).abs());
+                symbol_count += 1;
+
+                if errors.len() >= window {
+                    let recent: f32 =
+                        errors[errors.len() - window..].iter().sum::<f32>() / window as f32;
+                    if recent < threshold {
+                        return symbol_count;
+                    }
+                }
+            }
+        }
+        symbol_count // didn't converge within signal length
     }
 }
