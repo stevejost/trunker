@@ -3,6 +3,7 @@
 //! Processes IQ samples from software-defined radios and decodes
 //! APCO Project 25 control channel messages into structured data.
 
+pub mod call_tracker;
 pub mod channel_manager;
 pub mod debug;
 pub mod dsp;

@@ -1562,9 +1562,7 @@ mod tests {
 
     #[test]
     fn ident_candidate_preserves_raw_data() {
-        let data: [u8; 10] = [
-            0xA0, 0x00, 0x63, 0x22, 0xD0, 0x32, 0x0A, 0x25, 0x10, 0xA2,
-        ];
+        let data: [u8; 10] = [0xA0, 0x00, 0x63, 0x22, 0xD0, 0x32, 0x0A, 0x25, 0x10, 0xA2];
         let tsbk = make_tsbk_with_crc(&data);
         let parsed = parse(&tsbk).unwrap();
 
@@ -1578,9 +1576,7 @@ mod tests {
 
     #[test]
     fn ident_candidate_not_applied_to_ident_table() {
-        let data: [u8; 10] = [
-            0xA0, 0x00, 0x63, 0x22, 0xD0, 0x32, 0x0A, 0x25, 0x10, 0xA2,
-        ];
+        let data: [u8; 10] = [0xA0, 0x00, 0x63, 0x22, 0xD0, 0x32, 0x0A, 0x25, 0x10, 0xA2];
         let tsbk = make_tsbk_with_crc(&data);
         let parsed = parse(&tsbk).unwrap();
 

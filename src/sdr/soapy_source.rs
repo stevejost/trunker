@@ -29,6 +29,8 @@ pub struct SoapySource {
     valid_count: usize,
     running: Arc<AtomicBool>,
     first_read: bool,
+    /// Cumulative count of overflow events (each may lose many samples).
+    overflow_count: u64,
 }
 
 impl std::fmt::Debug for SoapySource {
@@ -37,6 +39,7 @@ impl std::fmt::Debug for SoapySource {
             .field("position", &self.position)
             .field("valid_count", &self.valid_count)
             .field("buffer_len", &self.buffer.len())
+            .field("overflow_count", &self.overflow_count)
             .finish()
     }
 }
@@ -103,6 +106,7 @@ impl SoapySource {
             valid_count: 0,
             running,
             first_read: true,
+            overflow_count: 0,
         };
 
         // Discard the first ~200 ms of samples to let the hardware settle.
@@ -121,6 +125,15 @@ impl SoapySource {
         tracing::debug!(discarded, "settling samples discarded");
 
         Ok(source)
+    }
+
+    /// Return the cumulative number of overflow events.
+    ///
+    /// Each overflow means the device produced samples faster than the
+    /// application consumed them. A single overflow can lose many samples,
+    /// shifting symbol timing and potentially breaking frame sync.
+    pub fn overflow_count(&self) -> u64 {
+        self.overflow_count
     }
 
     /// Fill the internal buffer with the next chunk of samples from the device.
@@ -149,7 +162,11 @@ impl SoapySource {
                     continue;
                 }
                 Err(e) if e.code == ErrorCode::Overflow => {
-                    tracing::warn!("SoapySDR overflow (samples lost)");
+                    self.overflow_count += 1;
+                    tracing::warn!(
+                        overflow_count = self.overflow_count,
+                        "SoapySDR overflow: samples lost, symbol timing may be corrupted"
+                    );
                     if !self.running.load(Ordering::Relaxed) {
                         return None;
                     }
@@ -241,10 +258,32 @@ fn log_device_state(device: &Device, requested_antenna: Option<&str>) {
         "device state after configuration"
     );
 
+    // Log available stream arguments (buffer sizing, etc.)
+    if let Ok(args) = device.stream_args_info(Direction::Rx, RX_CHANNEL) {
+        for arg in &args {
+            tracing::debug!(
+                key = %arg.key,
+                name = arg.name.as_deref().unwrap_or(""),
+                description = arg.description.as_deref().unwrap_or(""),
+                value = %arg.value,
+                "stream argument"
+            );
+        }
+    }
+
+    // Log available sample rate range
+    if let Ok(rates) = device.get_sample_rate_range(Direction::Rx, RX_CHANNEL) {
+        for range in &rates {
+            tracing::debug!(
+                min = range.minimum,
+                max = range.maximum,
+                "supported sample rate range"
+            );
+        }
+    }
+
     // Log stream format negotiation
-    if let Ok((native_fmt, fullscale)) =
-        device.native_stream_format(Direction::Rx, RX_CHANNEL)
-    {
+    if let Ok((native_fmt, fullscale)) = device.native_stream_format(Direction::Rx, RX_CHANNEL) {
         let available = device
             .stream_formats(Direction::Rx, RX_CHANNEL)
             .unwrap_or_default();
@@ -401,8 +440,7 @@ where
 {
     let saved = unsafe { libc::dup(libc::STDERR_FILENO) };
     if saved >= 0 {
-        let devnull =
-            unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY) };
+        let devnull = unsafe { libc::open(c"/dev/null".as_ptr(), libc::O_WRONLY) };
         if devnull >= 0 {
             unsafe { libc::dup2(devnull, libc::STDERR_FILENO) };
             unsafe { libc::close(devnull) };

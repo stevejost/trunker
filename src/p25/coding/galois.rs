@@ -23,27 +23,21 @@ const FIELD_SIZE: usize = 63;
 /// Maps power i to the codeword alpha^i (bit representation of x^i mod h(x),
 /// where h(x) = x^6 + x + 1).
 const CODEWORDS: [u8; FIELD_SIZE] = [
-    0b000001, 0b000010, 0b000100, 0b001000, 0b010000, 0b100000,
-    0b000011, 0b000110, 0b001100, 0b011000, 0b110000, 0b100011,
-    0b000101, 0b001010, 0b010100, 0b101000, 0b010011, 0b100110,
-    0b001111, 0b011110, 0b111100, 0b111011, 0b110101, 0b101001,
-    0b010001, 0b100010, 0b000111, 0b001110, 0b011100, 0b111000,
-    0b110011, 0b100101, 0b001001, 0b010010, 0b100100, 0b001011,
-    0b010110, 0b101100, 0b011011, 0b110110, 0b101111, 0b011101,
-    0b111010, 0b110111, 0b101101, 0b011001, 0b110010, 0b100111,
-    0b001101, 0b011010, 0b110100, 0b101011, 0b010101, 0b101010,
-    0b010111, 0b101110, 0b011111, 0b111110, 0b111111, 0b111101,
-    0b111001, 0b110001, 0b100001,
+    0b000001, 0b000010, 0b000100, 0b001000, 0b010000, 0b100000, 0b000011, 0b000110, 0b001100,
+    0b011000, 0b110000, 0b100011, 0b000101, 0b001010, 0b010100, 0b101000, 0b010011, 0b100110,
+    0b001111, 0b011110, 0b111100, 0b111011, 0b110101, 0b101001, 0b010001, 0b100010, 0b000111,
+    0b001110, 0b011100, 0b111000, 0b110011, 0b100101, 0b001001, 0b010010, 0b100100, 0b001011,
+    0b010110, 0b101100, 0b011011, 0b110110, 0b101111, 0b011101, 0b111010, 0b110111, 0b101101,
+    0b011001, 0b110010, 0b100111, 0b001101, 0b011010, 0b110100, 0b101011, 0b010101, 0b101010,
+    0b010111, 0b101110, 0b011111, 0b111110, 0b111111, 0b111101, 0b111001, 0b110001, 0b100001,
 ];
 
 /// Maps codeword bit pattern (minus 1, zero-based) to its power.
 /// That is, if codeword alpha^i has bit pattern `b`, then POWERS[b-1] = i.
 const POWERS: [usize; FIELD_SIZE] = [
-     0,  1,  6,  2, 12,  7, 26,  3, 32, 13, 35,  8, 48, 27, 18,
-     4, 24, 33, 16, 14, 52, 36, 54,  9, 45, 49, 38, 28, 41, 19,
-    56,  5, 62, 25, 11, 34, 31, 17, 47, 15, 23, 53, 51, 37, 44,
-    55, 40, 10, 61, 46, 30, 50, 22, 39, 43, 29, 60, 42, 21, 20,
-    59, 57, 58,
+    0, 1, 6, 2, 12, 7, 26, 3, 32, 13, 35, 8, 48, 27, 18, 4, 24, 33, 16, 14, 52, 36, 54, 9, 45, 49,
+    38, 28, 41, 19, 56, 5, 62, 25, 11, 34, 31, 17, 47, 15, 23, 53, 51, 37, 44, 55, 40, 10, 61, 46,
+    30, 50, 22, 39, 43, 29, 60, 42, 21, 20, 59, 57, 58,
 ];
 
 /// Look up the codeword for power `i` (modulo the field size).
@@ -84,7 +78,9 @@ impl Codeword {
 
     /// Construct the codeword alpha^power (modulo the field size).
     pub fn for_power(power: usize) -> Self {
-        Self { bits: codeword_for_power(power) }
+        Self {
+            bits: codeword_for_power(power),
+        }
     }
 
     /// The 6-bit representation of this codeword.
@@ -258,7 +254,9 @@ macro_rules! impl_polynomial_coefs {
         pub struct $name([Codeword; $len]);
 
         impl PolynomialCoefs for $name {
-            fn distance() -> usize { $dist }
+            fn distance() -> usize {
+                $dist
+            }
         }
 
         impl Default for $name {
@@ -268,16 +266,22 @@ macro_rules! impl_polynomial_coefs {
         }
 
         impl Clone for $name {
-            fn clone(&self) -> Self { *self }
+            fn clone(&self) -> Self {
+                *self
+            }
         }
 
         impl std::ops::Deref for $name {
             type Target = [Codeword];
-            fn deref(&self) -> &Self::Target { &self.0[..] }
+            fn deref(&self) -> &Self::Target {
+                &self.0[..]
+            }
         }
 
         impl std::ops::DerefMut for $name {
-            fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0[..] }
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0[..]
+            }
         }
     };
 }
@@ -353,7 +357,9 @@ impl<P: PolynomialCoefs> Polynomial<P> {
 
     /// Evaluate p(x) using Horner's method.
     pub fn eval(&self, x: Codeword) -> Codeword {
-        self.iter().rev().fold(Codeword::default(), |acc, &c| acc * x + c)
+        self.iter()
+            .rev()
+            .fold(Codeword::default(), |acc, &c| acc * x + c)
     }
 
     /// Truncate so that deg(p(x)) <= max_degree.
@@ -774,9 +780,7 @@ mod tests {
     fn poly_mul_shift() {
         // (1 + alpha*x + alpha^2*x^2) * (x).
         let p = TestPoly::new((0..3).map(Codeword::for_power));
-        let q = TestPoly::new(
-            [Codeword::default(), Codeword::for_power(0)].into_iter(),
-        );
+        let q = TestPoly::new([Codeword::default(), Codeword::for_power(0)].into_iter());
         let r = p * q;
 
         assert!(r.coef(0).power().is_none());

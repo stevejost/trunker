@@ -9,13 +9,14 @@ use num_complex::Complex;
 
 use trunker::channel_manager::{ChannelManager, ChannelManagerConfig, VoiceChannelEvent};
 use trunker::dsp::nco::Nco;
+use trunker::output::call_recorder::{CallRecorder, CompletedRecording};
 use trunker::output::event_handler;
 use trunker::output::json;
 use trunker::output::wav::WavWriter;
 use trunker::p25::ident::IdentTable;
 use trunker::p25::nid::NidIntegrityPolicy;
 use trunker::p25::receiver::ReceiverEvent;
-use trunker::p25::tsbk::{TsbkOpcode, TsbkPayload};
+use trunker::p25::tsbk::{Tsbk, TsbkOpcode, TsbkPayload};
 use trunker::p25::types::Frequency;
 use trunker::pipeline::{self, ChannelPipeline, PipelineConfig};
 use trunker::sdr::cf32_reader::Cf32Reader;
@@ -217,6 +218,14 @@ enum Command {
         /// Decode IMBE voice frames into audio (CPU-intensive).
         #[arg(long)]
         decode_audio: bool,
+
+        /// Output directory for per-call WAV recordings.
+        ///
+        /// When set, each voice call is recorded to a separate WAV file
+        /// under `{output_dir}/{date}/{talkgroup}_{timestamp}.wav`.
+        /// Implies --decode-audio.
+        #[arg(long)]
+        output_dir: Option<String>,
     },
 
     /// Diagnostic tools for inspecting IQ files and debugging the DSP pipeline.
@@ -329,6 +338,7 @@ fn main() -> Result<()> {
             call_timeout,
             nid_integrity,
             decode_audio,
+            output_dir,
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
@@ -351,6 +361,9 @@ fn main() -> Result<()> {
                 0.0
             };
 
+            // --output-dir implies --decode-audio.
+            let decode_audio = decode_audio || output_dir.is_some();
+
             let pipeline_modulation: pipeline::Modulation = modulation.into();
             let nid_policy: NidIntegrityPolicy = nid_integrity.into();
             tracing::info!(
@@ -361,6 +374,7 @@ fn main() -> Result<()> {
                 modulation = ?modulation,
                 nid_integrity = ?nid_policy,
                 call_timeout,
+                ?output_dir,
                 "starting wideband trunked decoder"
             );
             decode_trunked(
@@ -372,6 +386,7 @@ fn main() -> Result<()> {
                 nid_policy,
                 call_timeout,
                 decode_audio,
+                output_dir.as_deref().map(Path::new),
                 &running,
             )?;
         }
@@ -584,7 +599,8 @@ fn decode_control_channel(
     }
 
     if let Some(writer) = wav_writer {
-        writer.finalize()
+        writer
+            .finalize()
             .map_err(|e| anyhow::anyhow!("failed to finalize WAV file: {e}"))?;
         tracing::info!("WAV file finalized");
     }
@@ -608,6 +624,7 @@ fn decode_trunked(
     nid_integrity: NidIntegrityPolicy,
     call_timeout: f64,
     decode_audio: bool,
+    output_dir: Option<&Path>,
     running: &Arc<AtomicBool>,
 ) -> Result<()> {
     let config = PipelineConfig {
@@ -635,6 +652,8 @@ fn decode_trunked(
         decode_audio,
     });
 
+    let mut recorder = output_dir.map(CallRecorder::new);
+
     for iq_sample in source {
         if !running.load(Ordering::SeqCst) {
             tracing::info!("interrupted by signal");
@@ -657,14 +676,32 @@ fn decode_trunked(
                 &mut ident_table,
                 &mut tsbk_count,
                 &mut channel_manager,
+                recorder.as_mut(),
                 event,
             );
         }
 
         // Feed to all active voice channel pipelines.
         for voice_event in channel_manager.process_sample(iq_sample) {
+            if let Some(recorder) = recorder.as_mut()
+                && let Some(completed) = recorder.process_event(&voice_event)
+            {
+                log_completed_recording(&completed);
+            }
             emit_voice_event(&voice_event);
         }
+    }
+
+    // Finalize any open recordings on shutdown.
+    if let Some(recorder) = recorder.as_mut() {
+        let recordings = recorder.finalize_all();
+        for recording in &recordings {
+            log_completed_recording(recording);
+        }
+        tracing::info!(
+            finalized = recordings.len(),
+            "finalized open recordings on shutdown"
+        );
     }
 
     tracing::info!(
@@ -677,12 +714,13 @@ fn decode_trunked(
 }
 
 /// Handle a CC pipeline event: print JSON, update ident table, forward
-/// grant events to the channel manager.
+/// grant events to the channel manager, and start recordings.
 fn handle_cc_event(
     nac: trunker::p25::types::Nac,
     ident_table: &mut IdentTable,
     tsbk_count: &mut u64,
     channel_manager: &mut ChannelManager,
+    recorder: Option<&mut CallRecorder>,
     event: ReceiverEvent,
 ) {
     match event {
@@ -708,6 +746,11 @@ fn handle_cc_event(
             );
             if is_grant {
                 channel_manager.handle_grant(&tsbk, ident_table);
+                // Start a new recording only for in-band channels that the
+                // channel manager actually activated.
+                if let Some(recorder) = recorder {
+                    start_recording_for_grant(recorder, &tsbk, ident_table, channel_manager);
+                }
             }
 
             let line = json::to_json_line(nac, &tsbk, ident_table);
@@ -720,6 +763,81 @@ fn handle_cc_event(
         // CC shouldn't produce voice events, but handle gracefully.
         _ => {}
     }
+}
+
+/// Start a call recording for a grant TSBK if it represents a new channel
+/// activation (not a periodic refresh) and the frequency is within capture bandwidth.
+fn start_recording_for_grant(
+    recorder: &mut CallRecorder,
+    tsbk: &Tsbk,
+    ident_table: &IdentTable,
+    channel_manager: &ChannelManager,
+) {
+    match &tsbk.payload {
+        TsbkPayload::GroupVoiceChannelGrant {
+            channel,
+            talkgroup,
+            source,
+        } => {
+            if let Some(freq) = ident_table.resolve_frequency(*channel)
+                && channel_manager.is_in_band(freq)
+                && !recorder.has_active_recording(&freq)
+                && let Some(displaced) = recorder.start_call(freq, *talkgroup, *source)
+            {
+                log_completed_recording(&displaced);
+            }
+        }
+        TsbkPayload::GroupVoiceChannelGrantUpdate {
+            channel_a,
+            talkgroup_a,
+            channel_b,
+            talkgroup_b,
+        } => {
+            let zero_source = trunker::p25::types::SourceId::new(0);
+            if let Some(freq) = ident_table.resolve_frequency(*channel_a)
+                && channel_manager.is_in_band(freq)
+                && !recorder.has_active_recording(&freq)
+                && let Some(displaced) = recorder.start_call(freq, *talkgroup_a, zero_source)
+            {
+                log_completed_recording(&displaced);
+            }
+            if let Some(freq) = ident_table.resolve_frequency(*channel_b)
+                && channel_manager.is_in_band(freq)
+                && !recorder.has_active_recording(&freq)
+                && let Some(displaced) = recorder.start_call(freq, *talkgroup_b, zero_source)
+            {
+                log_completed_recording(&displaced);
+            }
+        }
+        TsbkPayload::GroupVoiceChannelGrantUpdateExplicit {
+            receive_channel,
+            talkgroup,
+            ..
+        } => {
+            let zero_source = trunker::p25::types::SourceId::new(0);
+            if let Some(freq) = ident_table.resolve_frequency(*receive_channel)
+                && channel_manager.is_in_band(freq)
+                && !recorder.has_active_recording(&freq)
+                && let Some(displaced) = recorder.start_call(freq, *talkgroup, zero_source)
+            {
+                log_completed_recording(&displaced);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Log metadata for a completed call recording.
+fn log_completed_recording(recording: &CompletedRecording) {
+    tracing::info!(
+        talkgroup = %recording.talkgroup,
+        source = %recording.source,
+        frequency = %recording.frequency,
+        frame_count = recording.frame_count,
+        end_reason = ?recording.end_reason,
+        audio_file = ?recording.audio_file,
+        "call recording completed"
+    );
 }
 
 /// Emit a voice channel event as a JSON line with call context
@@ -1068,6 +1186,52 @@ mod tests {
         }
     }
 
+    // -- output-dir CLI tests --
+
+    #[test]
+    fn cli_trunk_output_dir_parses() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "trunk",
+            "--input",
+            "wideband.iq",
+            "--center-freq",
+            "852350000",
+            "--output-dir",
+            "/tmp/recordings",
+        ]);
+        assert!(
+            cli.is_ok(),
+            "trunk with --output-dir should parse: {:?}",
+            cli.err()
+        );
+        match cli.unwrap().command {
+            Command::Trunk { output_dir, .. } => {
+                assert_eq!(output_dir.as_deref(), Some("/tmp/recordings"));
+            }
+            _ => panic!("expected Trunk command"),
+        }
+    }
+
+    #[test]
+    fn cli_trunk_output_dir_defaults_to_none() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "trunk",
+            "--input",
+            "wideband.iq",
+            "--center-freq",
+            "852350000",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Trunk { output_dir, .. } => {
+                assert!(output_dir.is_none());
+            }
+            _ => panic!("expected Trunk command"),
+        }
+    }
+
     // -- Audio file CLI tests --
 
     #[test]
@@ -1080,7 +1244,11 @@ mod tests {
             "--audio-file",
             "output.wav",
         ]);
-        assert!(cli.is_ok(), "cc with --audio-file should parse: {:?}", cli.err());
+        assert!(
+            cli.is_ok(),
+            "cc with --audio-file should parse: {:?}",
+            cli.err()
+        );
         match cli.unwrap().command {
             Command::Cc { audio_file, .. } => {
                 assert_eq!(audio_file.as_deref(), Some("output.wav"));

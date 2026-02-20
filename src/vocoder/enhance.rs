@@ -60,11 +60,7 @@ pub(crate) struct FrameEnergy {
 impl FrameEnergy {
     /// Create a new `FrameEnergy` from the given spectral amplitudes M_l,
     /// previous frame energy values, and current frame parameters.
-    pub(crate) fn new(
-        spectrals: &Spectrals,
-        previous: &FrameEnergy,
-        params: &BaseParams,
-    ) -> Self {
+    pub(crate) fn new(spectrals: &Spectrals, previous: &FrameEnergy, params: &BaseParams) -> Self {
         // Compute energy of spectral amplitudes according to Eq 105.
         let energy: f32 = spectrals.iter().map(|&m| m.powi(2)).sum();
 
@@ -72,9 +68,7 @@ impl FrameEnergy {
         let scaled: f32 = spectrals
             .iter()
             .enumerate()
-            .map(|(l, &m)| {
-                m.powi(2) * (params.fundamental_frequency * (l + 1) as f32).cos()
-            })
+            .map(|(l, &m)| m.powi(2) * (params.fundamental_frequency * (l + 1) as f32).cos())
             .sum();
 
         Self {
@@ -122,9 +116,8 @@ impl EnhancedSpectrals {
         // Compute R_M1^2.
         let scaled_squared = frame_energy.scaled.powi(2);
         // Compute denominator term of Eq 107.
-        let denominator = params.fundamental_frequency
-            * frame_energy.energy
-            * (energy_squared - scaled_squared);
+        let denominator =
+            params.fundamental_frequency * frame_energy.energy * (energy_squared - scaled_squared);
 
         let mut values: Vec<f32> = spectrals
             .iter()
@@ -289,7 +282,7 @@ pub(crate) fn should_mute(errors: &EnhanceErrors) -> bool {
 mod tests {
     use super::*;
     use crate::vocoder::coefs::Coefficients;
-    use crate::vocoder::descramble::{descramble, Bootstrap};
+    use crate::vocoder::descramble::{Bootstrap, descramble};
     use crate::vocoder::gain::Gains;
     use crate::vocoder::prev::PrevFrame;
 

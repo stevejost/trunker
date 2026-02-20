@@ -124,11 +124,7 @@ mod tests {
 
     #[test]
     fn crypto_control_fields_parsing() {
-        let cc = CryptoControlFields::new([
-            0, 0, 0, 1, 0, 0, 0, 2, 0,
-            0x84,
-            0xDE, 0xAD,
-        ]);
+        let cc = CryptoControlFields::new([0, 0, 0, 1, 0, 0, 0, 2, 0, 0x84, 0xDE, 0xAD]);
 
         assert_eq!(cc.initialization_vector(), &[0, 0, 0, 1, 0, 0, 0, 2, 0]);
         assert_eq!(cc.algorithm(), CryptoAlgorithm::Aes);
@@ -155,7 +151,10 @@ mod tests {
         assert_eq!(CryptoAlgorithm::from_byte(0x03), CryptoAlgorithm::Mayfly);
         assert_eq!(CryptoAlgorithm::from_byte(0x04), CryptoAlgorithm::Saville);
         assert_eq!(CryptoAlgorithm::from_byte(0x41), CryptoAlgorithm::BatonOdd);
-        assert_eq!(CryptoAlgorithm::from_byte(0x80), CryptoAlgorithm::Unencrypted);
+        assert_eq!(
+            CryptoAlgorithm::from_byte(0x80),
+            CryptoAlgorithm::Unencrypted
+        );
         assert_eq!(CryptoAlgorithm::from_byte(0x81), CryptoAlgorithm::Des);
         assert_eq!(CryptoAlgorithm::from_byte(0x83), CryptoAlgorithm::TripleDes);
         assert_eq!(CryptoAlgorithm::from_byte(0x84), CryptoAlgorithm::Aes);
@@ -163,17 +162,19 @@ mod tests {
 
     #[test]
     fn crypto_algorithm_unknown() {
-        assert_eq!(CryptoAlgorithm::from_byte(0xFF), CryptoAlgorithm::Unknown(0xFF));
-        assert_eq!(CryptoAlgorithm::from_byte(0x42), CryptoAlgorithm::Unknown(0x42));
+        assert_eq!(
+            CryptoAlgorithm::from_byte(0xFF),
+            CryptoAlgorithm::Unknown(0xFF)
+        );
+        assert_eq!(
+            CryptoAlgorithm::from_byte(0x42),
+            CryptoAlgorithm::Unknown(0x42)
+        );
     }
 
     #[test]
     fn crypto_control_display() {
-        let cc = CryptoControlFields::new([
-            0, 0, 0, 0, 0, 0, 0, 0, 0,
-            0x80,
-            0x00, 0x01,
-        ]);
+        let cc = CryptoControlFields::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x00, 0x01]);
         assert_eq!(format!("{cc}"), "algorithm=Unencrypted, key_id=0x0001");
     }
 }

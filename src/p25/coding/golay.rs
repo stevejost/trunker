@@ -334,30 +334,15 @@ mod tests {
     #[test]
     fn standard_encode_known_vectors() {
         assert_eq!(standard::encode(0), 0);
-        assert_eq!(
-            standard::encode(0b111111111111),
-            0b111111111111_11111111111
-        );
-        assert_eq!(
-            standard::encode(0b111111000000),
-            0b111111000000_11001101000
-        );
-        assert_eq!(
-            standard::encode(0b000000111111),
-            0b000000111111_00110010111
-        );
-        assert_eq!(
-            standard::encode(0b100000000001),
-            0b100000000001_01001001111
-        );
+        assert_eq!(standard::encode(0b111111111111), 0b111111111111_11111111111);
+        assert_eq!(standard::encode(0b111111000000), 0b111111000000_11001101000);
+        assert_eq!(standard::encode(0b000000111111), 0b000000111111_00110010111);
+        assert_eq!(standard::encode(0b100000000001), 0b100000000001_01001001111);
     }
 
     #[test]
     fn standard_encode_specific_qa_vector() {
-        assert_eq!(
-            standard::encode(0b101010101010),
-            0b1010101010_1000101111001
-        );
+        assert_eq!(standard::encode(0b101010101010), 0b1010101010_1000101111001);
     }
 
     #[test]

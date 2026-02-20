@@ -137,9 +137,7 @@ fn activity_list_item(event: &ActivityEvent) -> ListItem<'_> {
 
     let style = if event.is_emergency {
         Style::default().fg(Color::Red).bold()
-    } else if event.description.starts_with("Grant:")
-        || event.description.starts_with("Update:")
-    {
+    } else if event.description.starts_with("Grant:") || event.description.starts_with("Update:") {
         Style::default().fg(Color::Green)
     } else {
         Style::default().fg(Color::White)

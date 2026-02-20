@@ -153,12 +153,7 @@ mod tests {
 
     #[test]
     fn separator_with_16_harmonics() {
-        let chunks = [
-            0, 0, 0, 0,
-            0b11110110101,
-            0b00001111010,
-            0, 0,
-        ];
+        let chunks = [0, 0, 0, 0, 0b11110110101, 0b00001111010, 0, 0];
         let params = BaseParams::new(32);
         assert_eq!(params.harmonic_count, 16);
         assert_eq!(params.band_count, 6);
@@ -171,12 +166,7 @@ mod tests {
 
     #[test]
     fn separator_with_10_harmonics() {
-        let chunks = [
-            0, 0, 0, 0,
-            0b11110110101,
-            0b00001111010,
-            0, 0,
-        ];
+        let chunks = [0, 0, 0, 0, 0b11110110101, 0b00001111010, 0, 0];
         let params = BaseParams::new(4);
         assert_eq!(params.harmonic_count, 10);
         assert_eq!(params.band_count, 4);
@@ -262,9 +252,8 @@ mod tests {
         assert_eq!(params.band_count, 6);
 
         let sep = ScanSeparator::new(&chunks, &params);
-        let bits: Vec<u32> = ScanBits::new(
-            ScanChunks::new(&chunks, sep.scanned, &params),
-        ).collect();
+        let bits: Vec<u32> =
+            ScanBits::new(ScanChunks::new(&chunks, sep.scanned, &params)).collect();
 
         // 3 + 12 + 12 + 12 + 14 + 11 + 3 = 67 bits total
         assert_eq!(bits.len(), 67);
@@ -302,9 +291,8 @@ mod tests {
         assert_eq!(params.band_count, 4);
 
         let sep = ScanSeparator::new(&chunks, &params);
-        let bits: Vec<u32> = ScanBits::new(
-            ScanChunks::new(&chunks, sep.scanned, &params),
-        ).collect();
+        let bits: Vec<u32> =
+            ScanBits::new(ScanChunks::new(&chunks, sep.scanned, &params)).collect();
 
         // 3 + 12 + 12 + 12 + 16 + 11 + 3 = 69 bits total
         assert_eq!(bits.len(), 69);
@@ -318,7 +306,10 @@ mod tests {
         // u_3: 010101010101
         assert_eq!(&bits[27..39], &[0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]);
         // separator (16 bits): 1111101010101010
-        assert_eq!(&bits[39..55], &[1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]);
+        assert_eq!(
+            &bits[39..55],
+            &[1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0]
+        );
         // u_6: 10101010101
         assert_eq!(&bits[55..66], &[1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1]);
         // u_7 first 3 MSBs: 101

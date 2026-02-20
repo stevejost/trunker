@@ -69,12 +69,7 @@ pub mod standard {
     /// Generator matrix (parity submatrix), without the identity part.
     ///
     /// Each row computes one parity bit from the 11 data bits.
-    const GENERATOR: [u16; 4] = [
-        0b11111110000,
-        0b11110001110,
-        0b11001101101,
-        0b10101011011,
-    ];
+    const GENERATOR: [u16; 4] = [0b11111110000, 0b11110001110, 0b11001101101, 0b10101011011];
 
     /// Parity-check matrix **H** = [**A**^T | **I**].
     ///
@@ -91,22 +86,22 @@ pub mod standard {
     /// A zero entry means the syndrome corresponds to a multi-bit error
     /// that cannot be corrected (returns `None`).
     const LOCATIONS: [u16; 16] = [
-        0,                    // 0b0000: no error
-        0b0000000000000001,   // 0b0001
-        0b0000000000000010,   // 0b0010
-        0b0000000000010000,   // 0b0011
-        0b0000000000000100,   // 0b0100
-        0b0000000000100000,   // 0b0101
-        0b0000000001000000,   // 0b0110
-        0b0000000010000000,   // 0b0111
-        0b0000000000001000,   // 0b1000
-        0b0000000100000000,   // 0b1001
-        0b0000001000000000,   // 0b1010
-        0b0000010000000000,   // 0b1011
-        0b0000100000000000,   // 0b1100
-        0b0001000000000000,   // 0b1101
-        0b0010000000000000,   // 0b1110
-        0b0100000000000000,   // 0b1111
+        0,                  // 0b0000: no error
+        0b0000000000000001, // 0b0001
+        0b0000000000000010, // 0b0010
+        0b0000000000010000, // 0b0011
+        0b0000000000000100, // 0b0100
+        0b0000000000100000, // 0b0101
+        0b0000000001000000, // 0b0110
+        0b0000000010000000, // 0b0111
+        0b0000000000001000, // 0b1000
+        0b0000000100000000, // 0b1001
+        0b0000001000000000, // 0b1010
+        0b0000010000000000, // 0b1011
+        0b0000100000000000, // 0b1100
+        0b0001000000000000, // 0b1101
+        0b0010000000000000, // 0b1110
+        0b0100000000000000, // 0b1111
     ];
 }
 
@@ -155,42 +150,32 @@ pub mod shortened {
     }
 
     /// Generator matrix (parity submatrix), without the identity part.
-    const GENERATOR: [u8; 4] = [
-        0b111001,
-        0b110101,
-        0b101110,
-        0b011110,
-    ];
+    const GENERATOR: [u8; 4] = [0b111001, 0b110101, 0b101110, 0b011110];
 
     /// Parity-check matrix **H** = [**A**^T | **I**].
-    const PARITY_CHECK: [u16; 4] = [
-        0b1110011000,
-        0b1101010100,
-        0b1011100010,
-        0b0111100001,
-    ];
+    const PARITY_CHECK: [u16; 4] = [0b1110011000, 0b1101010100, 0b1011100010, 0b0111100001];
 
     /// Maps 4-bit syndrome values to single-bit error locations.
     ///
     /// Zero entries indicate uncorrectable syndromes (shortened code has
     /// 5 syndromes that don't correspond to valid single-bit errors).
     pub(super) const LOCATIONS: [u16; 16] = [
-        0,                    // 0b0000: no error
-        0b0000000000000001,   // 0b0001
-        0b0000000000000010,   // 0b0010
-        0b0000000000100000,   // 0b0011
-        0b0000000000000100,   // 0b0100
-        0,                    // 0b0101: uncorrectable
-        0,                    // 0b0110: uncorrectable
-        0b0000000001000000,   // 0b0111
-        0b0000000000001000,   // 0b1000
-        0,                    // 0b1001: uncorrectable
-        0,                    // 0b1010: uncorrectable
-        0b0000000010000000,   // 0b1011
-        0b0000000000010000,   // 0b1100
-        0b0000000100000000,   // 0b1101
-        0b0000001000000000,   // 0b1110
-        0,                    // 0b1111: uncorrectable
+        0,                  // 0b0000: no error
+        0b0000000000000001, // 0b0001
+        0b0000000000000010, // 0b0010
+        0b0000000000100000, // 0b0011
+        0b0000000000000100, // 0b0100
+        0,                  // 0b0101: uncorrectable
+        0,                  // 0b0110: uncorrectable
+        0b0000000001000000, // 0b0111
+        0b0000000000001000, // 0b1000
+        0,                  // 0b1001: uncorrectable
+        0,                  // 0b1010: uncorrectable
+        0b0000000010000000, // 0b1011
+        0b0000000000010000, // 0b1100
+        0b0000000100000000, // 0b1101
+        0b0000001000000000, // 0b1110
+        0,                  // 0b1111: uncorrectable
     ];
 }
 
@@ -203,14 +188,8 @@ mod tests {
     #[test]
     fn standard_encode_known_vectors() {
         assert_eq!(standard::encode(0), 0);
-        assert_eq!(
-            standard::encode(0b11111111111),
-            0b11111111111_1111
-        );
-        assert_eq!(
-            standard::encode(0b10101010101),
-            0b10101010101_0101
-        );
+        assert_eq!(standard::encode(0b11111111111), 0b11111111111_1111);
+        assert_eq!(standard::encode(0b10101010101), 0b10101010101_0101);
     }
 
     #[test]
@@ -337,7 +316,10 @@ mod tests {
 
         // The shortened code has 5 uncorrectable syndromes, so some
         // two-bit patterns should map to them.
-        assert!(none_count > 0, "expected some uncorrectable two-bit patterns");
+        assert!(
+            none_count > 0,
+            "expected some uncorrectable two-bit patterns"
+        );
     }
 
     #[test]

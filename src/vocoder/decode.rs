@@ -5,7 +5,7 @@
 //! phase continuity, and error rate tracking.
 
 use super::coefs::Coefficients;
-use super::descramble::{descramble, Bootstrap};
+use super::descramble::{Bootstrap, descramble};
 use super::enhance::{self, EnhanceErrors, EnhancedSpectrals, FrameEnergy};
 use super::frame::{AudioBuffer, ReceivedFrame};
 use super::gain::Gains;
@@ -126,8 +126,12 @@ impl ImbeDecoder {
     /// spectrals, but generates fresh randomness for the unvoiced DFT and
     /// phase terms (Eqs 99-104). Does not update saved state.
     fn repeat(&self, buffer: &mut AudioBuffer) {
-        let unvoiced_dft =
-            UnvoicedDft::new(&self.prev.params, &self.prev.voice, &self.prev.enhanced, rand::rng());
+        let unvoiced_dft = UnvoicedDft::new(
+            &self.prev.params,
+            &self.prev.voice,
+            &self.prev.enhanced,
+            rand::rng(),
+        );
         let phase_base = PhaseBase::new(&self.prev.params, &self.prev);
         let phase = Phase::new(
             &phase_base,
@@ -219,14 +223,8 @@ mod tests {
 
         // Invalid period value (b_0 = 208..=215 is invalid).
         // u_0 MSBs = 110100 (0xD0 >> 2 = 52), u_7 bits = 00 -> period = 0b11010000 = 208
-        let invalid_frame = ReceivedFrame::new(
-            [
-                0b110100000000,
-                0, 0, 0, 0, 0, 0,
-                0b0000000,
-            ],
-            [0; 7],
-        );
+        let invalid_frame =
+            ReceivedFrame::new([0b110100000000, 0, 0, 0, 0, 0, 0, 0b0000000], [0; 7]);
 
         decoder.decode(invalid_frame, &mut buffer);
 
@@ -243,14 +241,8 @@ mod tests {
 
         // Silence period: b_0 = 216..=219.
         // u_0 MSBs = 110110 (0xD8 >> 2 = 54), u_7 bits = 00 -> period = 0b11011000 = 216
-        let silence_frame = ReceivedFrame::new(
-            [
-                0b110110000000,
-                0, 0, 0, 0, 0, 0,
-                0b0000000,
-            ],
-            [0; 7],
-        );
+        let silence_frame =
+            ReceivedFrame::new([0b110110000000, 0, 0, 0, 0, 0, 0, 0b0000000], [0; 7]);
 
         decoder.decode(silence_frame, &mut buffer);
 
@@ -270,14 +262,8 @@ mod tests {
         decoder.decode(test_frame(), &mut buffer1);
 
         // Decode silence — should not update state.
-        let silence_frame = ReceivedFrame::new(
-            [
-                0b110110000000,
-                0, 0, 0, 0, 0, 0,
-                0b0000000,
-            ],
-            [0; 7],
-        );
+        let silence_frame =
+            ReceivedFrame::new([0b110110000000, 0, 0, 0, 0, 0, 0, 0b0000000], [0; 7]);
         decoder.decode(silence_frame, &mut buffer2);
         assert!(buffer2.iter().all(|&s| s == 0.0));
 
@@ -290,5 +276,4 @@ mod tests {
         let has_nonzero = buffer3.iter().any(|&s| s != 0.0);
         assert!(has_nonzero, "expected non-zero output after silence");
     }
-
 }

@@ -6,9 +6,9 @@
 use num_complex::Complex;
 
 use trunker::channel_manager::{ChannelManager, ChannelManagerConfig};
-use trunker::p25::nid::NidIntegrityPolicy;
 use trunker::dsp::nco::Nco;
 use trunker::p25::ident::IdentTable;
+use trunker::p25::nid::NidIntegrityPolicy;
 use trunker::p25::tsbk::{Tsbk, TsbkHeader, TsbkOpcode, TsbkPayload};
 use trunker::p25::types::{ChannelNumber, Frequency, SourceId, TalkgroupId};
 use trunker::pipeline::{ChannelPipeline, Modulation, PipelineConfig};

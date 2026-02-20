@@ -22,7 +22,10 @@ fn first_stage(config: &DecimationConfig) -> &trunker::pipeline::DecimationStage
 
 /// Helper: last stage of a multi-stage config.
 fn last_stage(config: &DecimationConfig) -> &trunker::pipeline::DecimationStage {
-    config.stages.last().expect("stages should not be empty in tests")
+    config
+        .stages
+        .last()
+        .expect("stages should not be empty in tests")
 }
 
 // ---------------------------------------------------------------------------
@@ -34,10 +37,26 @@ fn regression_2400k_matches_original_constants() {
     let config = DecimationConfig::compute(2_400_000).expect("2.4M should be valid");
 
     assert_eq!(config.total_decimation(), 100, "total decimation");
-    assert_eq!(first_stage(&config).decimation_factor, 10, "stage 1 decimation");
-    assert_eq!(last_stage(&config).decimation_factor, 10, "stage 2 decimation");
-    assert_eq!(first_stage(&config).num_taps, 201, "stage 1 taps (regression)");
-    assert_eq!(last_stage(&config).num_taps, 51, "stage 2 taps (regression)");
+    assert_eq!(
+        first_stage(&config).decimation_factor,
+        10,
+        "stage 1 decimation"
+    );
+    assert_eq!(
+        last_stage(&config).decimation_factor,
+        10,
+        "stage 2 decimation"
+    );
+    assert_eq!(
+        first_stage(&config).num_taps,
+        201,
+        "stage 1 taps (regression)"
+    );
+    assert_eq!(
+        last_stage(&config).num_taps,
+        51,
+        "stage 2 taps (regression)"
+    );
     assert!(
         (first_stage(&config).cutoff_hz - 6_250.0).abs() < 0.01,
         "stage 1 cutoff: got {}",
@@ -60,7 +79,11 @@ fn valid_rate_2880k() {
     let config = DecimationConfig::compute(2_880_000).expect("2.88M should be valid");
     assert_eq!(config.total_decimation(), 120);
     for stage in &config.stages {
-        assert!(stage.decimation_factor <= 10, "factor {} exceeds 10", stage.decimation_factor);
+        assert!(
+            stage.decimation_factor <= 10,
+            "factor {} exceeds 10",
+            stage.decimation_factor
+        );
     }
 }
 
@@ -70,7 +93,11 @@ fn valid_rate_3000k() {
     let config = DecimationConfig::compute(3_000_000).expect("3M should be valid");
     assert_eq!(config.total_decimation(), 125);
     for stage in &config.stages {
-        assert!(stage.decimation_factor <= 10, "factor {} exceeds 10", stage.decimation_factor);
+        assert!(
+            stage.decimation_factor <= 10,
+            "factor {} exceeds 10",
+            stage.decimation_factor
+        );
     }
 }
 
@@ -80,7 +107,11 @@ fn valid_rate_4800k() {
     let config = DecimationConfig::compute(4_800_000).expect("4.8M should be valid");
     assert_eq!(config.total_decimation(), 200);
     for stage in &config.stages {
-        assert!(stage.decimation_factor <= 10, "factor {} exceeds 10", stage.decimation_factor);
+        assert!(
+            stage.decimation_factor <= 10,
+            "factor {} exceeds 10",
+            stage.decimation_factor
+        );
     }
 }
 
@@ -90,7 +121,11 @@ fn valid_rate_6000k() {
     let config = DecimationConfig::compute(6_000_000).expect("6M should be valid");
     assert_eq!(config.total_decimation(), 250);
     for stage in &config.stages {
-        assert!(stage.decimation_factor <= 10, "factor {} exceeds 10", stage.decimation_factor);
+        assert!(
+            stage.decimation_factor <= 10,
+            "factor {} exceeds 10",
+            stage.decimation_factor
+        );
     }
 }
 
@@ -100,7 +135,11 @@ fn valid_rate_9600k() {
     let config = DecimationConfig::compute(9_600_000).expect("9.6M should be valid");
     assert_eq!(config.total_decimation(), 400);
     for stage in &config.stages {
-        assert!(stage.decimation_factor <= 10, "factor {} exceeds 10", stage.decimation_factor);
+        assert!(
+            stage.decimation_factor <= 10,
+            "factor {} exceeds 10",
+            stage.decimation_factor
+        );
     }
 }
 
@@ -453,7 +492,10 @@ fn zero_rate_error_suggests_channel_rate() {
             nearest_higher,
             ..
         } => {
-            assert_eq!(nearest_lower, 24_000, "zero rate should suggest 24k as nearest");
+            assert_eq!(
+                nearest_lower, 24_000,
+                "zero rate should suggest 24k as nearest"
+            );
             assert_eq!(nearest_higher, 24_000);
         }
         _ => panic!("expected NotDivisible error"),

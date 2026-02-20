@@ -635,7 +635,9 @@ mod tests {
     #[test]
     fn factor_into_stages_no_factor_exceeds_10() {
         // Verify all standard P25-compatible sample rates factor cleanly.
-        let rates = [48_000, 240_000, 480_000, 1_200_000, 2_400_000, 3_000_000, 6_000_000, 9_000_000];
+        let rates = [
+            48_000, 240_000, 480_000, 1_200_000, 2_400_000, 3_000_000, 6_000_000, 9_000_000,
+        ];
         for rate in rates {
             let total = (rate / CHANNEL_RATE) as usize;
             let factors = factor_into_stages(total).unwrap_or_else(|e| {

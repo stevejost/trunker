@@ -321,8 +321,13 @@ mod tests {
         let freq_offset = 30.0; // Hz
         let phase_offset = 0.4; // radians
         let samples_per_symbol = 5;
-        let signal =
-            generate_qpsk_signal(200, samples_per_symbol, freq_offset, sample_rate, phase_offset);
+        let signal = generate_qpsk_signal(
+            200,
+            samples_per_symbol,
+            freq_offset,
+            sample_rate,
+            phase_offset,
+        );
 
         // Cold start: measure samples to reach low error.
         let mut cold = CostasLoop::default();

@@ -11,11 +11,11 @@
 //! 5. Hamming(15,11) decode u_4..u_6 (lower-priority voice data)
 //! 6. u_7 passes through unprotected (7 bits)
 
+use super::descramble::{self, VOICE_FRAME_DIBITS};
+use super::pn::PseudoRandom;
 use crate::p25::coding::{golay, hamming};
 use crate::p25::error::P25Error;
 use crate::p25::types::Dibit;
-use super::descramble::{self, VOICE_FRAME_DIBITS};
-use super::pn::PseudoRandom;
 
 /// Decoded IMBE voice frame containing 88 bits of voice data.
 #[derive(Debug)]
@@ -259,10 +259,7 @@ mod tests {
         let dibits = build_test_frame(&data);
         let frame = VoiceFrame::decode(&dibits).unwrap();
         assert_eq!(frame.total_errors(), 0);
-        assert_eq!(
-            frame.total_errors(),
-            frame.errors.iter().sum::<usize>()
-        );
+        assert_eq!(frame.total_errors(), frame.errors.iter().sum::<usize>());
     }
 
     #[test]
