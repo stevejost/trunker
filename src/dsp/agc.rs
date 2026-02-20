@@ -9,8 +9,12 @@ use num_complex::Complex;
 
 /// Default smoothing factor for the RMS power estimate.
 ///
-/// Higher values track faster but introduce more gain variation.
-const DEFAULT_ALPHA: f32 = 0.45;
+/// Controls how quickly the AGC tracks power changes. A value of 0.005
+/// gives a time constant of ~200 samples, smoothing over many symbols
+/// to avoid injecting gain noise into the Costas loop during fades.
+/// Too fast (e.g., 0.45) pumps gain sample-by-sample and destabilizes
+/// CQPSK carrier recovery.
+const DEFAULT_ALPHA: f32 = 0.005;
 
 /// Default target RMS amplitude after normalization.
 const DEFAULT_REFERENCE: f32 = 0.85;
@@ -74,15 +78,19 @@ impl Default for Agc {
 mod tests {
     use super::*;
 
+    /// Number of samples needed for AGC with slow alpha (0.005) to settle.
+    /// Time constant is ~1/alpha = 200 samples. Convergence from the initial
+    /// power estimate to a very different target needs ~10x time constants.
+    const SETTLE_SAMPLES: usize = 2000;
+
     #[test]
     fn constant_amplitude_converges_to_reference() {
         let reference = 0.85;
-        let mut agc = Agc::new(0.45, reference);
+        let mut agc = Agc::default();
         let input = Complex::new(2.0, 0.0);
 
-        // Let the AGC settle.
         let mut output = Complex::new(0.0, 0.0);
-        for _ in 0..200 {
+        for _ in 0..SETTLE_SAMPLES {
             output = agc.process(input);
         }
 
@@ -96,11 +104,11 @@ mod tests {
     #[test]
     fn small_amplitude_is_boosted() {
         let reference = 0.85;
-        let mut agc = Agc::new(0.45, reference);
+        let mut agc = Agc::default();
         let input = Complex::new(0.1, 0.0);
 
         let mut output = Complex::new(0.0, 0.0);
-        for _ in 0..200 {
+        for _ in 0..SETTLE_SAMPLES {
             output = agc.process(input);
         }
 
@@ -120,16 +128,16 @@ mod tests {
     #[test]
     fn varying_amplitude_tracks() {
         let reference = 0.85;
-        let mut agc = Agc::new(0.45, reference);
+        let mut agc = Agc::default();
 
         // Start with amplitude 1.0.
-        for _ in 0..100 {
+        for _ in 0..SETTLE_SAMPLES {
             agc.process(Complex::new(1.0, 0.0));
         }
 
         // Switch to amplitude 5.0 and let it adapt.
         let mut output = Complex::new(0.0, 0.0);
-        for _ in 0..100 {
+        for _ in 0..SETTLE_SAMPLES {
             output = agc.process(Complex::new(5.0, 0.0));
         }
 
@@ -142,7 +150,7 @@ mod tests {
 
     #[test]
     fn zero_input_does_not_produce_nan_or_inf() {
-        let mut agc = Agc::new(0.45, 0.85);
+        let mut agc = Agc::default();
 
         for _ in 0..100 {
             let output = agc.process(Complex::new(0.0, 0.0));
@@ -161,13 +169,12 @@ mod tests {
 
     #[test]
     fn complex_input_preserves_phase() {
-        let mut agc = Agc::new(0.45, 0.85);
+        let mut agc = Agc::default();
         let phase = std::f32::consts::FRAC_PI_4;
         let input = Complex::from_polar(2.0, phase);
 
-        // Let AGC settle.
         let mut output = Complex::new(0.0, 0.0);
-        for _ in 0..200 {
+        for _ in 0..SETTLE_SAMPLES {
             output = agc.process(input);
         }
 
@@ -188,15 +195,13 @@ mod tests {
     #[test]
     fn gain_accessor_matches_applied_gain() {
         let reference = 0.85;
-        let mut agc = Agc::new(0.45, reference);
+        let mut agc = Agc::default();
         let input = Complex::new(2.0, 0.0);
 
-        // Let the AGC settle.
-        for _ in 0..200 {
+        for _ in 0..SETTLE_SAMPLES {
             agc.process(input);
         }
 
-        // gain() should match reference / sqrt(power_estimate).
         // After settling on constant input of amplitude 2.0,
         // power_estimate converges to 4.0, so gain ~ 0.85 / 2.0 = 0.425.
         let gain = agc.gain();
@@ -205,5 +210,42 @@ mod tests {
             (gain - expected).abs() < 0.05,
             "expected gain near {expected}, got {gain}"
         );
+    }
+
+    #[test]
+    fn slow_alpha_reduces_gain_variance() {
+        let reference = 0.85;
+        let mut slow_agc = Agc::new(DEFAULT_ALPHA, reference);
+        let mut fast_agc = Agc::new(0.45, reference);
+
+        // Feed alternating amplitudes to simulate fading.
+        let mut slow_gains = Vec::new();
+        let mut fast_gains = Vec::new();
+        for i in 0..SETTLE_SAMPLES {
+            let amplitude = if i % 20 < 10 { 1.0 } else { 3.0 };
+            let sample = Complex::new(amplitude, 0.0);
+            slow_agc.process(sample);
+            fast_agc.process(sample);
+            slow_gains.push(slow_agc.gain());
+            fast_gains.push(fast_agc.gain());
+        }
+
+        // Compute variance of gain over last 500 samples.
+        let slow_tail = &slow_gains[500..];
+        let fast_tail = &fast_gains[500..];
+        let slow_var = variance(slow_tail);
+        let fast_var = variance(fast_tail);
+
+        assert!(
+            slow_var < fast_var,
+            "slow AGC should have less gain variance: slow={slow_var:.6}, fast={fast_var:.6}"
+        );
+    }
+
+    /// Compute variance of a slice of f32 values.
+    fn variance(values: &[f32]) -> f32 {
+        let n = values.len() as f32;
+        let mean = values.iter().sum::<f32>() / n;
+        values.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / n
     }
 }
