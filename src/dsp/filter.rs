@@ -188,8 +188,8 @@ mod tests {
             })
             .collect();
 
-        // Stage 1: 2.4 MS/s -> 240 kS/s, cutoff 12 kHz, 201 taps
-        let mut stage1 = DecimatingFilter::new(12_000.0, 2_400_000.0, 201, 10);
+        // Stage 1: 2.4 MS/s -> 240 kS/s, cutoff 6.25 kHz, 201 taps
+        let mut stage1 = DecimatingFilter::new(6_250.0, 2_400_000.0, 201, 10);
         let mut intermediate = Vec::new();
         for &sample in &input {
             if let Some(out) = stage1.process(sample) {

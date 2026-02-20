@@ -37,9 +37,9 @@ fn regression_2400k_matches_original_constants() {
     assert_eq!(first_stage(&config).decimation_factor, 10, "stage 1 decimation");
     assert_eq!(last_stage(&config).decimation_factor, 10, "stage 2 decimation");
     assert_eq!(first_stage(&config).num_taps, 201, "stage 1 taps (regression)");
-    assert_eq!(last_stage(&config).num_taps, 61, "stage 2 taps (regression)");
+    assert_eq!(last_stage(&config).num_taps, 51, "stage 2 taps (regression)");
     assert!(
-        (first_stage(&config).cutoff_hz - 12_000.0).abs() < 0.01,
+        (first_stage(&config).cutoff_hz - 6_250.0).abs() < 0.01,
         "stage 1 cutoff: got {}",
         first_stage(&config).cutoff_hz
     );
@@ -56,62 +56,52 @@ fn regression_2400k_matches_original_constants() {
 
 #[test]
 fn valid_rate_2880k() {
+    // 2.88M / 24k = 120x. With MAX_STAGE_FACTOR=10: [4, 3, 10] or similar.
     let config = DecimationConfig::compute(2_880_000).expect("2.88M should be valid");
     assert_eq!(config.total_decimation(), 120);
-    assert_eq!(
-        first_stage(&config).decimation_factor * last_stage(&config).decimation_factor,
-        120
-    );
-    assert!(first_stage(&config).decimation_factor <= 25, "stage 1 factor too large");
-    assert!(last_stage(&config).decimation_factor <= 25, "stage 2 factor too large");
+    for stage in &config.stages {
+        assert!(stage.decimation_factor <= 10, "factor {} exceeds 10", stage.decimation_factor);
+    }
 }
 
 #[test]
 fn valid_rate_3000k() {
+    // 3M / 24k = 125x = [5, 5, 5].
     let config = DecimationConfig::compute(3_000_000).expect("3M should be valid");
     assert_eq!(config.total_decimation(), 125);
-    assert_eq!(
-        first_stage(&config).decimation_factor * last_stage(&config).decimation_factor,
-        125
-    );
-    assert!(first_stage(&config).decimation_factor <= 25);
-    assert!(last_stage(&config).decimation_factor <= 25);
+    for stage in &config.stages {
+        assert!(stage.decimation_factor <= 10, "factor {} exceeds 10", stage.decimation_factor);
+    }
 }
 
 #[test]
 fn valid_rate_4800k() {
+    // 4.8M / 24k = 200x.
     let config = DecimationConfig::compute(4_800_000).expect("4.8M should be valid");
     assert_eq!(config.total_decimation(), 200);
-    assert_eq!(
-        first_stage(&config).decimation_factor * last_stage(&config).decimation_factor,
-        200
-    );
-    assert!(first_stage(&config).decimation_factor <= 25);
-    assert!(last_stage(&config).decimation_factor <= 25);
+    for stage in &config.stages {
+        assert!(stage.decimation_factor <= 10, "factor {} exceeds 10", stage.decimation_factor);
+    }
 }
 
 #[test]
 fn valid_rate_6000k() {
+    // 6M / 24k = 250x = [5, 5, 10].
     let config = DecimationConfig::compute(6_000_000).expect("6M should be valid");
     assert_eq!(config.total_decimation(), 250);
-    assert_eq!(
-        first_stage(&config).decimation_factor * last_stage(&config).decimation_factor,
-        250
-    );
-    assert!(first_stage(&config).decimation_factor <= 25);
-    assert!(last_stage(&config).decimation_factor <= 25);
+    for stage in &config.stages {
+        assert!(stage.decimation_factor <= 10, "factor {} exceeds 10", stage.decimation_factor);
+    }
 }
 
 #[test]
 fn valid_rate_9600k() {
+    // 9.6M / 24k = 400x.
     let config = DecimationConfig::compute(9_600_000).expect("9.6M should be valid");
     assert_eq!(config.total_decimation(), 400);
-    assert_eq!(
-        first_stage(&config).decimation_factor * last_stage(&config).decimation_factor,
-        400
-    );
-    assert!(first_stage(&config).decimation_factor <= 25);
-    assert!(last_stage(&config).decimation_factor <= 25);
+    for stage in &config.stages {
+        assert!(stage.decimation_factor <= 10, "factor {} exceeds 10", stage.decimation_factor);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -136,11 +126,14 @@ fn all_valid_rates_have_correct_total_decimation() {
             "total decimation for {rate}"
         );
 
-        assert_eq!(
-            first_stage(&config).decimation_factor * last_stage(&config).decimation_factor,
-            expected_total as usize,
-            "stage product for {rate}"
-        );
+        // All stage factors must be <= 10.
+        for stage in &config.stages {
+            assert!(
+                stage.decimation_factor <= 10,
+                "rate {rate}: factor {} exceeds 10",
+                stage.decimation_factor
+            );
+        }
     }
 }
 
@@ -157,19 +150,14 @@ fn filter_cutoffs_are_correct_for_all_valid_rates() {
     for rate in valid_rates {
         let config = DecimationConfig::compute(rate).unwrap();
 
-        // Stage 1 cutoff: always 12 kHz (protects P25 12.5 kHz channel).
-        assert!(
-            (first_stage(&config).cutoff_hz - 12_000.0).abs() < 0.01,
-            "stage 1 cutoff for {rate}: got {}",
-            first_stage(&config).cutoff_hz
-        );
-
-        // Last stage cutoff: always 6.25 kHz (half of 12.5 kHz channel BW).
-        assert!(
-            (last_stage(&config).cutoff_hz - 6_250.0).abs() < 0.01,
-            "last stage cutoff for {rate}: got {}",
-            last_stage(&config).cutoff_hz
-        );
+        // All stages use the same 6250 Hz channel cutoff.
+        for (j, stage) in config.stages.iter().enumerate() {
+            assert!(
+                (stage.cutoff_hz - 6_250.0).abs() < 0.01,
+                "stage {j} cutoff for {rate}: got {}",
+                stage.cutoff_hz
+            );
+        }
     }
 }
 
@@ -442,10 +430,12 @@ fn error_suggests_nearest_valid_rates() {
     match err {
         DecimationError::NotDivisible {
             sample_rate,
+            target_rate,
             nearest_lower,
             nearest_higher,
         } => {
             assert_eq!(sample_rate, 2_000_000);
+            assert_eq!(target_rate, 24_000);
             // 2_000_000 / 24_000 = 83.33 -> floor = 83 * 24000 = 1_992_000
             assert_eq!(nearest_lower, 1_992_000);
             assert_eq!(nearest_higher, 2_016_000);
@@ -521,16 +511,16 @@ fn single_stage_for_small_decimation() {
 
 #[test]
 fn single_stage_at_max_factor() {
-    // 600000 / 24000 = 25x, exactly at max single-stage factor.
-    let config = DecimationConfig::compute(600_000).expect("600k should be valid");
+    // 240000 / 24000 = 10x, exactly at max single-stage factor.
+    let config = DecimationConfig::compute(240_000).expect("240k should be valid");
     assert_eq!(config.stages.len(), 1);
-    assert_eq!(config.total_decimation(), 25);
+    assert_eq!(config.total_decimation(), 10);
 }
 
 #[test]
 fn two_stages_just_above_max_single_factor() {
-    // 624000 / 24000 = 26x, needs two stages.
-    let config = DecimationConfig::compute(624_000).expect("624k should be valid");
-    assert!(config.stages.len() >= 2, "26x needs multi-stage");
-    assert_eq!(config.total_decimation(), 26);
+    // 288000 / 24000 = 12x, needs two stages (e.g. [4, 3] or [3, 4]).
+    let config = DecimationConfig::compute(288_000).expect("288k should be valid");
+    assert!(config.stages.len() >= 2, "12x needs multi-stage");
+    assert_eq!(config.total_decimation(), 12);
 }

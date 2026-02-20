@@ -22,34 +22,49 @@ use crate::p25::types::{Dibit, Nac};
 /// Target IF rate after all decimation: 24 kHz (5 samples/symbol at 4800 baud).
 const CHANNEL_RATE: u32 = 24_000;
 
-/// Reference first-stage filter parameters at 2.4 MS/s.
-/// Used to compute proportional tap counts at other sample rates.
-const STAGE1_REF_RATE: f32 = 2_400_000.0;
-const STAGE1_REF_TAPS: f32 = 201.0;
+/// Reference filter parameters for first and final decimation stages.
+///
+/// This reference produces moderate tap counts that preserve CQPSK phase
+/// fidelity. At the final stage's low sample rate, fewer taps prevent the
+/// normalized cutoff from becoming so narrow that passband distortion
+/// disrupts the Costas PLL lock.
+const PRIMARY_REF_RATE: f32 = 2_400_000.0;
+const PRIMARY_REF_TAPS: f32 = 201.0;
 
-/// Reference final-stage filter parameters at 240 kHz.
-const FINAL_STAGE_REF_RATE: f32 = 240_000.0;
-const FINAL_STAGE_REF_TAPS: f32 = 61.0;
+/// Reference filter parameters for intermediate decimation stages.
+///
+/// Intermediate stages use a reference that produces more taps (relative
+/// to rate) for stronger stopband attenuation. This is necessary for
+/// C4FM alias rejection at rates between the first and final stages.
+const INTERMEDIATE_REF_RATE: f32 = 240_000.0;
+const INTERMEDIATE_REF_TAPS: f32 = 61.0;
 
-/// Cutoff frequency for non-final stages (protects 12.5 kHz P25 channel).
-const NON_FINAL_CUTOFF_HZ: f32 = 12_000.0;
+/// Low-pass filter cutoff frequency for all decimation stages (hertz).
+///
+/// Set to half the 12.5 kHz P25 channel bandwidth. The actual P25 signal
+/// occupies only ~5760 Hz (4800 baud × 1.2 raised-cosine rolloff), so
+/// 6250 Hz provides ample margin. Using the same cutoff for all stages
+/// is critical for CQPSK: wider intermediate cutoffs let adjacent-channel
+/// energy through that disrupts the Costas PLL phase tracking.
+const CHANNEL_CUTOFF_HZ: f32 = 6_250.0;
 
-/// Cutoff frequency for the final stage (half of 12.5 kHz channel bandwidth).
-const FINAL_CUTOFF_HZ: f32 = 6_250.0;
-
-/// Maximum decimation factor per stage.
-const MAX_STAGE_FACTOR: usize = 25;
+/// Maximum decimation factor per stage. Kept at 10 to preserve CQPSK
+/// phase fidelity — stages larger than 10x create filters whose narrow
+/// normalized cutoff distorts phase, preventing the Costas loop from locking.
+const MAX_STAGE_FACTOR: usize = 10;
 
 /// Error type for decimation configuration.
 #[derive(Debug, thiserror::Error)]
 pub enum DecimationError {
-    /// Sample rate is not an integer multiple of the 24 kHz channel rate.
+    /// Sample rate is not an integer multiple of the target rate.
     #[error(
-        "sample rate {sample_rate} Hz is not a multiple of 24000; try {nearest_lower} or {nearest_higher}"
+        "sample rate {sample_rate} Hz is not a multiple of {target_rate}; try {nearest_lower} or {nearest_higher}"
     )]
     NotDivisible {
         /// The invalid sample rate.
         sample_rate: u32,
+        /// The target rate that must divide evenly.
+        target_rate: u32,
         /// Nearest valid rate below.
         nearest_lower: u32,
         /// Nearest valid rate above.
@@ -89,24 +104,40 @@ impl DecimationConfig {
     /// Returns an error if the sample rate is not a multiple of 24000 or
     /// cannot be factored into stages of 25x or less.
     pub fn compute(sample_rate: u32) -> Result<Self, DecimationError> {
-        if sample_rate == 0 {
-            return Err(DecimationError::NotDivisible {
-                sample_rate: 0,
-                nearest_lower: CHANNEL_RATE,
-                nearest_higher: CHANNEL_RATE,
-            });
-        }
-        if !sample_rate.is_multiple_of(CHANNEL_RATE) {
-            let nearest_lower = (sample_rate / CHANNEL_RATE) * CHANNEL_RATE;
-            let nearest_higher = nearest_lower + CHANNEL_RATE;
+        Self::compute_to(sample_rate, CHANNEL_RATE)
+    }
+
+    /// Compute decimation stages to reduce `sample_rate` to `target_rate`.
+    ///
+    /// Returns an error if `target_rate` does not evenly divide `sample_rate`
+    /// or the total decimation cannot be factored into stages of 25x or less.
+    ///
+    /// When rates are equal (total decimation = 1), creates a single stage
+    /// with decimation factor 1 that still applies the channel LPF. This
+    /// filter is required for demodulators like the CQPSK Costas loop that
+    /// expect band-limited input.
+    pub fn compute_to(sample_rate: u32, target_rate: u32) -> Result<Self, DecimationError> {
+        if sample_rate == 0 || target_rate == 0 {
             return Err(DecimationError::NotDivisible {
                 sample_rate,
+                target_rate: target_rate.max(1),
+                nearest_lower: target_rate.max(1),
+                nearest_higher: target_rate.max(1),
+            });
+        }
+
+        if !sample_rate.is_multiple_of(target_rate) {
+            let nearest_lower = (sample_rate / target_rate) * target_rate;
+            let nearest_higher = nearest_lower + target_rate;
+            return Err(DecimationError::NotDivisible {
+                sample_rate,
+                target_rate,
                 nearest_lower,
                 nearest_higher,
             });
         }
 
-        let total = (sample_rate / CHANNEL_RATE) as usize;
+        let total = (sample_rate / target_rate) as usize;
 
         let factors = factor_into_stages(total)?;
         let stage_count = factors.len();
@@ -115,23 +146,16 @@ impl DecimationConfig {
         let mut current_rate = sample_rate as f32;
 
         for (i, &factor) in factors.iter().enumerate() {
-            let is_final = i == stage_count - 1;
-
-            let cutoff_hz = if is_final {
-                FINAL_CUTOFF_HZ
+            let is_intermediate = i > 0 && i < stage_count - 1;
+            let num_taps = if is_intermediate {
+                compute_taps(current_rate, INTERMEDIATE_REF_RATE, INTERMEDIATE_REF_TAPS)
             } else {
-                NON_FINAL_CUTOFF_HZ
-            };
-
-            let num_taps = if i == 0 {
-                compute_taps(current_rate, STAGE1_REF_RATE, STAGE1_REF_TAPS)
-            } else {
-                compute_taps(current_rate, FINAL_STAGE_REF_RATE, FINAL_STAGE_REF_TAPS)
+                compute_taps(current_rate, PRIMARY_REF_RATE, PRIMARY_REF_TAPS)
             };
 
             stages.push(DecimationStage {
                 decimation_factor: factor,
-                cutoff_hz,
+                cutoff_hz: CHANNEL_CUTOFF_HZ,
                 num_taps,
                 input_rate: current_rate,
             });
@@ -164,44 +188,28 @@ fn compute_taps(input_rate: f32, ref_rate: f32, ref_taps: f32) -> usize {
     }
 }
 
-/// Preferred final-stage factors, ordered by filter quality.
-/// Smaller factors in the final stage give better stopband attenuation
-/// with fewer taps.
-const PREFERRED_SMALL_FACTORS: &[usize] = &[10, 8, 5, 4, 3, 2];
-const PREFERRED_LARGE_FACTORS: &[usize] = &[20, 15, 12, 10, 8, 5, 4, 3, 2];
+/// Preferred final-stage factors, ordered by preference.
+/// Larger factors are tried first as the final (lowest-rate) stage
+/// where the filter operates closest to the channel rate and has the
+/// best normalized cutoff ratio.
+const PREFERRED_FACTORS: &[usize] = &[10, 8, 5, 4, 3, 2];
 
-/// Factor a total decimation into stages where each factor is <= 25.
+/// Factor a total decimation into stages where each factor is <= 10.
 ///
-/// Uses a two-pass approach: first tries final factors <= 10 for best
-/// filter quality, then allows final factors up to 20. Falls back to
-/// three stages if no two-stage decomposition works.
+/// Recursively peels off a final-stage factor and factors the remainder.
+/// Prefers larger factors in the final stage for best filter quality
+/// at the lowest sample rate.
 fn factor_into_stages(total: usize) -> Result<Vec<usize>, DecimationError> {
     if total <= MAX_STAGE_FACTOR {
         return Ok(vec![total]);
     }
 
-    // Pass 1: two-stage with small final factor (<= 10).
-    for &f in PREFERRED_SMALL_FACTORS {
-        if total.is_multiple_of(f) && total / f <= MAX_STAGE_FACTOR {
-            return Ok(vec![total / f, f]);
-        }
-    }
-
-    // Pass 2: two-stage with larger final factor (<= 20).
-    for &f in PREFERRED_LARGE_FACTORS {
-        if total.is_multiple_of(f) && total / f <= MAX_STAGE_FACTOR {
-            return Ok(vec![total / f, f]);
-        }
-    }
-
-    // Pass 3: three-stage fallback.
-    for &f3 in PREFERRED_SMALL_FACTORS {
-        if total.is_multiple_of(f3) {
-            let remaining = total / f3;
-            for &f2 in PREFERRED_SMALL_FACTORS {
-                if remaining.is_multiple_of(f2) && remaining / f2 <= MAX_STAGE_FACTOR {
-                    return Ok(vec![remaining / f2, f2, f3]);
-                }
+    for &f in PREFERRED_FACTORS {
+        if total.is_multiple_of(f) {
+            let remaining = total / f;
+            if let Ok(mut earlier) = factor_into_stages(remaining) {
+                earlier.push(f);
+                return Ok(earlier);
             }
         }
     }
@@ -485,8 +493,8 @@ mod tests {
         assert_eq!(config.stages[0].decimation_factor, 10);
         assert_eq!(config.stages[1].decimation_factor, 10);
         assert_eq!(config.stages[0].num_taps, 201);
-        assert_eq!(config.stages[1].num_taps, 61);
-        assert!((config.stages[0].cutoff_hz - 12_000.0).abs() < 0.01);
+        assert_eq!(config.stages[1].num_taps, 51);
+        assert!((config.stages[0].cutoff_hz - 6_250.0).abs() < 0.01);
         assert!((config.stages[1].cutoff_hz - 6_250.0).abs() < 0.01);
         assert!((config.stages[0].input_rate - 2_400_000.0).abs() < 1.0);
         assert!((config.stages[1].input_rate - 240_000.0).abs() < 1.0);
@@ -504,5 +512,119 @@ mod tests {
         let config = DecimationConfig::compute(48_000).expect("48k should be valid");
         assert_eq!(config.stages.len(), 1);
         assert_eq!(config.total_decimation(), 2);
+    }
+
+    // -- compute_to tests --
+
+    #[test]
+    fn compute_to_2400k_to_48k() {
+        let config =
+            DecimationConfig::compute_to(2_400_000, 48_000).expect("2.4M->48k should be valid");
+        assert_eq!(config.total_decimation(), 50);
+    }
+
+    #[test]
+    fn compute_to_matches_compute_for_24k_target() {
+        let via_compute = DecimationConfig::compute(2_400_000).unwrap();
+        let via_compute_to = DecimationConfig::compute_to(2_400_000, 24_000).unwrap();
+
+        assert_eq!(via_compute.stages.len(), via_compute_to.stages.len());
+        assert_eq!(
+            via_compute.total_decimation(),
+            via_compute_to.total_decimation()
+        );
+        for (a, b) in via_compute.stages.iter().zip(via_compute_to.stages.iter()) {
+            assert_eq!(a.decimation_factor, b.decimation_factor);
+            assert_eq!(a.num_taps, b.num_taps);
+            assert!((a.cutoff_hz - b.cutoff_hz).abs() < 0.01);
+            assert!((a.input_rate - b.input_rate).abs() < 1.0);
+        }
+    }
+
+    #[test]
+    fn compute_to_rejects_indivisible_target() {
+        let result = DecimationConfig::compute_to(2_400_000, 44_100);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("not a multiple of 44100"),
+            "error should mention target rate, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn compute_to_identity_applies_lpf() {
+        // When sample_rate == target_rate, we still get a filter stage
+        // (factor 1) so the channel LPF is applied. This is essential
+        // for CQPSK demod which requires band-limited input.
+        let config = DecimationConfig::compute_to(24_000, 24_000).expect("identity should work");
+        assert_eq!(config.stages.len(), 1);
+        assert_eq!(config.total_decimation(), 1);
+        assert_eq!(config.stages[0].decimation_factor, 1);
+        assert!((config.stages[0].cutoff_hz - CHANNEL_CUTOFF_HZ).abs() < 0.01);
+    }
+
+    #[test]
+    fn decimation_config_6000k_three_stages() {
+        // 6 MSPS requires three stages: 5x -> 5x -> 10x.
+        // A single 25x first stage (the old [25, 10] factoring) creates
+        // filters with normalized cutoffs too narrow for CQPSK phase recovery.
+        let config = DecimationConfig::compute(6_000_000).expect("6M should be valid");
+        assert_eq!(config.stages.len(), 3);
+        assert_eq!(config.total_decimation(), 250);
+        assert_eq!(config.stages[0].decimation_factor, 5);
+        assert_eq!(config.stages[1].decimation_factor, 5);
+        assert_eq!(config.stages[2].decimation_factor, 10);
+        // All stages use the same channel cutoff.
+        for stage in &config.stages {
+            assert!((stage.cutoff_hz - CHANNEL_CUTOFF_HZ).abs() < 0.01);
+        }
+        assert!((config.stages[0].input_rate - 6_000_000.0).abs() < 1.0);
+        assert!((config.stages[1].input_rate - 1_200_000.0).abs() < 1.0);
+        assert!((config.stages[2].input_rate - 240_000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn decimation_config_3000k_three_stages() {
+        // 3 MSPS = 125x total: 5x -> 5x -> 5x.
+        let config = DecimationConfig::compute(3_000_000).expect("3M should be valid");
+        assert_eq!(config.stages.len(), 3);
+        assert_eq!(config.total_decimation(), 125);
+        assert_eq!(config.stages[0].decimation_factor, 5);
+        assert_eq!(config.stages[1].decimation_factor, 5);
+        assert_eq!(config.stages[2].decimation_factor, 5);
+    }
+
+    #[test]
+    fn decimation_config_9000k_four_stages() {
+        // 9 MSPS = 375x total: 3x -> 5x -> 5x -> 5x.
+        let config = DecimationConfig::compute(9_000_000).expect("9M should be valid");
+        assert_eq!(config.stages.len(), 4);
+        assert_eq!(config.total_decimation(), 375);
+        // All factors should be <= 10.
+        for stage in &config.stages {
+            assert!(
+                stage.decimation_factor <= 10,
+                "stage factor {} exceeds 10",
+                stage.decimation_factor
+            );
+        }
+    }
+
+    #[test]
+    fn factor_into_stages_no_factor_exceeds_10() {
+        // Verify all standard P25-compatible sample rates factor cleanly.
+        let rates = [48_000, 240_000, 480_000, 1_200_000, 2_400_000, 3_000_000, 6_000_000, 9_000_000];
+        for rate in rates {
+            let total = (rate / CHANNEL_RATE) as usize;
+            let factors = factor_into_stages(total).unwrap_or_else(|e| {
+                panic!("rate {rate} (total {total}) should factor: {e}");
+            });
+            for &f in &factors {
+                assert!(f <= 10, "rate {rate}: factor {f} exceeds 10");
+            }
+            let product: usize = factors.iter().product();
+            assert_eq!(product, total, "rate {rate}: product mismatch");
+        }
     }
 }
