@@ -188,17 +188,18 @@ fn compute_taps(input_rate: f32, ref_rate: f32, ref_taps: f32) -> usize {
     }
 }
 
-/// Preferred final-stage factors, ordered by preference.
-/// Larger factors are tried first as the final (lowest-rate) stage
-/// where the filter operates closest to the channel rate and has the
-/// best normalized cutoff ratio.
+/// Preferred factors, ordered by preference (largest first).
 const PREFERRED_FACTORS: &[usize] = &[10, 8, 5, 4, 3, 2];
 
 /// Factor a total decimation into stages where each factor is <= 10.
 ///
-/// Recursively peels off a final-stage factor and factors the remainder.
-/// Prefers larger factors in the final stage for best filter quality
-/// at the lowest sample rate.
+/// Places the largest factors first (earliest stages) where the sample
+/// rate is highest. This minimizes total computation: a large first-stage
+/// factor means the expensive convolution fires less often per input
+/// sample. For example, at 3.6 MS/s with 150x total decimation:
+///
+/// - [3, 5, 10] (old): 303 taps / 3 = 101 MACs/sample → 438M MACs/sec
+/// - [10, 5, 3] (new): 303 taps / 10 = 30 MACs/sample → 117M MACs/sec
 fn factor_into_stages(total: usize) -> Result<Vec<usize>, DecimationError> {
     if total <= MAX_STAGE_FACTOR {
         return Ok(vec![total]);
@@ -207,9 +208,9 @@ fn factor_into_stages(total: usize) -> Result<Vec<usize>, DecimationError> {
     for &f in PREFERRED_FACTORS {
         if total.is_multiple_of(f) {
             let remaining = total / f;
-            if let Ok(mut earlier) = factor_into_stages(remaining) {
-                earlier.push(f);
-                return Ok(earlier);
+            if let Ok(mut later) = factor_into_stages(remaining) {
+                later.insert(0, f);
+                return Ok(later);
             }
         }
     }
@@ -587,22 +588,21 @@ mod tests {
 
     #[test]
     fn decimation_config_6000k_three_stages() {
-        // 6 MSPS requires three stages: 5x -> 5x -> 10x.
-        // A single 25x first stage (the old [25, 10] factoring) creates
-        // filters with normalized cutoffs too narrow for CQPSK phase recovery.
+        // 6 MSPS = 250x total: 10x -> 5x -> 5x.
+        // Largest factor first minimizes computation at the highest rate.
         let config = DecimationConfig::compute(6_000_000).expect("6M should be valid");
         assert_eq!(config.stages.len(), 3);
         assert_eq!(config.total_decimation(), 250);
-        assert_eq!(config.stages[0].decimation_factor, 5);
+        assert_eq!(config.stages[0].decimation_factor, 10);
         assert_eq!(config.stages[1].decimation_factor, 5);
-        assert_eq!(config.stages[2].decimation_factor, 10);
+        assert_eq!(config.stages[2].decimation_factor, 5);
         // All stages use the same channel cutoff.
         for stage in &config.stages {
             assert!((stage.cutoff_hz - CHANNEL_CUTOFF_HZ).abs() < 0.01);
         }
         assert!((config.stages[0].input_rate - 6_000_000.0).abs() < 1.0);
-        assert!((config.stages[1].input_rate - 1_200_000.0).abs() < 1.0);
-        assert!((config.stages[2].input_rate - 240_000.0).abs() < 1.0);
+        assert!((config.stages[1].input_rate - 600_000.0).abs() < 1.0);
+        assert!((config.stages[2].input_rate - 120_000.0).abs() < 1.0);
     }
 
     #[test]
@@ -618,18 +618,27 @@ mod tests {
 
     #[test]
     fn decimation_config_9000k_four_stages() {
-        // 9 MSPS = 375x total: 3x -> 5x -> 5x -> 5x.
+        // 9 MSPS = 375x total: 5x -> 5x -> 5x -> 3x.
         let config = DecimationConfig::compute(9_000_000).expect("9M should be valid");
         assert_eq!(config.stages.len(), 4);
         assert_eq!(config.total_decimation(), 375);
-        // All factors should be <= 10.
-        for stage in &config.stages {
-            assert!(
-                stage.decimation_factor <= 10,
-                "stage factor {} exceeds 10",
-                stage.decimation_factor
-            );
-        }
+        assert_eq!(config.stages[0].decimation_factor, 5);
+        assert_eq!(config.stages[1].decimation_factor, 5);
+        assert_eq!(config.stages[2].decimation_factor, 5);
+        assert_eq!(config.stages[3].decimation_factor, 3);
+    }
+
+    #[test]
+    fn decimation_config_3600k_largest_factor_first() {
+        // 3.6 MSPS = 150x total: 10x -> 5x -> 3x.
+        // Putting 10x first at 3.6 MS/s gives 303 taps / 10 = 30 MACs/sample.
+        // The old order [3, 5, 10] gave 303 taps / 3 = 101 MACs/sample (3.3x worse).
+        let config = DecimationConfig::compute(3_600_000).expect("3.6M should be valid");
+        assert_eq!(config.stages.len(), 3);
+        assert_eq!(config.total_decimation(), 150);
+        assert_eq!(config.stages[0].decimation_factor, 10);
+        assert_eq!(config.stages[1].decimation_factor, 5);
+        assert_eq!(config.stages[2].decimation_factor, 3);
     }
 
     #[test]
