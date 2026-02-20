@@ -1,10 +1,11 @@
-//! Network Identifier (NID) decoder.
+//! Network Identifier (NID) decoder with BCH error correction.
 //!
 //! Decodes the 64-bit NID word that follows every frame sync pattern.
-//! Extracts the Network Access Code (NAC) and Data Unit Identifier
-//! (DUID) using direct bit extraction (MVP approach without full
-//! BCH error correction).
+//! The NID contains a BCH(63,16,23) codeword (bits 63-1) and an
+//! overall parity bit (bit 0). The BCH code protects the 12-bit NAC
+//! and 4-bit DUID, correcting up to 11 bit errors.
 
+use crate::p25::bch;
 use crate::p25::consts::NID_DIBITS;
 use crate::p25::error::P25Error;
 use crate::p25::types::{Dibit, Nac};
@@ -91,11 +92,12 @@ pub struct NetworkId {
     pub parity_ok: bool,
 }
 
-/// Decode a NID from 32 data dibits.
+/// Decode a NID from 32 data dibits with BCH error correction.
 ///
-/// Extracts NAC (bits 63-52), DUID (bits 51-48), and checks the
-/// overall parity bit (bit 0). Uses direct extraction without BCH
-/// error correction.
+/// Applies BCH(63,16,23) error correction to the 63-bit codeword
+/// (bits 63-1), then extracts NAC and DUID from the corrected data.
+/// Can correct up to 11 bit errors in the codeword. Falls back to
+/// uncorrected extraction if BCH fails (more than 11 errors).
 pub fn decode_nid(dibits: &[Dibit]) -> Result<NetworkId, P25Error> {
     if dibits.len() != NID_DIBITS {
         return Err(P25Error::NidDecode {
@@ -105,19 +107,54 @@ pub fn decode_nid(dibits: &[Dibit]) -> Result<NetworkId, P25Error> {
 
     let word = dibits_to_u64(dibits);
 
-    let nac_bits = ((word >> 52) & 0x0FFF) as u16;
-    let duid_bits = ((word >> 48) & 0x0F) as u8;
+    // Separate the 63-bit BCH codeword (bits 63-1) from the parity bit (bit 0).
+    let bch_word = word >> 1;
 
-    // Check overall parity: XOR of all 64 bits should be 0.
-    // The parity bit at position 0 is included in count_ones,
-    // so even popcount means parity is correct.
-    let parity_ok = word.count_ones().is_multiple_of(2);
+    if let Some(result) = bch::decode(bch_word) {
+        // BCH correction succeeded — extract data from corrected codeword.
+        let data = bch::extract_data(result.corrected);
+        let nac_bits = (data >> 4) & 0x0FFF;
+        let duid_bits = (data & 0x0F) as u8;
 
-    Ok(NetworkId {
-        access_code: Nac::new(nac_bits),
-        data_unit: DataUnit::from_bits(duid_bits),
-        parity_ok,
-    })
+        if result.errors_corrected > 0 {
+            tracing::debug!(
+                errors_corrected = result.errors_corrected,
+                "BCH corrected NID bit errors"
+            );
+        }
+
+        // Check overall parity against the corrected codeword.
+        let corrected_full = (result.corrected << 1) | (word & 1);
+        let parity_ok = corrected_full.count_ones().is_multiple_of(2);
+
+        // If BCH succeeded but parity fails, the parity bit itself
+        // is in error. The BCH-protected data is still trustworthy.
+        if !parity_ok {
+            tracing::trace!("parity bit error after BCH correction (data still valid)");
+        }
+
+        Ok(NetworkId {
+            access_code: Nac::new(nac_bits),
+            data_unit: DataUnit::from_bits(duid_bits),
+            parity_ok: true, // BCH success is the integrity check.
+        })
+    } else {
+        // BCH failed — fall back to uncorrected extraction.
+        let nac_bits = ((word >> 52) & 0x0FFF) as u16;
+        let duid_bits = ((word >> 48) & 0x0F) as u8;
+
+        tracing::trace!(
+            nac = format_args!("0x{nac_bits:03X}"),
+            duid = duid_bits,
+            "BCH correction failed, NID uncorrectable"
+        );
+
+        Ok(NetworkId {
+            access_code: Nac::new(nac_bits),
+            data_unit: DataUnit::from_bits(duid_bits),
+            parity_ok: false,
+        })
+    }
 }
 
 /// Convert 32 dibits to a 64-bit word (MSB first).
@@ -143,17 +180,17 @@ mod tests {
             .collect()
     }
 
-    /// Build a NID word with given NAC and DUID, setting correct parity.
+    /// Build a NID word with given NAC and DUID, properly BCH-encoded.
     fn make_nid_word(nac: u16, duid: u8) -> u64 {
-        let mut word: u64 = 0;
-        word |= (u64::from(nac) & 0x0FFF) << 52;
-        word |= (u64::from(duid) & 0x0F) << 48;
-        // BCH parity bits (47..1) left as zero for MVP.
-        // Set parity bit (bit 0) so total popcount is even.
-        if word.count_ones() % 2 != 0 {
-            word |= 1;
+        let data = ((nac & 0x0FFF) << 4) | u16::from(duid & 0x0F);
+        let bch_word = crate::p25::bch::encode(data);
+        let shifted = bch_word << 1;
+        // Set overall parity bit so the 64-bit word has even popcount.
+        if shifted.count_ones() % 2 != 0 {
+            shifted | 1
+        } else {
+            shifted
         }
-        word
     }
 
     #[test]
@@ -205,16 +242,32 @@ mod tests {
     }
 
     #[test]
-    fn parity_check_detects_error() {
+    fn bch_corrects_single_bit_error() {
         let word = make_nid_word(0x293, 0x7);
         let mut dibits = u64_to_dibits(word);
 
-        // Flip one bit to break parity.
+        // Flip one bit — BCH should correct it.
         let flipped = dibits[15].bits() ^ 0x01;
         dibits[15] = Dibit::new(flipped);
 
         let nid = decode_nid(&dibits).unwrap();
-        assert!(!nid.parity_ok);
+        assert!(nid.parity_ok, "BCH should correct single-bit error");
+        assert_eq!(nid.access_code, Nac::new(0x293));
+        assert!(nid.data_unit.is_trunking_signaling());
+    }
+
+    #[test]
+    fn bch_rejects_uncorrectable_errors() {
+        let word = make_nid_word(0x293, 0x7);
+        let mut dibits = u64_to_dibits(word);
+
+        // Flip 12 bits (exceeds BCH correction capability of 11).
+        for i in 16..22 {
+            dibits[i] = Dibit::new(dibits[i].bits() ^ 0x03);
+        }
+
+        let nid = decode_nid(&dibits).unwrap();
+        assert!(!nid.parity_ok, "12 errors should exceed BCH capability");
     }
 
     #[test]

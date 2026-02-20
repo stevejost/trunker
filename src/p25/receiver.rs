@@ -417,15 +417,17 @@ mod tests {
             .collect()
     }
 
-    /// Build a NID word with given NAC and DUID, setting correct parity.
+    /// Build a NID word with given NAC and DUID, properly BCH-encoded.
     fn make_nid_word(nac: u16, duid: u8) -> u64 {
-        let mut word: u64 = 0;
-        word |= (u64::from(nac) & 0x0FFF) << 52;
-        word |= (u64::from(duid) & 0x0F) << 48;
-        if word.count_ones() % 2 != 0 {
-            word |= 1;
+        let data = ((nac & 0x0FFF) << 4) | u16::from(duid & 0x0F);
+        let bch_word = crate::p25::bch::encode(data);
+        let shifted = bch_word << 1;
+        // Set overall parity bit so the 64-bit word has even popcount.
+        if shifted.count_ones() % 2 != 0 {
+            shifted | 1
+        } else {
+            shifted
         }
-        word
     }
 
     /// Build NID dibits for a TSDU with the given NAC.
@@ -777,13 +779,18 @@ mod tests {
 
     // -- NID integrity policy tests --
 
-    /// Build NID dibits with broken parity (flip one bit).
+    /// Build NID dibits with uncorrectable errors (12 bit flips in parity area).
+    ///
+    /// Flips both bits of dibits 16-21, producing 12 errors in the BCH
+    /// codeword's parity area. This exceeds BCH(63,16,23)'s correction
+    /// capability of 11 bits. Data bits (NAC/DUID in dibits 0-7) are
+    /// preserved so fallback extraction still returns the correct values.
     fn make_bad_parity_nid_dibits(nac: u16, duid: u8) -> Vec<Dibit> {
         let word = make_nid_word(nac, duid);
         let mut dibits = u64_to_dibits(word);
-        // Flip one bit to break parity.
-        let flipped = dibits[15].bits() ^ 0x01;
-        dibits[15] = Dibit::new(flipped);
+        for i in 16..22 {
+            dibits[i] = Dibit::new(dibits[i].bits() ^ 0x03);
+        }
         dibits
     }
 

@@ -1,5 +1,6 @@
 //! P25 protocol decoder types and parsers.
 
+pub mod bch;
 pub mod coding;
 pub mod consts;
 pub mod crc;

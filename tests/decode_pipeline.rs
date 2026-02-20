@@ -72,15 +72,16 @@ fn u64_to_dibits(word: u64) -> Vec<Dibit> {
         .collect()
 }
 
-/// Build a NID word with given NAC and DUID, setting correct parity.
+/// Build a NID word with given NAC and DUID, properly BCH-encoded.
 fn make_nid_word(nac: u16, duid: u8) -> u64 {
-    let mut word: u64 = 0;
-    word |= (u64::from(nac) & 0x0FFF) << 52;
-    word |= (u64::from(duid) & 0x0F) << 48;
-    if word.count_ones() % 2 != 0 {
-        word |= 1;
+    let data = ((nac & 0x0FFF) << 4) | u16::from(duid & 0x0F);
+    let bch_word = trunker::p25::bch::encode(data);
+    let shifted = bch_word << 1;
+    if shifted.count_ones() % 2 != 0 {
+        shifted | 1
+    } else {
+        shifted
     }
-    word
 }
 
 /// Interleave coded dibits for transmission order.
