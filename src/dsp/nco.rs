@@ -35,6 +35,7 @@ impl Nco {
     }
 
     /// Frequency-shift one complex sample and advance the phase.
+    #[inline]
     pub fn shift(&mut self, sample: Complex<f32>) -> Complex<f32> {
         let (sin, cos) = self.phase.sin_cos();
         let rotator = Complex::new(cos as f32, sin as f32);

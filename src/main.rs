@@ -448,7 +448,7 @@ fn setup_signal_handler() -> Result<Arc<AtomicBool>> {
     let running = Arc::new(AtomicBool::new(true));
     let running_clone = running.clone();
     ctrlc::set_handler(move || {
-        running_clone.store(false, Ordering::SeqCst);
+        running_clone.store(false, Ordering::Relaxed);
     })?;
     Ok(running)
 }
@@ -574,7 +574,7 @@ fn decode_control_channel(
     };
 
     for iq_sample in source {
-        if !running.load(Ordering::SeqCst) {
+        if !running.load(Ordering::Relaxed) {
             tracing::info!("interrupted by signal");
             break;
         }
@@ -656,7 +656,7 @@ fn decode_trunked(
     let mut voice_events = Vec::new();
 
     for iq_sample in source {
-        if !running.load(Ordering::SeqCst) {
+        if !running.load(Ordering::Relaxed) {
             tracing::info!("interrupted by signal");
             break;
         }

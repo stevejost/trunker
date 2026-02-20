@@ -55,6 +55,7 @@ impl DecimatingFilter {
 
     /// Process one input sample, returning a filtered output if this
     /// sample lands on a decimation boundary.
+    #[inline]
     pub fn process(&mut self, sample: Complex<f32>) -> Option<Complex<f32>> {
         self.delay_line[self.delay_index] = sample;
         self.delay_index = (self.delay_index + 1) & self.delay_mask;
@@ -69,6 +70,7 @@ impl DecimatingFilter {
     }
 
     /// Compute the FIR convolution over the delay line.
+    #[inline]
     fn convolve(&self) -> Complex<f32> {
         let mask = self.delay_mask;
         let mut sum = Complex::new(0.0, 0.0);

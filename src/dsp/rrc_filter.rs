@@ -40,6 +40,7 @@ impl RrcFilter {
     }
 
     /// Process one baseband sample through the matched filter.
+    #[inline]
     pub fn process(&mut self, sample: f32) -> f32 {
         self.delay_line[self.delay_index] = sample;
         self.delay_index = (self.delay_index + 1) % self.delay_line.len();
@@ -47,6 +48,7 @@ impl RrcFilter {
     }
 
     /// Compute the FIR convolution.
+    #[inline]
     fn convolve(&self) -> f32 {
         let len = self.coefficients.len();
         let mut sum = 0.0_f32;
@@ -129,6 +131,7 @@ impl ComplexRrcFilter {
     }
 
     /// Process one complex sample through the matched filter.
+    #[inline]
     pub fn process(&mut self, sample: Complex<f32>) -> Complex<f32> {
         Complex::new(
             self.filter_i.process(sample.re),

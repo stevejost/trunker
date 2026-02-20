@@ -60,6 +60,7 @@ impl Agc {
     }
 
     /// Process one complex sample, returning the gain-normalized output.
+    #[inline]
     pub fn process(&mut self, sample: Complex<f32>) -> Complex<f32> {
         let power = sample.norm_sqr();
         self.power_estimate = self.alpha * power + (1.0 - self.alpha) * self.power_estimate;

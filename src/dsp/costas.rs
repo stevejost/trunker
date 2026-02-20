@@ -61,6 +61,7 @@ impl CostasLoop {
     ///
     /// Returns the phase-corrected sample. The internal NCO tracks
     /// residual carrier offset so the output constellation is aligned.
+    #[inline]
     pub fn process(&mut self, sample: Complex<f32>) -> Complex<f32> {
         let corrected = sample * Complex::from_polar(1.0, -self.phase);
         let error = Self::phase_error(corrected);
