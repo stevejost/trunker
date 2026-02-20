@@ -54,6 +54,12 @@ struct VoiceChannel {
     decoder: Option<ImbeDecoder>,
     /// Sample counter at last grant update (for timeout).
     last_grant_sample: u64,
+    /// Whether the Costas loop has acquired carrier lock.
+    ///
+    /// Set to `true` after the first NID with valid parity is decoded.
+    /// Audio output is suppressed until acquisition to avoid digital
+    /// noise artifacts from corrupted IMBE frames.
+    carrier_acquired: bool,
 }
 
 /// Configuration for the channel manager.
@@ -132,11 +138,7 @@ impl ChannelManager {
     ///
     /// If the grant frequency is within the capture bandwidth, a voice
     /// channel pipeline is created (or an existing one is refreshed).
-    pub fn handle_grant(
-        &mut self,
-        tsbk: &Tsbk,
-        ident_table: &IdentTable,
-    ) {
+    pub fn handle_grant(&mut self, tsbk: &Tsbk, ident_table: &IdentTable) {
         match &tsbk.payload {
             TsbkPayload::GroupVoiceChannelGrant {
                 channel,
@@ -182,23 +184,39 @@ impl ChannelManager {
     ///
     /// Returns events from any voice channels that produced decoded data.
     /// Also expires timed-out channels.
-    pub fn process_sample(
-        &mut self,
-        sample: Complex<f32>,
-    ) -> Vec<VoiceChannelEvent> {
+    pub fn process_sample(&mut self, sample: Complex<f32>) -> Vec<VoiceChannelEvent> {
         self.sample_count += 1;
         let mut events = Vec::new();
 
         for channel in self.active_channels.values_mut() {
             let shifted = channel.nco.shift(sample);
             if let Some(event) = channel.pipeline.process_sample(shifted) {
-                let audio = if let (Some(decoder), ReceiverEvent::VoiceFrame(vf)) =
-                    (channel.decoder.as_mut(), &event)
+                // Mark carrier as acquired on first valid NID decode.
+                if let ReceiverEvent::Nid(nid) = &event
+                    && nid.parity_ok
+                    && !channel.carrier_acquired
                 {
-                    let received = ReceivedFrame::from(vf);
-                    let mut buffer: AudioBuffer = [0.0; SAMPLES_PER_FRAME];
-                    decoder.decode(received, &mut buffer);
-                    Some(buffer.to_vec())
+                    channel.carrier_acquired = true;
+                    tracing::debug!(
+                        frequency = %channel.frequency,
+                        "carrier acquired, audio output enabled"
+                    );
+                }
+
+                // Suppress audio until carrier is acquired to avoid
+                // digital noise from corrupted IMBE frames during
+                // Costas loop convergence.
+                let audio = if channel.carrier_acquired {
+                    if let (Some(decoder), ReceiverEvent::VoiceFrame(vf)) =
+                        (channel.decoder.as_mut(), &event)
+                    {
+                        let received = ReceivedFrame::from(vf);
+                        let mut buffer: AudioBuffer = [0.0; SAMPLES_PER_FRAME];
+                        decoder.decode(received, &mut buffer);
+                        Some(buffer.to_vec())
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 };
@@ -243,12 +261,7 @@ impl ChannelManager {
     }
 
     /// Activate or refresh a voice channel at the given frequency.
-    fn activate_channel(
-        &mut self,
-        frequency: Frequency,
-        talkgroup: TalkgroupId,
-        source: SourceId,
-    ) {
+    fn activate_channel(&mut self, frequency: Frequency, talkgroup: TalkgroupId, source: SourceId) {
         if !self.is_in_band(frequency.hz()) {
             tracing::debug!(
                 frequency = %frequency,
@@ -316,15 +329,19 @@ impl ChannelManager {
             None
         };
 
-        self.active_channels.insert(frequency, VoiceChannel {
+        self.active_channels.insert(
             frequency,
-            talkgroup,
-            source,
-            nco,
-            pipeline,
-            decoder,
-            last_grant_sample: self.sample_count,
-        });
+            VoiceChannel {
+                frequency,
+                talkgroup,
+                source,
+                nco,
+                pipeline,
+                decoder,
+                last_grant_sample: self.sample_count,
+                carrier_acquired: false,
+            },
+        );
     }
 
     /// Check whether a frequency falls within the usable capture bandwidth.
@@ -676,6 +693,21 @@ mod tests {
         assert!(
             (freq - seed_freq).abs() < 1e-6,
             "seeded frequency should be {seed_freq}, got {freq}"
+        );
+    }
+
+    #[test]
+    fn new_channel_has_carrier_not_acquired() {
+        let mut manager = ChannelManager::new(make_config());
+        let ident_table = make_ident_table();
+
+        let grant = make_grant_tsbk(0x6009, 100, 12345);
+        manager.handle_grant(&grant, &ident_table);
+
+        let channel = manager.active_channels.values().next().unwrap();
+        assert!(
+            !channel.carrier_acquired,
+            "new channel should not have carrier acquired"
         );
     }
 }
