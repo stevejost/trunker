@@ -653,6 +653,7 @@ fn decode_trunked(
     });
 
     let mut recorder = output_dir.map(CallRecorder::new);
+    let mut voice_events = Vec::new();
 
     for iq_sample in source {
         if !running.load(Ordering::SeqCst) {
@@ -682,13 +683,15 @@ fn decode_trunked(
         }
 
         // Feed to all active voice channel pipelines.
-        for voice_event in channel_manager.process_sample(iq_sample) {
+        voice_events.clear();
+        channel_manager.process_sample(iq_sample, &mut voice_events);
+        for voice_event in &voice_events {
             if let Some(recorder) = recorder.as_mut()
-                && let Some(completed) = recorder.process_event(&voice_event)
+                && let Some(completed) = recorder.process_event(voice_event)
             {
                 log_completed_recording(&completed);
             }
-            emit_voice_event(&voice_event);
+            emit_voice_event(voice_event);
         }
     }
 

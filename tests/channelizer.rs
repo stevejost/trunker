@@ -145,8 +145,9 @@ fn channel_manager_tracks_multiple_grants() {
 
     // Feed some samples and verify no crashes.
     let silence = Complex::new(0.0, 0.0);
+    let mut events = Vec::new();
     for _ in 0..1000 {
-        let _ = manager.process_sample(silence);
+        manager.process_sample(silence, &mut events);
     }
 
     assert_eq!(manager.active_channel_count(), 2);
@@ -204,8 +205,9 @@ fn channel_manager_timeout_lifecycle() {
 
     // Run 15k samples (not enough to timeout).
     let silence = Complex::new(0.0, 0.0);
+    let mut events = Vec::new();
     for _ in 0..15_000 {
-        let _ = manager.process_sample(silence);
+        manager.process_sample(silence, &mut events);
     }
 
     // Refresh only channel 0x6009.
@@ -213,7 +215,7 @@ fn channel_manager_timeout_lifecycle() {
 
     // Run another 15k samples (total 30k > 24k timeout).
     for _ in 0..15_000 {
-        let _ = manager.process_sample(silence);
+        manager.process_sample(silence, &mut events);
     }
 
     // Only the refreshed channel should survive.

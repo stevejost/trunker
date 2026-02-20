@@ -182,11 +182,12 @@ impl ChannelManager {
 
     /// Feed one wideband IQ sample to all active voice channels.
     ///
-    /// Returns events from any voice channels that produced decoded data.
+    /// Appends events from any voice channels that produced decoded data
+    /// into the caller-provided `events` buffer. The caller should clear
+    /// the buffer before each call (or between processing iterations).
     /// Also expires timed-out channels.
-    pub fn process_sample(&mut self, sample: Complex<f32>) -> Vec<VoiceChannelEvent> {
+    pub fn process_sample(&mut self, sample: Complex<f32>, events: &mut Vec<VoiceChannelEvent>) {
         self.sample_count += 1;
-        let mut events = Vec::new();
 
         for channel in self.active_channels.values_mut() {
             let shifted = channel.nco.shift(sample);
@@ -237,8 +238,6 @@ impl ChannelManager {
         if self.sample_count.is_multiple_of(10_000) {
             self.expire_channels();
         }
-
-        events
     }
 
     /// Return the number of currently active voice channels.
@@ -515,9 +514,10 @@ mod tests {
     fn process_sample_increments_counter() {
         let mut manager = ChannelManager::new(make_config());
         let silence = Complex::new(0.0, 0.0);
+        let mut events = Vec::new();
 
         for _ in 0..100 {
-            manager.process_sample(silence);
+            manager.process_sample(silence, &mut events);
         }
 
         assert_eq!(manager.sample_count(), 100);
@@ -537,8 +537,9 @@ mod tests {
 
         // Process enough samples to trigger timeout + expiry check.
         let silence = Complex::new(0.0, 0.0);
+        let mut events = Vec::new();
         for _ in 0..30_000 {
-            manager.process_sample(silence);
+            manager.process_sample(silence, &mut events);
         }
 
         assert_eq!(
@@ -559,9 +560,10 @@ mod tests {
         manager.handle_grant(&grant, &ident_table);
 
         let silence = Complex::new(0.0, 0.0);
+        let mut events = Vec::new();
         // Process 15000 samples (not enough to timeout).
         for _ in 0..15_000 {
-            manager.process_sample(silence);
+            manager.process_sample(silence, &mut events);
         }
 
         // Refresh the grant.
@@ -570,7 +572,7 @@ mod tests {
         // Process another 15000 samples. Without refresh, total would be
         // 30000 > 24000 timeout. With refresh, only 15000 since last grant.
         for _ in 0..15_000 {
-            manager.process_sample(silence);
+            manager.process_sample(silence, &mut events);
         }
 
         assert_eq!(
@@ -601,9 +603,12 @@ mod tests {
         manager.handle_grant(&grant, &ident_table);
 
         let silence = Complex::new(0.0, 0.0);
+        let mut events = Vec::new();
         let mut total_events = 0;
         for _ in 0..10_000 {
-            total_events += manager.process_sample(silence).len();
+            events.clear();
+            manager.process_sample(silence, &mut events);
+            total_events += events.len();
         }
 
         assert_eq!(total_events, 0, "silence should not produce voice events");
