@@ -1,8 +1,8 @@
 //! Per-call audio recording tied to voice call lifecycle.
 //!
-//! Combines [`CallTracker`] with [`WavWriter`] to automatically record
-//! each voice call to a separate WAV file. Files are placed in the
-//! output directory following the `{date}/{talkgroup}_{timestamp}.wav`
+//! Combines [`CallTracker`] with [`AudioWriter`] to automatically record
+//! each voice call to a separate audio file. Files are placed in the
+//! output directory following the `{date}/{talkgroup}_{timestamp}.{ext}`
 //! convention from [`call_audio`].
 
 use std::collections::HashMap;
@@ -12,7 +12,7 @@ use std::time::SystemTime;
 use crate::call_tracker::{Call, CallTracker, EndReason};
 use crate::channel_manager::VoiceChannelEvent;
 use crate::output::call_audio;
-use crate::output::wav::WavWriter;
+use crate::output::call_writer::{AudioFormat, AudioWriter};
 use crate::p25::types::{Frequency, SourceId, TalkgroupId};
 
 /// Metadata emitted when a call recording completes.
@@ -28,32 +28,35 @@ pub struct CompletedRecording {
     pub frame_count: u32,
     /// Why the call ended.
     pub end_reason: EndReason,
-    /// Path to the recorded WAV file, if audio was captured.
+    /// Path to the recorded audio file, if audio was captured.
     pub audio_file: Option<PathBuf>,
 }
 
-/// Records voice calls to per-call WAV files.
+/// Records voice calls to per-call audio files.
 ///
-/// Wraps a [`CallTracker`] and manages one [`WavWriter`] per active
+/// Wraps a [`CallTracker`] and manages one [`AudioWriter`] per active
 /// call. Audio samples from [`VoiceChannelEvent`]s are written to
-/// the appropriate WAV file. When a call ends, the WAV header is
+/// the appropriate audio file. When a call ends, the file is
 /// finalized and a [`CompletedRecording`] is returned.
 pub struct CallRecorder {
     tracker: CallTracker,
-    /// Output directory root for WAV files.
+    /// Output directory root for audio files.
     output_dir: PathBuf,
-    /// Active WAV writers keyed by frequency.
-    writers: HashMap<Frequency, WavWriter>,
-    /// Paths of active WAV files keyed by frequency.
+    /// Audio encoding format (WAV or Opus).
+    audio_format: AudioFormat,
+    /// Active audio writers keyed by frequency.
+    writers: HashMap<Frequency, AudioWriter>,
+    /// Paths of active audio files keyed by frequency.
     paths: HashMap<Frequency, PathBuf>,
 }
 
 impl CallRecorder {
     /// Create a new call recorder writing to the given output directory.
-    pub fn new(output_dir: &Path) -> Self {
+    pub fn new(output_dir: &Path, audio_format: AudioFormat) -> Self {
         Self {
             tracker: CallTracker::new(),
             output_dir: output_dir.to_path_buf(),
+            audio_format,
             writers: HashMap::new(),
             paths: HashMap::new(),
         }
@@ -61,7 +64,7 @@ impl CallRecorder {
 
     /// Start recording a new call.
     ///
-    /// Prepares a WAV file path but defers file creation until the first
+    /// Prepares an audio file path but defers file creation until the first
     /// audio data arrives via [`process_event`]. If a recording already
     /// exists at this frequency, it is finalized and returned as a
     /// completed recording.
@@ -71,7 +74,7 @@ impl CallRecorder {
         talkgroup: TalkgroupId,
         source: SourceId,
     ) -> Option<CompletedRecording> {
-        // Finalize any existing WAV writer at this frequency.
+        // Finalize any existing writer at this frequency.
         let audio_file = if self.writers.contains_key(&frequency) {
             self.finalize_writer(frequency)
         } else {
@@ -98,7 +101,8 @@ impl CallRecorder {
 
         // Store the intended path; the file is created lazily on first audio.
         let timestamp = SystemTime::now();
-        match call_audio::call_audio_path(&self.output_dir, talkgroup, timestamp) {
+        let extension = self.audio_format.extension();
+        match call_audio::call_audio_path(&self.output_dir, talkgroup, timestamp, extension) {
             Ok(path) => {
                 self.paths.insert(frequency, path);
             }
@@ -116,23 +120,24 @@ impl CallRecorder {
 
     /// Process a voice channel event, writing audio and tracking state.
     ///
-    /// The WAV file is created lazily on the first event that carries
-    /// audio data, avoiding empty 44-byte header-only files for calls
-    /// that are terminated before any voice frames arrive.
+    /// The audio file is created lazily on the first event that carries
+    /// audio data, avoiding empty files for calls that are terminated
+    /// before any voice frames arrive.
     ///
     /// Returns `Some(recording)` when a call ends.
     pub fn process_event(&mut self, event: &VoiceChannelEvent) -> Option<CompletedRecording> {
         // Write audio samples if available.
         if let Some(audio) = &event.audio {
-            // Lazily create the WAV writer on first audio.
+            // Lazily create the audio writer on first audio.
             if !self.writers.contains_key(&event.frequency)
                 && let Some(path) = self.paths.get(&event.frequency)
             {
-                match WavWriter::create(path) {
+                match AudioWriter::create(self.audio_format, path) {
                     Ok(writer) => {
                         tracing::info!(
                             frequency = %event.frequency,
                             path = %path.display(),
+                            format = ?self.audio_format,
                             "recording started"
                         );
                         self.writers.insert(event.frequency, writer);
@@ -141,7 +146,7 @@ impl CallRecorder {
                         tracing::warn!(
                             path = %path.display(),
                             error = %e,
-                            "failed to create WAV file"
+                            "failed to create audio file"
                         );
                     }
                 }
@@ -209,9 +214,9 @@ impl CallRecorder {
         self.writers.contains_key(frequency)
     }
 
-    /// Finalize a WAV writer and return the file path.
+    /// Finalize an audio writer and return the file path.
     ///
-    /// Returns `None` if no audio was ever written (no WAV file was created).
+    /// Returns `None` if no audio was ever written (no file was created).
     fn finalize_writer(&mut self, frequency: Frequency) -> Option<PathBuf> {
         let path = self.paths.remove(&frequency);
         if let Some(writer) = self.writers.remove(&frequency) {
@@ -219,12 +224,12 @@ impl CallRecorder {
                 tracing::warn!(
                     frequency = %frequency,
                     error = %e,
-                    "failed to finalize WAV file"
+                    "failed to finalize audio file"
                 );
             }
             path
         } else {
-            // No writer was created — no audio was received. No file exists.
+            // No writer was created -- no audio was received. No file exists.
             None
         }
     }
@@ -299,21 +304,24 @@ mod tests {
     #[test]
     fn new_recorder_has_no_active_recordings() {
         let dir = tempfile::tempdir().unwrap();
-        let recorder = CallRecorder::new(dir.path());
+        let recorder = CallRecorder::new(dir.path(), AudioFormat::Wav);
         assert_eq!(recorder.active_recording_count(), 0);
     }
 
     #[test]
     fn start_call_defers_wav_creation() {
         let dir = tempfile::tempdir().unwrap();
-        let mut recorder = CallRecorder::new(dir.path());
+        let mut recorder = CallRecorder::new(dir.path(), AudioFormat::Wav);
 
         recorder.start_call(test_frequency(), test_talkgroup(), test_source());
 
         // Path is prepared but file is NOT created until audio arrives.
         assert_eq!(recorder.active_recording_count(), 0);
         let path = recorder.paths.get(&test_frequency()).unwrap();
-        assert!(!path.exists(), "WAV file should not exist until audio arrives");
+        assert!(
+            !path.exists(),
+            "audio file should not exist until audio arrives"
+        );
         assert!(
             path.extension().is_some_and(|ext| ext == "wav"),
             "path should have .wav extension"
@@ -321,9 +329,28 @@ mod tests {
     }
 
     #[test]
+    fn start_call_defers_opus_creation() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut recorder = CallRecorder::new(dir.path(), AudioFormat::Opus);
+
+        recorder.start_call(test_frequency(), test_talkgroup(), test_source());
+
+        assert_eq!(recorder.active_recording_count(), 0);
+        let path = recorder.paths.get(&test_frequency()).unwrap();
+        assert!(
+            !path.exists(),
+            "audio file should not exist until audio arrives"
+        );
+        assert!(
+            path.extension().is_some_and(|ext| ext == "opus"),
+            "path should have .opus extension"
+        );
+    }
+
+    #[test]
     fn voice_event_writes_audio_to_wav() {
         let dir = tempfile::tempdir().unwrap();
-        let mut recorder = CallRecorder::new(dir.path());
+        let mut recorder = CallRecorder::new(dir.path(), AudioFormat::Wav);
         let freq = test_frequency();
 
         recorder.start_call(freq, test_talkgroup(), test_source());
@@ -343,9 +370,30 @@ mod tests {
     }
 
     #[test]
+    fn voice_event_writes_audio_to_opus() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut recorder = CallRecorder::new(dir.path(), AudioFormat::Opus);
+        let freq = test_frequency();
+
+        recorder.start_call(freq, test_talkgroup(), test_source());
+        recorder.process_event(&make_voice_event_with_audio(freq));
+
+        let completed = recorder.timeout_call(freq).unwrap();
+        let path = completed.audio_file.unwrap();
+
+        let data = std::fs::read(&path).unwrap();
+        assert_eq!(&data[0..4], b"OggS", "Opus file should start with OggS");
+        assert!(data.len() > 100, "Opus file with audio should not be tiny");
+        assert!(
+            path.extension().is_some_and(|ext| ext == "opus"),
+            "file should have .opus extension"
+        );
+    }
+
+    #[test]
     fn terminator_ends_recording() {
         let dir = tempfile::tempdir().unwrap();
-        let mut recorder = CallRecorder::new(dir.path());
+        let mut recorder = CallRecorder::new(dir.path(), AudioFormat::Wav);
         let freq = test_frequency();
 
         recorder.start_call(freq, test_talkgroup(), test_source());
@@ -358,15 +406,15 @@ mod tests {
         assert!(recording.audio_file.is_some());
         assert_eq!(recorder.active_recording_count(), 0);
 
-        // WAV file should still exist on disk.
+        // Audio file should still exist on disk.
         let path = recording.audio_file.unwrap();
-        assert!(path.exists(), "finalized WAV should exist");
+        assert!(path.exists(), "finalized audio file should exist");
     }
 
     #[test]
     fn timeout_without_audio_produces_no_file() {
         let dir = tempfile::tempdir().unwrap();
-        let mut recorder = CallRecorder::new(dir.path());
+        let mut recorder = CallRecorder::new(dir.path(), AudioFormat::Wav);
         let freq = test_frequency();
 
         recorder.start_call(freq, test_talkgroup(), test_source());
@@ -384,7 +432,7 @@ mod tests {
     #[test]
     fn finalize_all_closes_open_recordings() {
         let dir = tempfile::tempdir().unwrap();
-        let mut recorder = CallRecorder::new(dir.path());
+        let mut recorder = CallRecorder::new(dir.path(), AudioFormat::Wav);
 
         let freq_a = Frequency::from_hz(851_062_500);
         let freq_b = Frequency::from_hz(851_068_750);
@@ -410,7 +458,7 @@ mod tests {
     #[test]
     fn start_call_returns_displaced_recording() {
         let dir = tempfile::tempdir().unwrap();
-        let mut recorder = CallRecorder::new(dir.path());
+        let mut recorder = CallRecorder::new(dir.path(), AudioFormat::Wav);
         let freq = test_frequency();
 
         // First call: no displacement.
@@ -423,7 +471,7 @@ mod tests {
         // Write some audio so the first call has a file.
         recorder.process_event(&make_voice_event_with_audio(freq));
         let first_path = recorder.paths.get(&freq).unwrap().clone();
-        assert!(first_path.exists(), "first WAV should exist after audio");
+        assert!(first_path.exists(), "first file should exist after audio");
 
         // Starting a new call at the same frequency finalizes the old one.
         let displaced = recorder.start_call(freq, TalkgroupId::new(200), test_source());
@@ -433,15 +481,25 @@ mod tests {
         assert!(recording.audio_file.is_some());
 
         let second_path = recorder.paths.get(&freq).unwrap().clone();
-        assert_eq!(recorder.active_recording_count(), 0, "no audio yet for new call");
-        assert!(first_path.exists(), "first WAV should be finalized on disk");
-        assert!(!second_path.exists(), "second WAV should not exist until audio arrives");
+        assert_eq!(
+            recorder.active_recording_count(),
+            0,
+            "no audio yet for new call"
+        );
+        assert!(
+            first_path.exists(),
+            "first file should be finalized on disk"
+        );
+        assert!(
+            !second_path.exists(),
+            "second file should not exist until audio arrives"
+        );
     }
 
     #[test]
     fn event_without_audio_does_not_create_file() {
         let dir = tempfile::tempdir().unwrap();
-        let mut recorder = CallRecorder::new(dir.path());
+        let mut recorder = CallRecorder::new(dir.path(), AudioFormat::Wav);
         let freq = test_frequency();
 
         recorder.start_call(freq, test_talkgroup(), test_source());
@@ -468,7 +526,7 @@ mod tests {
     #[test]
     fn vocoder_decoded_audio_produces_non_silent_wav() {
         let dir = tempfile::tempdir().unwrap();
-        let mut recorder = CallRecorder::new(dir.path());
+        let mut recorder = CallRecorder::new(dir.path(), AudioFormat::Wav);
         let freq = test_frequency();
 
         recorder.start_call(freq, test_talkgroup(), test_source());
