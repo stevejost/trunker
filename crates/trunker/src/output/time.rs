@@ -34,18 +34,8 @@ pub fn decompose_system_time(time: SystemTime) -> std::io::Result<(i32, u32, u32
 ///
 /// Falls back to the Unix epoch if the timestamp is before it.
 pub fn format_utc_timestamp(time: SystemTime) -> String {
-    let duration = time
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    let total_seconds = duration.as_secs();
-
-    let days = (total_seconds / 86400) as i64;
-    let time_of_day = total_seconds % 86400;
-    let hour = time_of_day / 3600;
-    let minute = (time_of_day % 3600) / 60;
-    let second = time_of_day % 60;
-
-    let (year, month, day) = civil_from_days(days);
+    let (year, month, day, hour, minute, second) =
+        decompose_system_time(time).unwrap_or((1970, 1, 1, 0, 0, 0));
     format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
 }
 
