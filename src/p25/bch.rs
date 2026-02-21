@@ -146,6 +146,9 @@ fn berlekamp_massey(syndromes: &[u8; NUM_SYNDROMES]) -> Option<(usize, LocatorPo
             }
             prev = saved;
             lfsr_len = n + 1 - lfsr_len;
+            if lfsr_len > MAX_ERRORS {
+                return None;
+            }
             prev_discrepancy = discrepancy;
             shift = 1;
         } else {
