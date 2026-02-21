@@ -26,6 +26,13 @@ const AUDIO_SAMPLE_RATE: u32 = 8000;
 /// Number of audio channels (mono).
 const AUDIO_CHANNELS: u32 = 1;
 
+/// Convert an f32 audio sample in [-1.0, 1.0] to i16.
+///
+/// Values outside [-1.0, 1.0] are clamped before conversion.
+fn f32_to_i16(sample: f32) -> i16 {
+    (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
+}
+
 /// State for a single published talkgroup audio track.
 struct TalkgroupTrack {
     /// The LiveKit audio source that receives PCM frames.
@@ -90,10 +97,7 @@ impl AudioPublisher {
         let track = self.get_or_create_track(talkgroup).await?;
 
         // Convert f32 samples to i16 for LiveKit.
-        let pcm_i16: Vec<i16> = samples
-            .iter()
-            .map(|&s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)
-            .collect();
+        let pcm_i16: Vec<i16> = samples.iter().copied().map(f32_to_i16).collect();
 
         let frame = AudioFrame {
             data: pcm_i16.into(),
@@ -150,5 +154,45 @@ impl AudioPublisher {
         }
 
         Ok(self.tracks.get_mut(&talkgroup).unwrap())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn f32_to_i16_zero() {
+        assert_eq!(f32_to_i16(0.0), 0);
+    }
+
+    #[test]
+    fn f32_to_i16_positive_one() {
+        assert_eq!(f32_to_i16(1.0), i16::MAX);
+    }
+
+    #[test]
+    fn f32_to_i16_negative_one() {
+        // -1.0 * 32767 = -32767, not i16::MIN (-32768).
+        assert_eq!(f32_to_i16(-1.0), -i16::MAX);
+    }
+
+    #[test]
+    fn f32_to_i16_clamps_above_one() {
+        assert_eq!(f32_to_i16(1.5), i16::MAX);
+        assert_eq!(f32_to_i16(100.0), i16::MAX);
+    }
+
+    #[test]
+    fn f32_to_i16_clamps_below_negative_one() {
+        assert_eq!(f32_to_i16(-1.5), -i16::MAX);
+        assert_eq!(f32_to_i16(-100.0), -i16::MAX);
+    }
+
+    #[test]
+    fn f32_to_i16_half_amplitude() {
+        let result = f32_to_i16(0.5);
+        // 0.5 * 32767 = 16383.5, truncated to 16383.
+        assert_eq!(result, 16383);
     }
 }
