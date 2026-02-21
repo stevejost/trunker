@@ -22,6 +22,16 @@ use crate::p25::types::{Dibit, Nac};
 /// Target IF rate after all decimation: 24 kHz (5 samples/symbol at 4800 baud).
 const CHANNEL_RATE: u32 = 24_000;
 
+/// Default sync timeout for CC pipelines: 2500 post-decimation samples (~104 ms).
+///
+/// At the 24 kHz channel rate (5 samples per 4800-baud symbol), 2500 samples
+/// equals 500 symbol periods. This is enough time for normal inter-data-unit
+/// gaps but short enough to recover from a stuck PLL within a few hundred ms.
+///
+/// The timeout counts post-decimation samples (not symbols) so that it fires
+/// even when the demodulator is unlocked and stops producing symbol events.
+pub const CC_SYNC_TIMEOUT_SAMPLES: u32 = 24_000;
+
 /// Reference filter parameters for first and final decimation stages.
 ///
 /// This reference produces moderate tap counts that preserve CQPSK phase
@@ -188,17 +198,18 @@ fn compute_taps(input_rate: f32, ref_rate: f32, ref_taps: f32) -> usize {
     }
 }
 
-/// Preferred final-stage factors, ordered by preference.
-/// Larger factors are tried first as the final (lowest-rate) stage
-/// where the filter operates closest to the channel rate and has the
-/// best normalized cutoff ratio.
+/// Preferred factors, ordered by preference (largest first).
 const PREFERRED_FACTORS: &[usize] = &[10, 8, 5, 4, 3, 2];
 
 /// Factor a total decimation into stages where each factor is <= 10.
 ///
-/// Recursively peels off a final-stage factor and factors the remainder.
-/// Prefers larger factors in the final stage for best filter quality
-/// at the lowest sample rate.
+/// Places the largest factors first (earliest stages) where the sample
+/// rate is highest. This minimizes total computation: a large first-stage
+/// factor means the expensive convolution fires less often per input
+/// sample. For example, at 3.6 MS/s with 150x total decimation:
+///
+/// - [3, 5, 10] (old): 303 taps / 3 = 101 MACs/sample → 438M MACs/sec
+/// - [10, 5, 3] (new): 303 taps / 10 = 30 MACs/sample → 117M MACs/sec
 fn factor_into_stages(total: usize) -> Result<Vec<usize>, DecimationError> {
     if total <= MAX_STAGE_FACTOR {
         return Ok(vec![total]);
@@ -207,9 +218,9 @@ fn factor_into_stages(total: usize) -> Result<Vec<usize>, DecimationError> {
     for &f in PREFERRED_FACTORS {
         if total.is_multiple_of(f) {
             let remaining = total / f;
-            if let Ok(mut earlier) = factor_into_stages(remaining) {
-                earlier.push(f);
-                return Ok(earlier);
+            if let Ok(mut later) = factor_into_stages(remaining) {
+                later.insert(0, f);
+                return Ok(later);
             }
         }
     }
@@ -248,6 +259,15 @@ pub struct PipelineConfig {
     pub modulation: Modulation,
     /// NID integrity policy for accepting/rejecting data units.
     pub nid_integrity: NidIntegrityPolicy,
+    /// Post-decimation samples without frame sync before resetting the
+    /// demod for re-acquisition. `None` disables the timeout entirely.
+    ///
+    /// CC pipelines use [`CC_SYNC_TIMEOUT_SAMPLES`] (24000, ~1 s) to
+    /// allow cold-start re-acquisition after PLL divergence. Voice channel pipelines should
+    /// set `None` — they need 250 ms-1 s for initial acquisition, and
+    /// zombie channels are handled by the acquisition timeout in
+    /// [`ChannelManager`].
+    pub sync_timeout_samples: Option<u32>,
 }
 
 /// Per-channel DSP and protocol decode pipeline.
@@ -268,6 +288,12 @@ pub struct ChannelPipeline {
     current_nac: Nac,
     /// Total input samples processed.
     sample_count: u64,
+    /// Post-decimation samples received while not synced. When this
+    /// exceeds the configured timeout, the Costas loop and Gardner TED
+    /// are reset to allow re-acquisition.
+    unsynced_samples: u32,
+    /// Sync timeout threshold in post-decimation samples (`None` = disabled).
+    sync_timeout_samples: Option<u32>,
 }
 
 impl ChannelPipeline {
@@ -318,6 +344,8 @@ impl ChannelPipeline {
             synced: false,
             current_nac: Nac::new(0),
             sample_count: 0,
+            unsynced_samples: 0,
+            sync_timeout_samples: config.sync_timeout_samples,
         })
     }
 
@@ -335,6 +363,17 @@ impl ChannelPipeline {
         }
         let filtered = current;
 
+        // Check sync timeout on every post-decimation sample so it fires
+        // even when the demodulator is unlocked and stops producing symbols.
+        if !self.synced
+            && let Some(timeout) = self.sync_timeout_samples
+        {
+            self.unsynced_samples += 1;
+            if self.unsynced_samples >= timeout {
+                self.reset_tracking();
+            }
+        }
+
         // Demodulate through the selected path.
         let event = match &mut self.demod_path {
             DemodPath::C4fm {
@@ -351,6 +390,7 @@ impl ChannelPipeline {
 
         match event {
             Some(SymbolEvent::SyncDetected) => {
+                self.unsynced_samples = 0;
                 self.handle_sync();
                 None
             }
@@ -380,6 +420,13 @@ impl ChannelPipeline {
         }
     }
 
+    /// Return the Costas loop frequency from a CQPSK pipeline.
+    ///
+    /// Returns `0.0` for C4FM pipelines (no Costas loop).
+    pub fn costas_frequency(&self) -> f32 {
+        self.costas_state().map_or(0.0, |(_, freq)| freq)
+    }
+
     /// Seed the Costas loop with phase and frequency from another
     /// locked pipeline (e.g., the control channel).
     ///
@@ -388,6 +435,52 @@ impl ChannelPipeline {
         if let DemodPath::Cqpsk { demod } = &mut self.demod_path {
             demod.seed_costas(phase, frequency);
         }
+    }
+
+    /// Reset the entire signal path for re-acquisition.
+    ///
+    /// Clears decimation filter delay lines and all demodulator state
+    /// so stale samples don't prevent the Costas loop from converging.
+    fn reset_tracking(&mut self) {
+        // Log diagnostics BEFORE reset so we can see what state the demod was in.
+        match &self.demod_path {
+            DemodPath::Cqpsk { demod } => {
+                let (agc_gain, costas_phase, costas_freq, locked) = demod.diagnostics();
+                tracing::info!(
+                    sample = self.sample_count,
+                    unsynced_samples = self.unsynced_samples,
+                    agc_gain = format_args!("{agc_gain:.2}"),
+                    costas_phase = format_args!("{costas_phase:.4}"),
+                    costas_freq = format_args!("{costas_freq:.6}"),
+                    locked,
+                    "CC sync timeout: resetting demodulator"
+                );
+            }
+            DemodPath::C4fm { .. } => {
+                tracing::info!(
+                    sample = self.sample_count,
+                    unsynced_samples = self.unsynced_samples,
+                    "CC sync timeout: resetting demodulator"
+                );
+            }
+        }
+        for filter in &mut self.filters {
+            filter.reset();
+        }
+        match &mut self.demod_path {
+            DemodPath::Cqpsk { demod } => demod.reset_tracking(),
+            DemodPath::C4fm {
+                demod: _,
+                dc_block,
+                rrc,
+                timing,
+            } => {
+                *dc_block = DcBlocker::default();
+                rrc.reset();
+                *timing = SymbolTiming::new();
+            }
+        }
+        self.unsynced_samples = 0;
     }
 
     /// Reset protocol state when a new frame sync is detected.
@@ -449,6 +542,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::C4fm,
             nid_integrity: NidIntegrityPolicy::default(),
+            sync_timeout_samples: None,
         };
         let pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
         assert_eq!(pipeline.sample_count(), 0);
@@ -461,6 +555,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::Cqpsk,
             nid_integrity: NidIntegrityPolicy::default(),
+            sync_timeout_samples: None,
         };
         let pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
         assert_eq!(pipeline.sample_count(), 0);
@@ -472,6 +567,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::Cqpsk,
             nid_integrity: NidIntegrityPolicy::default(),
+            sync_timeout_samples: None,
         };
         let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
@@ -493,6 +589,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::C4fm,
             nid_integrity: NidIntegrityPolicy::default(),
+            sync_timeout_samples: None,
         };
         let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
@@ -587,22 +684,21 @@ mod tests {
 
     #[test]
     fn decimation_config_6000k_three_stages() {
-        // 6 MSPS requires three stages: 5x -> 5x -> 10x.
-        // A single 25x first stage (the old [25, 10] factoring) creates
-        // filters with normalized cutoffs too narrow for CQPSK phase recovery.
+        // 6 MSPS = 250x total: 10x -> 5x -> 5x.
+        // Largest factor first minimizes computation at the highest rate.
         let config = DecimationConfig::compute(6_000_000).expect("6M should be valid");
         assert_eq!(config.stages.len(), 3);
         assert_eq!(config.total_decimation(), 250);
-        assert_eq!(config.stages[0].decimation_factor, 5);
+        assert_eq!(config.stages[0].decimation_factor, 10);
         assert_eq!(config.stages[1].decimation_factor, 5);
-        assert_eq!(config.stages[2].decimation_factor, 10);
+        assert_eq!(config.stages[2].decimation_factor, 5);
         // All stages use the same channel cutoff.
         for stage in &config.stages {
             assert!((stage.cutoff_hz - CHANNEL_CUTOFF_HZ).abs() < 0.01);
         }
         assert!((config.stages[0].input_rate - 6_000_000.0).abs() < 1.0);
-        assert!((config.stages[1].input_rate - 1_200_000.0).abs() < 1.0);
-        assert!((config.stages[2].input_rate - 240_000.0).abs() < 1.0);
+        assert!((config.stages[1].input_rate - 600_000.0).abs() < 1.0);
+        assert!((config.stages[2].input_rate - 120_000.0).abs() < 1.0);
     }
 
     #[test]
@@ -618,18 +714,27 @@ mod tests {
 
     #[test]
     fn decimation_config_9000k_four_stages() {
-        // 9 MSPS = 375x total: 3x -> 5x -> 5x -> 5x.
+        // 9 MSPS = 375x total: 5x -> 5x -> 5x -> 3x.
         let config = DecimationConfig::compute(9_000_000).expect("9M should be valid");
         assert_eq!(config.stages.len(), 4);
         assert_eq!(config.total_decimation(), 375);
-        // All factors should be <= 10.
-        for stage in &config.stages {
-            assert!(
-                stage.decimation_factor <= 10,
-                "stage factor {} exceeds 10",
-                stage.decimation_factor
-            );
-        }
+        assert_eq!(config.stages[0].decimation_factor, 5);
+        assert_eq!(config.stages[1].decimation_factor, 5);
+        assert_eq!(config.stages[2].decimation_factor, 5);
+        assert_eq!(config.stages[3].decimation_factor, 3);
+    }
+
+    #[test]
+    fn decimation_config_3600k_largest_factor_first() {
+        // 3.6 MSPS = 150x total: 10x -> 5x -> 3x.
+        // Putting 10x first at 3.6 MS/s gives 303 taps / 10 = 30 MACs/sample.
+        // The old order [3, 5, 10] gave 303 taps / 3 = 101 MACs/sample (3.3x worse).
+        let config = DecimationConfig::compute(3_600_000).expect("3.6M should be valid");
+        assert_eq!(config.stages.len(), 3);
+        assert_eq!(config.total_decimation(), 150);
+        assert_eq!(config.stages[0].decimation_factor, 10);
+        assert_eq!(config.stages[1].decimation_factor, 5);
+        assert_eq!(config.stages[2].decimation_factor, 3);
     }
 
     #[test]

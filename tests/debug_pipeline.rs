@@ -472,6 +472,7 @@ fn pipeline_48k_cqpsk_processes_gold_file_without_panic() {
         sample_rate: 48_000,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::Permissive,
+        sync_timeout_samples: None,
     };
     let mut pipeline = ChannelPipeline::new(config).expect("48k should be valid");
 
@@ -511,6 +512,7 @@ fn c4fm_pipeline_handles_cqpsk_gold_file_without_panic() {
         sample_rate: 48_000,
         modulation: Modulation::C4fm,
         nid_integrity: NidIntegrityPolicy::Strict,
+        sync_timeout_samples: None,
     };
     let mut pipeline = ChannelPipeline::new(config).expect("48k should be valid");
 
@@ -541,6 +543,7 @@ fn pipeline_2400k_cqpsk_processes_wideband_u8_without_panic() {
         sample_rate: 2_400_000,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::Permissive,
+        sync_timeout_samples: None,
     };
     let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
@@ -582,6 +585,7 @@ fn strict_nid_produces_fewer_or_equal_events_vs_permissive() {
         sample_rate: 48_000,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::Permissive,
+        sync_timeout_samples: None,
     };
     let mut pipeline_permissive =
         ChannelPipeline::new(config_permissive).expect("48k should be valid");
@@ -598,6 +602,7 @@ fn strict_nid_produces_fewer_or_equal_events_vs_permissive() {
         sample_rate: 48_000,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::Strict,
+        sync_timeout_samples: None,
     };
     let mut pipeline_strict = ChannelPipeline::new(config_strict).expect("48k should be valid");
     let mut strict_count = 0;
@@ -795,6 +800,7 @@ fn decode_cc_with_offset_from_gold_wideband() {
         sample_rate: 2_400_000,
         modulation: Modulation::C4fm,
         nid_integrity: NidIntegrityPolicy::Strict,
+        sync_timeout_samples: None,
     };
     let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 

@@ -51,6 +51,14 @@ impl Agc {
         }
     }
 
+    /// Reset the power estimate to its initial value.
+    ///
+    /// Call this when the signal path is being reset for re-acquisition
+    /// so the AGC starts fresh instead of holding stale gain.
+    pub fn reset(&mut self) {
+        self.power_estimate = self.reference * self.reference;
+    }
+
     /// Current gain factor applied to input samples.
     ///
     /// Computed as `reference / sqrt(power_estimate)`. Higher values
@@ -60,6 +68,7 @@ impl Agc {
     }
 
     /// Process one complex sample, returning the gain-normalized output.
+    #[inline]
     pub fn process(&mut self, sample: Complex<f32>) -> Complex<f32> {
         let power = sample.norm_sqr();
         self.power_estimate = self.alpha * power + (1.0 - self.alpha) * self.power_estimate;

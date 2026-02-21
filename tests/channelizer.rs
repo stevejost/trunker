@@ -133,6 +133,7 @@ fn channel_manager_tracks_multiple_grants() {
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
         decode_audio: false,
+        max_channels: None,
     });
     let ident_table = make_ident_table();
 
@@ -145,8 +146,9 @@ fn channel_manager_tracks_multiple_grants() {
 
     // Feed some samples and verify no crashes.
     let silence = Complex::new(0.0, 0.0);
+    let mut events = Vec::new();
     for _ in 0..1000 {
-        let _ = manager.process_sample(silence);
+        manager.process_sample(silence, &mut events);
     }
 
     assert_eq!(manager.active_channel_count(), 2);
@@ -164,6 +166,7 @@ fn channel_manager_rejects_out_of_band() {
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
         decode_audio: false,
+        max_channels: None,
     });
     let ident_table = make_ident_table();
 
@@ -194,6 +197,7 @@ fn channel_manager_timeout_lifecycle() {
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
         decode_audio: false,
+        max_channels: None,
     });
     let ident_table = make_ident_table();
 
@@ -204,8 +208,9 @@ fn channel_manager_timeout_lifecycle() {
 
     // Run 15k samples (not enough to timeout).
     let silence = Complex::new(0.0, 0.0);
+    let mut events = Vec::new();
     for _ in 0..15_000 {
-        let _ = manager.process_sample(silence);
+        manager.process_sample(silence, &mut events);
     }
 
     // Refresh only channel 0x6009.
@@ -213,7 +218,7 @@ fn channel_manager_timeout_lifecycle() {
 
     // Run another 15k samples (total 30k > 24k timeout).
     for _ in 0..15_000 {
-        let _ = manager.process_sample(silence);
+        manager.process_sample(silence, &mut events);
     }
 
     // Only the refreshed channel should survive.
@@ -236,6 +241,7 @@ fn channel_pipeline_processes_noise_without_events() {
         sample_rate: 2_400_000,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
+        sync_timeout_samples: None,
     };
     let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
@@ -265,6 +271,7 @@ fn both_modulation_types_process_cleanly() {
             sample_rate: 2_400_000,
             modulation,
             nid_integrity: NidIntegrityPolicy::default(),
+            sync_timeout_samples: None,
         };
         let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 

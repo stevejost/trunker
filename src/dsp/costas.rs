@@ -29,6 +29,22 @@ const DEFAULT_BETA: f32 = 0.000253;
 /// offsets within one quadrant; larger errors require re-acquisition.
 const MAX_PHASE: f32 = FRAC_PI_2;
 
+/// Maximum frequency accumulator magnitude (radians/sample).
+///
+/// Prevents unbounded drift from noise or signal disruptions (e.g.,
+/// SDR overflows). 0.01 rad/sample corresponds to ±38 Hz at 24 kHz,
+/// well beyond the loop's ~15 Hz tracking bandwidth (with alpha=0.008,
+/// beta=0.000016). Without this clamp, the frequency accumulator can
+/// grow until the phase is permanently pegged at its clamp limit.
+const MAX_FREQUENCY: f32 = 0.01;
+
+/// Number of consecutive samples at the frequency clamp limit before
+/// the loop resets to allow re-acquisition. When the frequency
+/// accumulator is pinned at ±MAX_FREQUENCY for this many samples,
+/// the loop is stuck ("clamp-walled") and cannot recover without
+/// a reset.
+const CLAMP_WALL_THRESHOLD: u32 = 100;
+
 /// Order-4 Costas loop for QPSK carrier recovery.
 ///
 /// Applies a phase correction to each input sample via an NCO
@@ -44,6 +60,8 @@ pub struct CostasLoop {
     phase: f32,
     /// Frequency accumulator (radians/sample).
     frequency: f32,
+    /// Consecutive samples where frequency was clamped to ±MAX_FREQUENCY.
+    clamp_count: u32,
 }
 
 impl CostasLoop {
@@ -54,6 +72,7 @@ impl CostasLoop {
             beta,
             phase: 0.0,
             frequency: 0.0,
+            clamp_count: 0,
         }
     }
 
@@ -61,6 +80,7 @@ impl CostasLoop {
     ///
     /// Returns the phase-corrected sample. The internal NCO tracks
     /// residual carrier offset so the output constellation is aligned.
+    #[inline]
     pub fn process(&mut self, sample: Complex<f32>) -> Complex<f32> {
         let corrected = sample * Complex::from_polar(1.0, -self.phase);
         let error = Self::phase_error(corrected);
@@ -85,7 +105,8 @@ impl CostasLoop {
     /// ~22 frames to ~2-5 frames.
     pub fn seed(&mut self, phase: f32, frequency: f32) {
         self.phase = phase.clamp(-MAX_PHASE, MAX_PHASE);
-        self.frequency = frequency;
+        self.frequency = frequency.clamp(-MAX_FREQUENCY, MAX_FREQUENCY);
+        self.clamp_count = 0;
     }
 
     /// QPSK phase error detector: `sgn(I)*Q - sgn(Q)*I`.
@@ -99,9 +120,33 @@ impl CostasLoop {
         signum(i) * q - signum(q) * i
     }
 
+    /// Reset phase and frequency to zero for re-acquisition.
+    pub fn reset(&mut self) {
+        self.phase = 0.0;
+        self.frequency = 0.0;
+        self.clamp_count = 0;
+    }
+
     /// Advance the loop filter and NCO by one sample.
     fn advance(&mut self, error: f32) {
         self.frequency += self.beta * error;
+        self.frequency = self.frequency.clamp(-MAX_FREQUENCY, MAX_FREQUENCY);
+
+        // Detect clamp-wall: frequency pinned at the limit means the
+        // loop cannot track the signal and is stuck. Reset to allow
+        // re-acquisition.
+        if self.frequency.abs() >= MAX_FREQUENCY {
+            self.clamp_count += 1;
+            if self.clamp_count >= CLAMP_WALL_THRESHOLD {
+                self.phase = 0.0;
+                self.frequency = 0.0;
+                self.clamp_count = 0;
+                return;
+            }
+        } else {
+            self.clamp_count = 0;
+        }
+
         self.phase += self.frequency + self.alpha * error;
         self.phase = self.phase.clamp(-MAX_PHASE, MAX_PHASE);
     }
@@ -313,6 +358,44 @@ mod tests {
         let mut costas = CostasLoop::default();
         costas.seed(3.0, 0.0); // exceeds MAX_PHASE (pi/2)
         assert!(costas.phase() <= MAX_PHASE + 1e-6);
+    }
+
+    #[test]
+    fn seed_clamps_frequency_to_max() {
+        let mut costas = CostasLoop::default();
+        costas.seed(0.0, 1.0); // far exceeds MAX_FREQUENCY (0.01)
+        assert!(costas.frequency() <= MAX_FREQUENCY + 1e-6);
+        assert!(costas.frequency() >= -MAX_FREQUENCY - 1e-6);
+    }
+
+    #[test]
+    fn clamp_wall_resets_loop() {
+        let mut costas = CostasLoop::new(0.008, 0.000016);
+        // Force frequency to the clamp wall.
+        costas.seed(0.0, MAX_FREQUENCY);
+
+        // Feed samples that drive the error in the same direction,
+        // keeping frequency pinned at the clamp.
+        let bad_sample = Complex::new(0.0, 1.0);
+        for _ in 0..CLAMP_WALL_THRESHOLD + 1 {
+            costas.process(bad_sample);
+        }
+
+        // After exceeding the threshold, the loop should have reset.
+        assert!(
+            costas.frequency().abs() < MAX_FREQUENCY,
+            "frequency should have been reset, got {}",
+            costas.frequency()
+        );
+    }
+
+    #[test]
+    fn reset_clears_state() {
+        let mut costas = CostasLoop::default();
+        costas.seed(0.5, 0.005);
+        costas.reset();
+        assert!((costas.phase()).abs() < 1e-6);
+        assert!((costas.frequency()).abs() < 1e-6);
     }
 
     #[test]

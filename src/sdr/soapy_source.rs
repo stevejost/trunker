@@ -2,9 +2,17 @@
 //!
 //! Wraps a SoapySDR `Device` and `RxStream` to provide an `Iterator`
 //! over `Complex<f32>` samples from real SDR hardware.
+//!
+//! A dedicated reader thread drains the hardware into a bounded channel,
+//! decoupling USB/driver timing from DSP processing. The channel depth
+//! is controlled by `buffer_ms` (default 500 ms), giving the processing
+//! pipeline headroom to absorb jitter without overflowing the driver's
+//! tiny internal ring buffer.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
+use std::thread::{self, JoinHandle};
 
 use num_complex::Complex;
 use soapysdr::{Device, Direction, ErrorCode, RxStream};
@@ -17,29 +25,38 @@ const RX_CHANNEL: usize = 0;
 /// Stream read timeout in microseconds (1 second).
 const READ_TIMEOUT_US: i64 = 1_000_000;
 
+/// Maximum consecutive non-timeout errors before the reader thread gives up.
+const MAX_CONSECUTIVE_ERRORS: u32 = 50;
+
 /// A live IQ sample source backed by a SoapySDR device.
 ///
 /// Opens an SDR device, configures frequency/rate/gain, and yields
-/// `Complex<f32>` samples via the `Iterator` trait. The stream stops
-/// when `running` is set to `false` (e.g. from a Ctrl-C handler).
+/// `Complex<f32>` samples via the `Iterator` trait. A dedicated reader
+/// thread drains the hardware into a bounded channel so that processing
+/// jitter does not cause driver overflows.
+///
+/// The stream stops when `running` is set to `false` (e.g. from a
+/// Ctrl-C handler) or when the reader thread encounters a fatal error.
 pub struct SoapySource {
-    stream: RxStream<Complex<f32>>,
-    buffer: Vec<Complex<f32>>,
+    receiver: Option<Receiver<Vec<Complex<f32>>>>,
+    current_chunk: Vec<Complex<f32>>,
     position: usize,
-    valid_count: usize,
+    reader_thread: Option<JoinHandle<()>>,
     running: Arc<AtomicBool>,
-    first_read: bool,
-    /// Cumulative count of overflow events (each may lose many samples).
-    overflow_count: u64,
+    /// Total chunks successfully read from hardware by the reader thread.
+    chunk_count: Arc<AtomicU64>,
+    /// Total overflows (hardware + channel-full drops) in the reader thread.
+    overflow_count: Arc<AtomicU64>,
 }
 
 impl std::fmt::Debug for SoapySource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SoapySource")
             .field("position", &self.position)
-            .field("valid_count", &self.valid_count)
-            .field("buffer_len", &self.buffer.len())
-            .field("overflow_count", &self.overflow_count)
+            .field("chunk_len", &self.current_chunk.len())
+            .field("thread_alive", &self.reader_thread.as_ref().is_some_and(|h| !h.is_finished()))
+            .field("chunk_count", &self.chunk_count.load(Ordering::Relaxed))
+            .field("overflow_count", &self.overflow_count.load(Ordering::Relaxed))
             .finish()
     }
 }
@@ -47,12 +64,20 @@ impl std::fmt::Debug for SoapySource {
 impl SoapySource {
     /// Open a SoapySDR device and configure it for receiving.
     ///
+    /// Spawns a dedicated reader thread that drains the hardware into a
+    /// bounded channel. The channel depth is `buffer_ms` milliseconds of
+    /// samples, giving the processing pipeline headroom to absorb jitter.
+    ///
     /// # Arguments
     /// * `device_args` -- device filter string (e.g. `"driver=rtlsdr"`)
     /// * `frequency_hz` -- center frequency in hertz
     /// * `sample_rate_hz` -- sample rate in hertz
     /// * `gain` -- manual gain in dB, or `None` for automatic gain control
+    /// * `antenna` -- antenna port name, or `None` for default
+    /// * `settings` -- device-specific key=value settings
+    /// * `buffer_ms` -- channel buffer depth in milliseconds
     /// * `running` -- shared flag checked before each read; set to `false` to stop
+    #[allow(clippy::too_many_arguments)]
     pub fn open(
         device_args: &str,
         frequency_hz: u64,
@@ -60,19 +85,24 @@ impl SoapySource {
         gain: Option<f64>,
         antenna: Option<&str>,
         settings: &[(String, String)],
+        buffer_ms: u32,
         running: Arc<AtomicBool>,
     ) -> Result<Self, SdrError> {
         // Suppress stderr during init — SoapySDR and RTL-SDR drivers print
         // noisy informational messages (e.g. "Found Rafael Micro R820T tuner")
         // directly to stderr, which corrupts TUI displays when piped to a monitor.
-        let (device, stream, mtu) = suppress_stderr(|| -> Result<_, SdrError> {
+        let (device, mut stream, mtu) = suppress_stderr(|| -> Result<_, SdrError> {
             let device = open_device(device_args)?;
+            // Init order: sample_rate -> frequency -> gain -> antenna ->
+            // stream -> activate. Setting sample rate first ensures the
+            // hardware's bandwidth filter is configured before the PLL
+            // locks to the target frequency.
+            configure_sample_rate(&device, sample_rate_hz)?;
+            configure_frequency(&device, frequency_hz)?;
+            configure_gain(&device, gain)?;
             if let Some(ant) = antenna {
                 configure_antenna(&device, ant)?;
             }
-            configure_frequency(&device, frequency_hz)?;
-            configure_sample_rate(&device, sample_rate_hz)?;
-            configure_gain(&device, gain)?;
             let mut stream = create_stream(&device)?;
             let mtu = stream
                 .mtu()
@@ -80,15 +110,22 @@ impl SoapySource {
             stream
                 .activate(None)
                 .map_err(|e| SdrError::StreamActivate(e.message))?;
-            // Apply device settings after activation — some drivers (e.g.
-            // SDRplay rfgain_sel) only commit via sdrplay_api_Update when
-            // the stream is active, and writing them earlier can corrupt
-            // driver state and prevent activation.
-            apply_settings(&device, settings)?;
             Ok((device, stream, mtu))
         })?;
 
+        // Apply device-specific settings (rfgain_sel, biasT_ctrl, etc.)
+        // AFTER activation and OUTSIDE suppress_stderr. The SDRplay driver
+        // only calls sdrplay_api_Update() when streamActive is true, and
+        // if that Update fails the driver logs a warning but does NOT
+        // return an error to SoapySDR — keeping this outside suppress_stderr
+        // ensures those warnings are visible.
+        apply_settings(&device, settings)?;
         log_device_state(&device, antenna);
+
+        // Compute channel capacity from buffer_ms.
+        let buffer_ms = buffer_ms.max(1);
+        let capacity = ((buffer_ms as u64 * sample_rate_hz as u64) / (mtu as u64 * 1000))
+            .max(2) as usize;
 
         tracing::info!(
             device_args,
@@ -96,88 +133,69 @@ impl SoapySource {
             sample_rate_hz,
             ?gain,
             mtu,
+            buffer_ms,
+            channel_capacity = capacity,
             "SoapySDR device opened"
         );
-
-        let mut source = Self {
-            stream,
-            buffer: vec![Complex::new(0.0, 0.0); mtu],
-            position: 0,
-            valid_count: 0,
-            running,
-            first_read: true,
-            overflow_count: 0,
-        };
 
         // Discard the first ~200 ms of samples to let the hardware settle.
         // SDR devices (especially SDRplay) produce transient artifacts during
         // PLL lock and AGC convergence that can poison CQPSK feedback loops.
         let settle_samples = (sample_rate_hz as usize) / 5; // 200 ms
         let mut discarded = 0;
+        let mut settle_buf = vec![Complex::new(0.0, 0.0); mtu];
         while discarded < settle_samples {
-            match source.fill_buffer() {
-                Some(n) => discarded += n,
-                None => break,
+            match read_chunk(&mut stream, &mut settle_buf) {
+                ReadResult::Data(n) => discarded += n,
+                ReadResult::Retry => continue,
+                ReadResult::Fatal => break,
             }
         }
-        source.position = 0;
-        source.valid_count = 0;
         tracing::debug!(discarded, "settling samples discarded");
 
-        Ok(source)
+        let (sender, receiver) = mpsc::sync_channel::<Vec<Complex<f32>>>(capacity);
+        let thread_running = running.clone();
+        let chunk_count = Arc::new(AtomicU64::new(0));
+        let overflow_count = Arc::new(AtomicU64::new(0));
+        let thread_chunks = chunk_count.clone();
+        let thread_overflows = overflow_count.clone();
+
+        let handle = thread::Builder::new()
+            .name("sdr-reader".into())
+            .spawn(move || {
+                reader_loop(stream, mtu, sender, thread_running, thread_chunks, thread_overflows);
+            })
+            .map_err(|e| SdrError::StreamCreate(format!("failed to spawn reader thread: {e}")))?;
+
+        Ok(Self {
+            receiver: Some(receiver),
+            current_chunk: Vec::new(),
+            position: 0,
+            reader_thread: Some(handle),
+            running,
+            chunk_count,
+            overflow_count,
+        })
     }
 
-    /// Return the cumulative number of overflow events.
-    ///
-    /// Each overflow means the device produced samples faster than the
-    /// application consumed them. A single overflow can lose many samples,
-    /// shifting symbol timing and potentially breaking frame sync.
+    /// Total chunks successfully read from hardware since stream start.
+    pub fn chunk_count(&self) -> u64 {
+        self.chunk_count.load(Ordering::Relaxed)
+    }
+
+    /// Total overflows (hardware + channel-full drops) since stream start.
     pub fn overflow_count(&self) -> u64 {
-        self.overflow_count
+        self.overflow_count.load(Ordering::Relaxed)
     }
 
-    /// Fill the internal buffer with the next chunk of samples from the device.
-    ///
-    /// Returns the number of samples read, or `None` if the stream should stop.
-    fn fill_buffer(&mut self) -> Option<usize> {
-        if !self.running.load(Ordering::Relaxed) {
-            return None;
-        }
+    /// Shared handle to the chunk counter (survives source consumption).
+    pub fn chunk_count_handle(&self) -> Arc<AtomicU64> {
+        self.chunk_count.clone()
+    }
 
-        loop {
-            match self.stream.read(&mut [&mut self.buffer], READ_TIMEOUT_US) {
-                Ok(count) => {
-                    if self.first_read {
-                        self.first_read = false;
-                        log_first_samples(&self.buffer, count);
-                    }
-                    self.position = 0;
-                    self.valid_count = count;
-                    return Some(count);
-                }
-                Err(e) if e.code == ErrorCode::Timeout => {
-                    if !self.running.load(Ordering::Relaxed) {
-                        return None;
-                    }
-                    continue;
-                }
-                Err(e) if e.code == ErrorCode::Overflow => {
-                    self.overflow_count += 1;
-                    tracing::warn!(
-                        overflow_count = self.overflow_count,
-                        "SoapySDR overflow: samples lost, symbol timing may be corrupted"
-                    );
-                    if !self.running.load(Ordering::Relaxed) {
-                        return None;
-                    }
-                    continue;
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e.message, "SoapySDR stream read error");
-                    return None;
-                }
-            }
-        }
+    /// Shared handle to the overflow counter (survives source consumption).
+    pub fn overflow_count_handle(&self) -> Arc<AtomicU64> {
+        self.overflow_count.clone()
     }
 }
 
@@ -185,20 +203,151 @@ impl Iterator for SoapySource {
     type Item = Complex<f32>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.position >= self.valid_count {
-            self.fill_buffer()?;
+        // Drain current chunk first.
+        if self.position < self.current_chunk.len() {
+            let sample = self.current_chunk[self.position];
+            self.position += 1;
+            return Some(sample);
         }
-        let sample = self.buffer[self.position];
-        self.position += 1;
-        Some(sample)
+
+        // Need a new chunk from the reader thread.
+        let receiver = self.receiver.as_ref()?;
+        match receiver.recv() {
+            Ok(chunk) => {
+                self.current_chunk = chunk;
+                self.position = 1;
+                Some(self.current_chunk[0])
+            }
+            Err(_) => {
+                // Channel closed — reader thread exited.
+                None
+            }
+        }
     }
 }
 
 impl Drop for SoapySource {
     fn drop(&mut self) {
-        if let Err(e) = self.stream.deactivate(None) {
-            tracing::warn!(error = %e.message, "failed to deactivate SoapySDR stream");
+        // Signal the reader thread to stop.
+        self.running.store(false, Ordering::Relaxed);
+        // Drop the receiver to unblock a send() that may be blocked on a
+        // full channel. Must happen before join() to avoid deadlock.
+        self.receiver.take();
+        if let Some(handle) = self.reader_thread.take() {
+            let _ = handle.join();
         }
+    }
+}
+
+/// Result of a single `stream.read()` call.
+enum ReadResult {
+    /// Successfully read `n` samples.
+    Data(usize),
+    /// Transient error (overflow, timeout, corruption) — caller should retry.
+    Retry,
+    /// Fatal error — caller should stop.
+    Fatal,
+}
+
+/// Read one chunk of samples from the stream into the provided buffer.
+fn read_chunk(stream: &mut RxStream<Complex<f32>>, buffer: &mut [Complex<f32>]) -> ReadResult {
+    match stream.read(&mut [buffer], READ_TIMEOUT_US) {
+        Ok(count) => ReadResult::Data(count),
+        Err(e) if e.code == ErrorCode::Timeout => ReadResult::Retry,
+        Err(e) if e.code == ErrorCode::Overflow => {
+            // During settling, overflows are expected and harmless.
+            tracing::debug!("SoapySDR overflow during settling (harmless)");
+            ReadResult::Retry
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e.message,
+                code = ?e.code,
+                "SoapySDR stream read error"
+            );
+            ReadResult::Fatal
+        }
+    }
+}
+
+/// Reader thread main loop. Reads MTU-sized chunks and sends them through
+/// the channel until `running` is false or a fatal error occurs.
+fn reader_loop(
+    mut stream: RxStream<Complex<f32>>,
+    mtu: usize,
+    sender: SyncSender<Vec<Complex<f32>>>,
+    running: Arc<AtomicBool>,
+    chunk_count: Arc<AtomicU64>,
+    overflow_count: Arc<AtomicU64>,
+) {
+    let mut first_read = true;
+    let mut consecutive_errors: u32 = 0;
+
+    while running.load(Ordering::Relaxed) {
+        let mut buffer = vec![Complex::new(0.0, 0.0); mtu];
+
+        match stream.read(&mut [&mut buffer], READ_TIMEOUT_US) {
+            Ok(count) => {
+                consecutive_errors = 0;
+                chunk_count.fetch_add(1, Ordering::Relaxed);
+
+                if first_read {
+                    first_read = false;
+                    log_first_samples(&buffer, count);
+                }
+
+                buffer.truncate(count);
+                match sender.try_send(buffer) {
+                    Ok(()) => {}
+                    Err(TrySendError::Full(_)) => {
+                        let n = overflow_count.fetch_add(1, Ordering::Relaxed) + 1;
+                        tracing::warn!(
+                            overflow_count = n,
+                            "channel full: dropping samples to keep reader alive"
+                        );
+                    }
+                    Err(TrySendError::Disconnected(_)) => break,
+                }
+            }
+            Err(e) if e.code == ErrorCode::Timeout => {
+                // No data within timeout window — just retry.
+                continue;
+            }
+            Err(e) if e.code == ErrorCode::Overflow => {
+                let n = overflow_count.fetch_add(1, Ordering::Relaxed) + 1;
+                tracing::warn!(
+                    overflow_count = n,
+                    "SoapySDR overflow: samples lost, symbol timing may be corrupted"
+                );
+                // Overflow is recoverable — the driver resets its buffer.
+                consecutive_errors = 0;
+            }
+            Err(e) => {
+                consecutive_errors += 1;
+                tracing::warn!(
+                    error = %e.message,
+                    code = ?e.code,
+                    consecutive_errors,
+                    "SoapySDR stream read error (retrying)"
+                );
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                    tracing::error!(
+                        "SoapySDR stream failed after {consecutive_errors} consecutive errors, giving up"
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
+    // Deactivate the stream before exiting.
+    if let Err(e) = stream.deactivate(None) {
+        tracing::warn!(error = %e.message, "failed to deactivate SoapySDR stream");
+    }
+
+    let final_overflows = overflow_count.load(Ordering::Relaxed);
+    if final_overflows > 0 {
+        tracing::info!(overflow_count = final_overflows, "reader thread exiting");
     }
 }
 
@@ -497,6 +646,7 @@ mod tests {
             None,
             None,
             &[],
+            250, // buffer_ms
             running,
         );
         match result {

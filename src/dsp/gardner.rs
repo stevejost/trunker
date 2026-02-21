@@ -88,6 +88,7 @@ impl GardnerTed {
     ///
     /// Returns `Some(symbol)` when a symbol boundary is crossed,
     /// or `None` when more input samples are needed.
+    #[inline]
     pub fn process(&mut self, sample: Complex<f32>) -> Option<Complex<f32>> {
         self.push_sample(sample);
         self.mu -= 1.0;

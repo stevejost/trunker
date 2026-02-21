@@ -335,6 +335,7 @@ fn pipeline_constructs_with_4800k_c4fm() {
         sample_rate: 4_800_000,
         modulation: Modulation::C4fm,
         nid_integrity: NidIntegrityPolicy::default(),
+        sync_timeout_samples: None,
     };
     let pipeline = ChannelPipeline::new(config).expect("4.8M should be valid");
     assert_eq!(pipeline.sample_count(), 0);
@@ -346,6 +347,7 @@ fn pipeline_constructs_with_6000k_cqpsk() {
         sample_rate: 6_000_000,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
+        sync_timeout_samples: None,
     };
     let pipeline = ChannelPipeline::new(config).expect("6M should be valid");
     assert_eq!(pipeline.sample_count(), 0);
@@ -357,6 +359,7 @@ fn pipeline_constructs_with_2880k_cqpsk() {
         sample_rate: 2_880_000,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
+        sync_timeout_samples: None,
     };
     let pipeline = ChannelPipeline::new(config).expect("2.88M should be valid");
     assert_eq!(pipeline.sample_count(), 0);
@@ -368,6 +371,7 @@ fn pipeline_constructs_with_9600k_c4fm() {
         sample_rate: 9_600_000,
         modulation: Modulation::C4fm,
         nid_integrity: NidIntegrityPolicy::default(),
+        sync_timeout_samples: None,
     };
     let pipeline = ChannelPipeline::new(config).expect("9.6M should be valid");
     assert_eq!(pipeline.sample_count(), 0);
@@ -383,6 +387,7 @@ fn pipeline_4800k_processes_silence() {
         sample_rate: 4_800_000,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
+        sync_timeout_samples: None,
     };
     let mut pipeline = ChannelPipeline::new(config).expect("4.8M should be valid");
     let silence = Complex::new(0.0, 0.0);
@@ -404,6 +409,7 @@ fn pipeline_6000k_processes_noise_without_panic() {
         sample_rate: 6_000_000,
         modulation: Modulation::C4fm,
         nid_integrity: NidIntegrityPolicy::default(),
+        sync_timeout_samples: None,
     };
     let mut pipeline = ChannelPipeline::new(config).expect("6M should be valid");
 
@@ -427,6 +433,7 @@ fn regression_2400k_pipeline_silence() {
         sample_rate: 2_400_000,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
+        sync_timeout_samples: None,
     };
     let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
     let silence = Complex::new(0.0, 0.0);
@@ -452,6 +459,7 @@ fn pipeline_rejects_invalid_sample_rate() {
         sample_rate: 2_000_000,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
+        sync_timeout_samples: None,
     };
     assert!(
         ChannelPipeline::new(config).is_err(),

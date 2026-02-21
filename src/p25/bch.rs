@@ -127,7 +127,7 @@ fn berlekamp_massey(syndromes: &[u8; NUM_SYNDROMES]) -> Option<(usize, LocatorPo
     for n in 0..NUM_SYNDROMES {
         // Compute discrepancy: d = S_{n+1} + Σ σ_i * S_{n+1-i}.
         let mut discrepancy = syndromes[n];
-        for i in 1..=lfsr_len {
+        for i in 1..=lfsr_len.min(n) {
             discrepancy ^= gf_mul(sigma[i], syndromes[n - i]);
         }
 
@@ -146,6 +146,9 @@ fn berlekamp_massey(syndromes: &[u8; NUM_SYNDROMES]) -> Option<(usize, LocatorPo
             }
             prev = saved;
             lfsr_len = n + 1 - lfsr_len;
+            if lfsr_len > MAX_ERRORS {
+                return None;
+            }
             prev_discrepancy = discrepancy;
             shift = 1;
         } else {

@@ -36,6 +36,7 @@ impl DcBlocker {
     }
 
     /// Process one sample through the DC blocking filter.
+    #[inline]
     pub fn process(&mut self, input: f32) -> f32 {
         let output = input - self.prev_input + self.alpha * self.prev_output;
         self.prev_input = input;

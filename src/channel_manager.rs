@@ -78,6 +78,9 @@ pub struct ChannelManagerConfig {
     pub nid_integrity: NidIntegrityPolicy,
     /// Whether to decode IMBE voice frames into audio.
     pub decode_audio: bool,
+    /// Maximum number of simultaneous voice channel pipelines.
+    /// `None` means no limit.
+    pub max_channels: Option<usize>,
 }
 
 /// Manages voice channel pipelines for wideband trunking.
@@ -103,6 +106,12 @@ pub struct ChannelManager {
     /// Costas loop state from the CC pipeline, used to seed new voice
     /// channel pipelines for faster carrier acquisition.
     cc_costas_seed: Option<(f32, f32)>,
+    /// Maximum simultaneous voice channels (`None` = unlimited).
+    max_channels: Option<usize>,
+    /// Channels expired due to call timeout (carrier was acquired).
+    expired_timeout: u64,
+    /// Channels expired due to no carrier acquisition within 1 second.
+    expired_no_carrier: u64,
 }
 
 /// Fraction of sample rate considered usable bandwidth.
@@ -127,10 +136,17 @@ impl ChannelManager {
                 sample_rate: config.sample_rate,
                 modulation: config.modulation,
                 nid_integrity: config.nid_integrity,
+                // Voice channels disable the sync timeout — they need
+                // 250 ms-1 s for initial acquisition. Zombie channels
+                // are handled by the acquisition timeout instead.
+                sync_timeout_samples: None,
             },
             decode_audio: config.decode_audio,
             sample_count: 0,
             cc_costas_seed: None,
+            max_channels: config.max_channels,
+            expired_timeout: 0,
+            expired_no_carrier: 0,
         }
     }
 
@@ -155,9 +171,7 @@ impl ChannelManager {
                 channel_b,
                 talkgroup_b,
             } => {
-                // Grant updates don't carry a source; use a zero source
-                // to refresh the channel. If the channel already exists,
-                // the talkgroup and last_grant timestamp are updated.
+                // Source is not available in grant updates; use zero.
                 let zero_source = SourceId::new(0);
                 if let Some(freq) = ident_table.resolve_frequency(*channel_a) {
                     self.activate_channel(freq, *talkgroup_a, zero_source);
@@ -182,11 +196,12 @@ impl ChannelManager {
 
     /// Feed one wideband IQ sample to all active voice channels.
     ///
-    /// Returns events from any voice channels that produced decoded data.
+    /// Appends events from any voice channels that produced decoded data
+    /// into the caller-provided `events` buffer. The caller should clear
+    /// the buffer before each call (or between processing iterations).
     /// Also expires timed-out channels.
-    pub fn process_sample(&mut self, sample: Complex<f32>) -> Vec<VoiceChannelEvent> {
+    pub fn process_sample(&mut self, sample: Complex<f32>, events: &mut Vec<VoiceChannelEvent>) {
         self.sample_count += 1;
-        let mut events = Vec::new();
 
         for channel in self.active_channels.values_mut() {
             let shifted = channel.nco.shift(sample);
@@ -237,8 +252,6 @@ impl ChannelManager {
         if self.sample_count.is_multiple_of(10_000) {
             self.expire_channels();
         }
-
-        events
     }
 
     /// Return the number of currently active voice channels.
@@ -251,6 +264,16 @@ impl ChannelManager {
         self.sample_count
     }
 
+    /// Channels expired due to call timeout (had acquired carrier).
+    pub fn expired_timeout(&self) -> u64 {
+        self.expired_timeout
+    }
+
+    /// Channels expired due to no carrier acquisition within 1 second.
+    pub fn expired_no_carrier(&self) -> u64 {
+        self.expired_no_carrier
+    }
+
     /// Update the Costas loop seed from the control channel pipeline.
     ///
     /// Call this periodically (e.g., on each CC pipeline event) so that
@@ -258,6 +281,24 @@ impl ChannelManager {
     /// state, reducing acquisition from ~22 frames to ~2-5 frames.
     pub fn update_costas_seed(&mut self, cc_pipeline: &ChannelPipeline) {
         self.cc_costas_seed = cc_pipeline.costas_state();
+    }
+
+    /// Refresh an existing voice channel's timeout and talkgroup.
+    ///
+    /// Called for grant update TSBKs (opcodes 0x02, 0x04) which indicate
+    /// an ongoing call but should not create new pipelines. If the
+    /// frequency is not already active, the update is silently ignored.
+    #[allow(dead_code)]
+    fn refresh_channel(&mut self, frequency: Frequency, talkgroup: TalkgroupId) {
+        if let Some(existing) = self.active_channels.get_mut(&frequency) {
+            existing.talkgroup = talkgroup;
+            existing.last_grant_sample = self.sample_count;
+            tracing::trace!(
+                frequency = %frequency,
+                talkgroup = %talkgroup,
+                "refreshed voice channel via grant update"
+            );
+        }
     }
 
     /// Activate or refresh a voice channel at the given frequency.
@@ -282,6 +323,18 @@ impl ChannelManager {
                 frequency = %frequency,
                 talkgroup = %talkgroup,
                 "refreshed voice channel"
+            );
+            return;
+        }
+
+        // Enforce voice channel cap.
+        if let Some(max) = self.max_channels
+            && self.active_channels.len() >= max
+        {
+            tracing::debug!(
+                frequency = %frequency,
+                max_channels = max,
+                "max voice channels reached, skipping"
             );
             return;
         }
@@ -351,23 +404,41 @@ impl ChannelManager {
     }
 
     /// Remove channels that have not received a grant update within the
-    /// timeout window.
+    /// timeout window, or that failed to acquire carrier within 1 second.
     fn expire_channels(&mut self) {
         let timeout = self.call_timeout_samples;
+        let acquisition_timeout = self.sample_rate as u64; // 1 second
         let current = self.sample_count;
+
+        // Track expiry reasons for stats reporting.
+        let expired_no_carrier = &mut self.expired_no_carrier;
+        let expired_timeout = &mut self.expired_timeout;
 
         self.active_channels.retain(|_frequency, channel| {
             let age = current.saturating_sub(channel.last_grant_sample);
+
+            // Channels that never acquired carrier get a shorter timeout.
+            if !channel.carrier_acquired && age > acquisition_timeout {
+                tracing::info!(
+                    frequency = %channel.frequency,
+                    talkgroup = %channel.talkgroup,
+                    "voice channel expired (no carrier)"
+                );
+                *expired_no_carrier += 1;
+                return false;
+            }
+
             if age > timeout {
                 tracing::info!(
                     frequency = %channel.frequency,
                     talkgroup = %channel.talkgroup,
                     "voice channel expired"
                 );
-                false
-            } else {
-                true
+                *expired_timeout += 1;
+                return false;
             }
+
+            true
         });
     }
 }
@@ -386,6 +457,7 @@ mod tests {
             modulation: Modulation::Cqpsk,
             nid_integrity: NidIntegrityPolicy::default(),
             decode_audio: false,
+            max_channels: None,
         }
     }
 
@@ -498,26 +570,68 @@ mod tests {
     }
 
     #[test]
-    fn grant_update_activates_two_channels() {
+    fn grant_update_activates_channels() {
         let mut manager = ChannelManager::new(make_config());
         let ident_table = make_ident_table();
 
-        // Two channels near center frequency
-        // 0x6009: 851062500 (offset -937500)
-        // 0x600A: 851068750 (offset -931250)
+        // Grant updates (0x02) must create channels — many systems
+        // announce channels primarily via grant updates, not 0x00.
         let update = make_grant_update_tsbk(0x6009, 100, 0x600A, 200);
         manager.handle_grant(&update, &ident_table);
 
+        assert_eq!(
+            manager.active_channel_count(),
+            2,
+            "grant update should create channels"
+        );
+    }
+
+    #[test]
+    fn grant_update_refreshes_existing_channel() {
+        let mut config = make_config();
+        config.call_timeout_seconds = 0.01; // 24000 samples
+        let mut manager = ChannelManager::new(config);
+        let ident_table = make_ident_table();
+
+        // Create two channels with real grants.
+        let grant_a = make_grant_tsbk(0x6009, 100, 12345);
+        let grant_b = make_grant_tsbk(0x600A, 200, 54321);
+        manager.handle_grant(&grant_a, &ident_table);
+        manager.handle_grant(&grant_b, &ident_table);
         assert_eq!(manager.active_channel_count(), 2);
+
+        // Advance 15000 samples (not yet expired).
+        let silence = Complex::new(0.0, 0.0);
+        let mut events = Vec::new();
+        for _ in 0..15_000 {
+            manager.process_sample(silence, &mut events);
+        }
+
+        // Grant update refreshes both channels.
+        let update = make_grant_update_tsbk(0x6009, 100, 0x600A, 200);
+        manager.handle_grant(&update, &ident_table);
+
+        // Advance another 15000 samples. Without refresh, total would
+        // exceed the 24000-sample timeout.
+        for _ in 0..15_000 {
+            manager.process_sample(silence, &mut events);
+        }
+
+        assert_eq!(
+            manager.active_channel_count(),
+            2,
+            "grant update should have refreshed timeout for both channels"
+        );
     }
 
     #[test]
     fn process_sample_increments_counter() {
         let mut manager = ChannelManager::new(make_config());
         let silence = Complex::new(0.0, 0.0);
+        let mut events = Vec::new();
 
         for _ in 0..100 {
-            manager.process_sample(silence);
+            manager.process_sample(silence, &mut events);
         }
 
         assert_eq!(manager.sample_count(), 100);
@@ -537,8 +651,9 @@ mod tests {
 
         // Process enough samples to trigger timeout + expiry check.
         let silence = Complex::new(0.0, 0.0);
+        let mut events = Vec::new();
         for _ in 0..30_000 {
-            manager.process_sample(silence);
+            manager.process_sample(silence, &mut events);
         }
 
         assert_eq!(
@@ -559,9 +674,10 @@ mod tests {
         manager.handle_grant(&grant, &ident_table);
 
         let silence = Complex::new(0.0, 0.0);
+        let mut events = Vec::new();
         // Process 15000 samples (not enough to timeout).
         for _ in 0..15_000 {
-            manager.process_sample(silence);
+            manager.process_sample(silence, &mut events);
         }
 
         // Refresh the grant.
@@ -570,7 +686,7 @@ mod tests {
         // Process another 15000 samples. Without refresh, total would be
         // 30000 > 24000 timeout. With refresh, only 15000 since last grant.
         for _ in 0..15_000 {
-            manager.process_sample(silence);
+            manager.process_sample(silence, &mut events);
         }
 
         assert_eq!(
@@ -601,9 +717,12 @@ mod tests {
         manager.handle_grant(&grant, &ident_table);
 
         let silence = Complex::new(0.0, 0.0);
+        let mut events = Vec::new();
         let mut total_events = 0;
         for _ in 0..10_000 {
-            total_events += manager.process_sample(silence).len();
+            events.clear();
+            manager.process_sample(silence, &mut events);
+            total_events += events.len();
         }
 
         assert_eq!(total_events, 0, "silence should not produce voice events");
@@ -637,6 +756,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::Cqpsk,
             nid_integrity: NidIntegrityPolicy::default(),
+            sync_timeout_samples: None,
         };
         let cc_pipeline = ChannelPipeline::new(config).unwrap();
 
@@ -654,6 +774,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::C4fm,
             nid_integrity: NidIntegrityPolicy::default(),
+            sync_timeout_samples: None,
         };
         let cc_pipeline = ChannelPipeline::new(config).unwrap();
 
@@ -709,5 +830,65 @@ mod tests {
             !channel.carrier_acquired,
             "new channel should not have carrier acquired"
         );
+    }
+
+    #[test]
+    fn max_channels_prevents_new_activations() {
+        let mut config = make_config();
+        config.max_channels = Some(1);
+        let mut manager = ChannelManager::new(config);
+        let ident_table = make_ident_table();
+
+        // First grant succeeds.
+        let grant1 = make_grant_tsbk(0x6009, 100, 12345);
+        manager.handle_grant(&grant1, &ident_table);
+        assert_eq!(manager.active_channel_count(), 1);
+
+        // Second grant to a different frequency is rejected.
+        let grant2 = make_grant_tsbk(0x600A, 200, 54321);
+        manager.handle_grant(&grant2, &ident_table);
+        assert_eq!(
+            manager.active_channel_count(),
+            1,
+            "should not exceed max_channels"
+        );
+    }
+
+    #[test]
+    fn unacquired_channel_expires_early() {
+        let mut config = make_config();
+        config.call_timeout_seconds = 3.0; // normal timeout: 7.2M samples
+        let mut manager = ChannelManager::new(config);
+        let ident_table = make_ident_table();
+
+        let grant = make_grant_tsbk(0x6009, 100, 12345);
+        manager.handle_grant(&grant, &ident_table);
+        assert_eq!(manager.active_channel_count(), 1);
+
+        // Process 2.5M samples (just over 1 second at 2.4 MS/s).
+        // The channel has not acquired carrier, so it should expire.
+        let silence = Complex::new(0.0, 0.0);
+        let mut events = Vec::new();
+        for _ in 0..2_500_000 {
+            manager.process_sample(silence, &mut events);
+        }
+
+        assert_eq!(
+            manager.active_channel_count(),
+            0,
+            "unacquired channel should expire after ~1 second"
+        );
+    }
+
+    #[test]
+    fn max_channels_none_allows_unlimited() {
+        let mut manager = ChannelManager::new(make_config()); // max_channels: None
+        let ident_table = make_ident_table();
+
+        let grant1 = make_grant_tsbk(0x6009, 100, 12345);
+        let grant2 = make_grant_tsbk(0x600A, 200, 54321);
+        manager.handle_grant(&grant1, &ident_table);
+        manager.handle_grant(&grant2, &ident_table);
+        assert_eq!(manager.active_channel_count(), 2);
     }
 }

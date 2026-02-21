@@ -122,8 +122,11 @@ fn frequency_seed_benefit_increases_with_offset() {
     let sample_rate = 24_000.0;
     let samples_per_symbol = 5;
 
+    // Test offsets within the Costas loop tracking range. The loop's
+    // MAX_FREQUENCY is 0.01 rad/sample = ~38 Hz at 24 kHz, so offsets
+    // above ~35 Hz become increasingly difficult to track.
     let mut results = Vec::new();
-    for &offset_hz in &[10.0_f32, 30.0, 60.0, 100.0] {
+    for &offset_hz in &[5.0_f32, 10.0, 20.0, 30.0] {
         let signal = generate_offset_signal(600, samples_per_symbol, offset_hz, sample_rate);
         let expected_freq_rad = 2.0 * PI * offset_hz / sample_rate;
 
@@ -160,10 +163,10 @@ fn frequency_seed_benefit_increases_with_offset() {
         );
     }
 
-    // At the larger offsets, seeded should be strictly faster.
-    let (_, cold_100, seeded_100) = results.last().unwrap();
+    // At the 30 Hz offset, seeded should be strictly faster.
+    let (_, cold_30, seeded_30) = results.last().unwrap();
     assert!(
-        seeded_100 < cold_100,
-        "seeded ({seeded_100}) must be faster than cold ({cold_100}) at 100 Hz offset"
+        seeded_30 < cold_30,
+        "seeded ({seeded_30}) must be faster than cold ({cold_30}) at 30 Hz offset"
     );
 }

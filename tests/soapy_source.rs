@@ -25,6 +25,7 @@ fn rtlsdr_reads_nonzero_samples() {
         Some(40.0),
         None,
         &[],
+        250, // buffer_ms
         running,
     )
     .expect("failed to open RTL-SDR device");

@@ -103,6 +103,25 @@ impl CqpskDemodulator {
         self.costas.seed(phase, frequency);
     }
 
+    /// Return diagnostic state for logging before a reset.
+    ///
+    /// Returns `(agc_gain, costas_phase, costas_freq, is_locked)`.
+    pub fn diagnostics(&self) -> (f32, f32, f32, bool) {
+        let (phase, freq) = self.costas_state();
+        (self.agc.gain(), phase, freq, self.locked)
+    }
+
+    /// Replace the entire demodulator with a fresh cold-start instance.
+    ///
+    /// Called when the pipeline has been unable to find frame sync
+    /// for an extended period, indicating the carrier tracking has
+    /// diverged. A full replacement guarantees identical state to a
+    /// cold start — zeroed AGC, bootstrap slicer thresholds, clean
+    /// RRC filter, fresh Costas + Gardner.
+    pub fn reset_tracking(&mut self) {
+        *self = Self::new();
+    }
+
     /// Process one complex IF sample through the CQPSK chain.
     ///
     /// Returns `Some(SymbolEvent)` at symbol boundaries, or `None`
@@ -122,6 +141,13 @@ impl CqpskDemodulator {
         let dibit = self.slicer.slice(level);
         self.sync_samples.push(level);
 
+        // Trim sync_samples unconditionally to prevent unbounded growth
+        // when the demodulator has not yet locked.
+        if self.sync_samples.len() > SYNC_DIBITS * 2 {
+            self.sync_samples
+                .drain(..self.sync_samples.len() - SYNC_DIBITS);
+        }
+
         // Feed to sync detector.
         if self.sync_detector.feed(dibit) {
             self.locked = true;
@@ -130,10 +156,6 @@ impl CqpskDemodulator {
         }
 
         if self.locked {
-            if self.sync_samples.len() > SYNC_DIBITS * 2 {
-                self.sync_samples
-                    .drain(..self.sync_samples.len() - SYNC_DIBITS);
-            }
             return Some(SymbolEvent::Symbol(dibit));
         }
 
