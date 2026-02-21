@@ -7,14 +7,12 @@
 
 pub mod cc_handler;
 pub mod control_channel;
-pub mod error;
 pub mod event;
 pub mod heartbeat;
 pub mod trunked;
 pub mod voice_handler;
 
 pub use control_channel::ControlChannelConfig;
-pub use error::DecodeError;
 pub use event::{DecoderEvent, EventSink};
 pub use heartbeat::HeartbeatState;
 pub use trunked::TrunkedDecoderConfig;
