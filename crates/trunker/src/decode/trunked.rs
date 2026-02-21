@@ -21,7 +21,7 @@ use crate::p25::receiver::ReceiverEvent;
 use crate::p25::tsbk::{Tsbk, TsbkOpcode, TsbkPayload};
 use crate::p25::types::{Frequency, SourceId};
 use crate::pipeline::{self, ChannelPipeline, PipelineConfig};
-use crate::sdr::sample_source::SampleSource;
+use crate::sdr::sample_source::{SampleSource, SdrStatsHandles};
 
 /// Configuration for the wideband trunked decoder.
 pub struct TrunkedDecoderConfig {
@@ -154,19 +154,13 @@ pub fn decode_trunked(
         // Feed to all active voice channel pipelines.
         voice_events.clear();
         channel_manager.process_sample(iq_sample, &mut voice_events);
-        for voice_event in &voice_events {
-            if let Some(recorder) = recorder.as_mut()
-                && let Some(completed) = recorder.process_event(voice_event)
-            {
-                log_completed_recording(&completed);
-            }
-            if matches!(voice_event.event, ReceiverEvent::VoiceFrame(_)) {
-                stats.voice_frames += 1;
-            }
-            if config.json_output {
-                emit_voice_event(voice_event, &mut stdout);
-            }
-        }
+        process_voice_events(
+            &voice_events,
+            recorder.as_mut(),
+            &mut stats,
+            config.json_output,
+            &mut stdout,
+        );
 
         // Periodic heartbeat (independent of stats mode).
         if let Some(event) = heartbeat.maybe_produce(
@@ -183,29 +177,14 @@ pub fn decode_trunked(
             samples_since_report += 1;
             if samples_since_report >= stats_interval_samples {
                 total_elapsed_seconds += 10;
-                let avg_power = if stats.iq_power_count > 0 {
-                    (stats.iq_power_sum / stats.iq_power_count as f64) as f32
-                } else {
-                    0.0
-                };
-                let iq_power_db = if avg_power > 0.0 {
-                    10.0 * avg_power.log10()
-                } else {
-                    -100.0
-                };
-                let snap = StatsSnapshot {
-                    elapsed_seconds: total_elapsed_seconds,
+                report_stats(
+                    &mut stats,
+                    total_elapsed_seconds,
                     tsbk_count,
-                    active_voices: channel_manager.active_channel_count(),
-                    costas_freq: cc_pipeline.costas_frequency(),
-                    expired_timeout: channel_manager.expired_timeout(),
-                    expired_no_carrier: channel_manager.expired_no_carrier(),
-                    sdr_stats: sdr_handles.as_ref().map(|h| h.snapshot()),
-                    iq_power_db,
-                };
-                stats.iq_power_sum = 0.0;
-                stats.iq_power_count = 0;
-                stats.report(&snap, &mut std::io::stderr());
+                    &channel_manager,
+                    &cc_pipeline,
+                    sdr_handles.as_ref(),
+                );
                 samples_since_report = 0;
             }
         }
@@ -230,6 +209,71 @@ pub fn decode_trunked(
         "trunked decode complete"
     );
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Voice event processing
+// ---------------------------------------------------------------------------
+
+/// Process voice channel events: update recorder, count frames, emit JSON.
+fn process_voice_events(
+    voice_events: &[VoiceChannelEvent],
+    mut recorder: Option<&mut CallRecorder>,
+    stats: &mut TrunkStats,
+    json_output: bool,
+    out: &mut impl Write,
+) {
+    for voice_event in voice_events {
+        if let Some(recorder) = recorder.as_mut()
+            && let Some(completed) = recorder.process_event(voice_event)
+        {
+            log_completed_recording(&completed);
+        }
+        if matches!(voice_event.event, ReceiverEvent::VoiceFrame(_)) {
+            stats.voice_frames += 1;
+        }
+        if json_output {
+            emit_voice_event(voice_event, out);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Stats reporting
+// ---------------------------------------------------------------------------
+
+/// Compute IQ power, build a stats snapshot, and print a report line.
+fn report_stats(
+    stats: &mut TrunkStats,
+    elapsed_seconds: u64,
+    tsbk_count: u64,
+    channel_manager: &ChannelManager,
+    cc_pipeline: &ChannelPipeline,
+    sdr_handles: Option<&SdrStatsHandles>,
+) {
+    let avg_power = if stats.iq_power_count > 0 {
+        (stats.iq_power_sum / stats.iq_power_count as f64) as f32
+    } else {
+        0.0
+    };
+    let iq_power_db = if avg_power > 0.0 {
+        10.0 * avg_power.log10()
+    } else {
+        -100.0
+    };
+    let snap = StatsSnapshot {
+        elapsed_seconds,
+        tsbk_count,
+        active_voices: channel_manager.active_channel_count(),
+        costas_freq: cc_pipeline.costas_frequency(),
+        expired_timeout: channel_manager.expired_timeout(),
+        expired_no_carrier: channel_manager.expired_no_carrier(),
+        sdr_stats: sdr_handles.map(|h| h.snapshot()),
+        iq_power_db,
+    };
+    stats.iq_power_sum = 0.0;
+    stats.iq_power_count = 0;
+    stats.report(&snap, &mut std::io::stderr());
 }
 
 // ---------------------------------------------------------------------------
