@@ -164,6 +164,7 @@ async fn main() -> Result<()> {
     // Connect to LiveKit room.
     let (room, mut room_events) =
         Room::connect(&cli.livekit_url, &token, RoomOptions::default()).await?;
+    let room = Arc::new(room);
 
     tracing::info!(room_name = room.name(), "connected to LiveKit room");
 
@@ -172,9 +173,9 @@ async fn main() -> Result<()> {
     let audio_rx = sink.subscribe();
 
     // Spawn LiveKit audio publisher.
-    let room_clone = room.clone();
+    let publisher_room = Arc::clone(&room);
     let audio_handle = tokio::spawn(async move {
-        let mut publisher = AudioPublisher::new(room_clone);
+        let mut publisher = AudioPublisher::new(publisher_room);
         if let Err(e) = publisher.run(audio_rx).await {
             tracing::error!(error = %e, "audio publisher error");
         }
@@ -251,7 +252,7 @@ async fn main() -> Result<()> {
 
     // Clean up.
     audio_handle.abort();
-    room.close().await;
+    let _ = room.close().await;
 
     tracing::info!("server shutdown complete");
     Ok(())

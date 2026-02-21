@@ -12,6 +12,7 @@ use trunker::decode::event::{DecoderEvent, EventSink};
 /// `DecoderEvent` contains types that are not all `Clone`, so we
 /// extract the relevant fields into cloneable variants.
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // Variants constructed via EventSink, consumed by future subscribers.
 pub enum BroadcastEvent {
     /// A voice frame with decoded PCM audio samples.
     Audio {

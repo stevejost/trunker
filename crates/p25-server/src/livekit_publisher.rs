@@ -7,7 +7,9 @@
 //! subscribe to individual channels.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use livekit::options::TrackPublishOptions;
 use livekit::prelude::*;
 use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::AudioSourceOptions;
@@ -40,14 +42,14 @@ struct TalkgroupTrack {
 /// Manages LiveKit audio tracks for all active talkgroups.
 pub struct AudioPublisher {
     /// Room reference for publishing new tracks.
-    room: Room,
+    room: Arc<Room>,
     /// Active tracks keyed by talkgroup ID.
     tracks: HashMap<u16, TalkgroupTrack>,
 }
 
 impl AudioPublisher {
     /// Create a new publisher attached to the given room.
-    pub fn new(room: Room) -> Self {
+    pub fn new(room: Arc<Room>) -> Self {
         Self {
             room,
             tracks: HashMap::new(),
