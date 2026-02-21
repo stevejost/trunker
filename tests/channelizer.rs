@@ -133,6 +133,7 @@ fn channel_manager_tracks_multiple_grants() {
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
         decode_audio: false,
+        max_channels: None,
     });
     let ident_table = make_ident_table();
 
@@ -165,6 +166,7 @@ fn channel_manager_rejects_out_of_band() {
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
         decode_audio: false,
+        max_channels: None,
     });
     let ident_table = make_ident_table();
 
@@ -195,6 +197,7 @@ fn channel_manager_timeout_lifecycle() {
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
         decode_audio: false,
+        max_channels: None,
     });
     let ident_table = make_ident_table();
 
@@ -238,6 +241,7 @@ fn channel_pipeline_processes_noise_without_events() {
         sample_rate: 2_400_000,
         modulation: Modulation::Cqpsk,
         nid_integrity: NidIntegrityPolicy::default(),
+        sync_timeout_samples: None,
     };
     let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
@@ -267,6 +271,7 @@ fn both_modulation_types_process_cleanly() {
             sample_rate: 2_400_000,
             modulation,
             nid_integrity: NidIntegrityPolicy::default(),
+            sync_timeout_samples: None,
         };
         let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
