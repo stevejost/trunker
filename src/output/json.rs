@@ -781,6 +781,35 @@ pub fn data_fragment_with_context(
     serde_json::to_string(&event).expect("VoiceEventJson serialization should not fail")
 }
 
+// ---------------------------------------------------------------------------
+// Heartbeat JSON
+// ---------------------------------------------------------------------------
+
+/// Periodic heartbeat event emitted to stdout for health monitoring.
+#[derive(Debug, Serialize)]
+pub struct HeartbeatJson {
+    /// Event type discriminator (always "heartbeat").
+    #[serde(rename = "type")]
+    pub event_type: &'static str,
+    /// UTC timestamp in ISO 8601 format.
+    pub timestamp: String,
+    /// Decoder uptime in seconds.
+    pub uptime_seconds: u64,
+    /// Total TSBKs decoded since startup.
+    pub tsbk_count: u64,
+    /// TSBK decode rate (per second) over the last heartbeat interval.
+    pub tsbk_rate: f64,
+    /// Number of active voice channel pipelines (trunk mode only).
+    pub active_voice_channels: u32,
+    /// Whether the CC pipeline currently has frame sync.
+    pub cc_sync: bool,
+}
+
+/// Serialize a heartbeat event to a single JSON line.
+pub fn heartbeat_line(heartbeat: &HeartbeatJson) -> String {
+    serde_json::to_string(heartbeat).expect("HeartbeatJson serialization should not fail")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
