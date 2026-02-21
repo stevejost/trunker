@@ -125,24 +125,24 @@ impl CallRecorder {
         // Write audio samples if available.
         if let Some(audio) = &event.audio {
             // Lazily create the WAV writer on first audio.
-            if !self.writers.contains_key(&event.frequency) {
-                if let Some(path) = self.paths.get(&event.frequency) {
-                    match WavWriter::create(path) {
-                        Ok(writer) => {
-                            tracing::info!(
-                                frequency = %event.frequency,
-                                path = %path.display(),
-                                "recording started"
-                            );
-                            self.writers.insert(event.frequency, writer);
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                path = %path.display(),
-                                error = %e,
-                                "failed to create WAV file"
-                            );
-                        }
+            if !self.writers.contains_key(&event.frequency)
+                && let Some(path) = self.paths.get(&event.frequency)
+            {
+                match WavWriter::create(path) {
+                    Ok(writer) => {
+                        tracing::info!(
+                            frequency = %event.frequency,
+                            path = %path.display(),
+                            "recording started"
+                        );
+                        self.writers.insert(event.frequency, writer);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            path = %path.display(),
+                            error = %e,
+                            "failed to create WAV file"
+                        );
                     }
                 }
             }
