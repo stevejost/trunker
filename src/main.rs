@@ -10,6 +10,7 @@ use num_complex::Complex;
 use trunker::channel_manager::{ChannelManager, ChannelManagerConfig, VoiceChannelEvent};
 use trunker::dsp::nco::Nco;
 use trunker::output::call_recorder::{CallRecorder, CompletedRecording};
+use trunker::output::call_writer::AudioFormat;
 use trunker::output::event_handler;
 use trunker::output::json;
 use trunker::output::wav::WavWriter;
@@ -64,6 +65,24 @@ impl From<CliNidIntegrity> for NidIntegrityPolicy {
         match p {
             CliNidIntegrity::Strict => Self::Strict,
             CliNidIntegrity::Permissive => Self::Permissive,
+        }
+    }
+}
+
+/// Audio file format for CLI argument parsing.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CliAudioFormat {
+    /// WAV: 8 kHz, 16-bit signed PCM, mono.
+    Wav,
+    /// Opus: 8 kHz, mono, VOIP mode, 16 kbps, OGG container.
+    Opus,
+}
+
+impl From<CliAudioFormat> for AudioFormat {
+    fn from(f: CliAudioFormat) -> Self {
+        match f {
+            CliAudioFormat::Wav => Self::Wav,
+            CliAudioFormat::Opus => Self::Opus,
         }
     }
 }
@@ -225,13 +244,20 @@ enum Command {
         #[arg(long)]
         decode_audio: bool,
 
-        /// Output directory for per-call WAV recordings.
+        /// Output directory for per-call audio recordings.
         ///
-        /// When set, each voice call is recorded to a separate WAV file
-        /// under `{output_dir}/{date}/{talkgroup}_{timestamp}.wav`.
+        /// When set, each voice call is recorded to a separate file
+        /// under `{output_dir}/{date}/{talkgroup}_{timestamp}.{ext}`.
         /// Implies --decode-audio.
         #[arg(long)]
         output_dir: Option<String>,
+
+        /// Audio file format for call recordings: wav (default) or opus.
+        ///
+        /// Opus produces significantly smaller files at 16 kbps with
+        /// negligible quality loss for voice (VOIP mode, 8 kHz mono).
+        #[arg(long, default_value = "wav")]
+        audio_format: CliAudioFormat,
 
         /// SDR read buffer depth in milliseconds (live SDR mode only).
         ///
@@ -370,6 +396,7 @@ fn main() -> Result<()> {
             nid_integrity,
             decode_audio,
             output_dir,
+            audio_format,
             buffer_ms,
             max_voices,
             json_output,
@@ -428,6 +455,7 @@ fn main() -> Result<()> {
                 call_timeout,
                 decode_audio,
                 output_dir.as_deref().map(Path::new),
+                audio_format.into(),
                 max_voices,
                 json_output,
                 &running,
@@ -746,8 +774,7 @@ impl TrunkStats {
     /// Print a stats line and reset interval counters.
     fn report(&mut self, snap: &StatsSnapshot, out: &mut impl Write) {
         let tsbk_delta = snap.tsbk_count - self.prev_tsbk_count;
-        let expired_delta =
-            (snap.expired_timeout - self.prev_expired_timeout)
+        let expired_delta = (snap.expired_timeout - self.prev_expired_timeout)
             + (snap.expired_no_carrier - self.prev_expired_no_carrier);
         let no_carrier_delta = snap.expired_no_carrier - self.prev_expired_no_carrier;
 
@@ -771,7 +798,10 @@ impl TrunkStats {
         // Append SDR reader thread stats when running live.
         if let Some((chunks, overflows)) = snap.sdr_stats {
             let chunk_delta = chunks - self.prev_sdr_chunks;
-            let _ = write!(out, " sdr_chunks={chunks} (+{chunk_delta}) overflows={overflows}");
+            let _ = write!(
+                out,
+                " sdr_chunks={chunks} (+{chunk_delta}) overflows={overflows}"
+            );
             self.prev_sdr_chunks = chunks;
         }
 
@@ -798,6 +828,7 @@ fn decode_trunked(
     call_timeout: f64,
     decode_audio: bool,
     output_dir: Option<&Path>,
+    audio_format: AudioFormat,
     max_voices: Option<usize>,
     json_output: bool,
     running: &Arc<AtomicBool>,
@@ -829,7 +860,7 @@ fn decode_trunked(
         max_channels: max_voices,
     });
 
-    let mut recorder = output_dir.map(CallRecorder::new);
+    let mut recorder = output_dir.map(|dir| CallRecorder::new(dir, audio_format));
     let mut voice_events = Vec::new();
     let mut stdout = LineWriter::new(io::stdout().lock());
 
@@ -1597,5 +1628,87 @@ mod tests {
             }
             _ => panic!("expected Cc command"),
         }
+    }
+
+    // -- Audio format CLI tests --
+
+    #[test]
+    fn cli_trunk_audio_format_defaults_to_wav() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "trunk",
+            "--input",
+            "wideband.iq",
+            "--center-freq",
+            "852350000",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Trunk { audio_format, .. } => {
+                assert!(matches!(audio_format, CliAudioFormat::Wav));
+            }
+            _ => panic!("expected Trunk command"),
+        }
+    }
+
+    #[test]
+    fn cli_trunk_audio_format_opus_parses() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "trunk",
+            "--input",
+            "wideband.iq",
+            "--center-freq",
+            "852350000",
+            "--audio-format",
+            "opus",
+        ]);
+        assert!(
+            cli.is_ok(),
+            "trunk with --audio-format opus should parse: {:?}",
+            cli.err()
+        );
+        match cli.unwrap().command {
+            Command::Trunk { audio_format, .. } => {
+                assert!(matches!(audio_format, CliAudioFormat::Opus));
+            }
+            _ => panic!("expected Trunk command"),
+        }
+    }
+
+    #[test]
+    fn cli_trunk_audio_format_wav_parses() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "trunk",
+            "--input",
+            "wideband.iq",
+            "--center-freq",
+            "852350000",
+            "--audio-format",
+            "wav",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Trunk { audio_format, .. } => {
+                assert!(matches!(audio_format, CliAudioFormat::Wav));
+            }
+            _ => panic!("expected Trunk command"),
+        }
+    }
+
+    #[test]
+    fn cli_trunk_audio_format_invalid_rejected() {
+        let cli = Cli::try_parse_from([
+            "p25",
+            "trunk",
+            "--input",
+            "wideband.iq",
+            "--center-freq",
+            "852350000",
+            "--audio-format",
+            "mp3",
+        ]);
+        assert!(cli.is_err(), "invalid audio format should be rejected");
     }
 }
