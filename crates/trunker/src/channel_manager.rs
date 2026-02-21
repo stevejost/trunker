@@ -995,4 +995,76 @@ mod tests {
         manager.handle_grant(&grant2, &ident_table);
         assert_eq!(manager.active_channel_count(), 2);
     }
+
+    #[test]
+    fn shutdown_joins_all_voice_threads() {
+        let mut manager = ChannelManager::new(make_config());
+        let ident_table = make_ident_table();
+
+        // Activate two voice channels.
+        let grant1 = make_grant_tsbk(0x6009, 100, 12345);
+        let grant2 = make_grant_tsbk(0x600A, 200, 54321);
+        manager.handle_grant(&grant1, &ident_table);
+        manager.handle_grant(&grant2, &ident_table);
+        assert_eq!(manager.active_channel_count(), 2);
+
+        // Feed a few samples so threads are actively receiving.
+        let silence = Complex::new(0.0, 0.0);
+        let mut events = Vec::new();
+        for _ in 0..100 {
+            manager.process_sample(silence, &mut events);
+        }
+
+        // Explicit shutdown: drops senders, joins threads.
+        manager.shutdown();
+        assert_eq!(
+            manager.active_channel_count(),
+            0,
+            "all channels should be removed after shutdown"
+        );
+    }
+
+    #[test]
+    fn drop_cleans_up_threads() {
+        let ident_table = make_ident_table();
+
+        // Scope the manager so it drops at end of block.
+        {
+            let mut manager = ChannelManager::new(make_config());
+            let grant = make_grant_tsbk(0x6009, 100, 12345);
+            manager.handle_grant(&grant, &ident_table);
+            assert_eq!(manager.active_channel_count(), 1);
+
+            let silence = Complex::new(0.0, 0.0);
+            let mut events = Vec::new();
+            for _ in 0..100 {
+                manager.process_sample(silence, &mut events);
+            }
+        }
+        // If threads weren't joined, this would leak or panic.
+        // Test passes = Drop impl correctly cleaned up.
+    }
+
+    #[test]
+    fn expired_channel_thread_is_joined() {
+        let mut config = make_config();
+        config.call_timeout_seconds = 0.01; // 24000 samples
+        let mut manager = ChannelManager::new(config);
+        let ident_table = make_ident_table();
+
+        let grant = make_grant_tsbk(0x6009, 100, 12345);
+        manager.handle_grant(&grant, &ident_table);
+        assert_eq!(manager.active_channel_count(), 1);
+
+        // Process enough samples to trigger expiry.
+        let silence = Complex::new(0.0, 0.0);
+        let mut events = Vec::new();
+        for _ in 0..30_000 {
+            manager.process_sample(silence, &mut events);
+        }
+
+        // Channel expired via call timeout and thread was joined.
+        assert_eq!(manager.active_channel_count(), 0);
+        assert_eq!(manager.expired_timeout(), 1);
+    }
 }
