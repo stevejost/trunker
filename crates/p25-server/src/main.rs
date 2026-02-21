@@ -10,6 +10,7 @@
 //! - A data channel publishes JSON metadata (grants, heartbeats)
 
 mod bridge;
+mod data_publisher;
 mod livekit_publisher;
 
 use std::sync::Arc;
@@ -20,6 +21,7 @@ use clap::Parser;
 use livekit::prelude::*;
 
 use bridge::BroadcastSink;
+use data_publisher::DataPublisher;
 use livekit_publisher::AudioPublisher;
 use trunker::p25::nid::NidIntegrityPolicy;
 use trunker::pipeline;
@@ -93,6 +95,10 @@ struct Cli {
     /// Participant identity in the LiveKit room.
     #[arg(long, default_value = "p25-decoder")]
     livekit_identity: String,
+
+    /// Audio gain multiplier for LiveKit output (default: 16.0).
+    #[arg(long, default_value_t = 16.0)]
+    audio_gain: f32,
 }
 
 #[tokio::main]
@@ -107,12 +113,9 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Signal handler for graceful shutdown.
+    // Signal handler — installed after LiveKit connects to avoid
+    // interfering with libwebrtc's signal handling during ICE.
     let running = Arc::new(AtomicBool::new(true));
-    let running_clone = running.clone();
-    ctrlc::set_handler(move || {
-        running_clone.store(false, Ordering::Relaxed);
-    })?;
 
     // Parse device settings.
     let settings: Vec<(String, String)> = cli
@@ -125,20 +128,6 @@ async fn main() -> Result<()> {
             Ok((key.to_string(), value.to_string()))
         })
         .collect::<Result<Vec<_>>>()?;
-
-    // Open SDR device.
-    let gain = if cli.auto_gain { None } else { cli.gain };
-    let sample_source = SoapySource::open(
-        &cli.device,
-        cli.center_freq,
-        cli.sample_rate,
-        gain,
-        cli.antenna.as_deref(),
-        &settings,
-        cli.buffer_ms,
-        running.clone(),
-    )?;
-    let mut source = SampleSource::Soapy(sample_source);
 
     // Generate access token for LiveKit.
     let token = livekit_api::access_token::AccessToken::with_api_key(
@@ -162,23 +151,42 @@ async fn main() -> Result<()> {
     );
 
     // Connect to LiveKit room.
+    let mut room_options = RoomOptions::default();
+    room_options.auto_subscribe = false;
+    room_options.single_peer_connection = true;
     let (room, mut room_events) =
-        Room::connect(&cli.livekit_url, &token, RoomOptions::default()).await?;
+        Room::connect(&cli.livekit_url, &token, room_options).await?;
     let room = Arc::new(room);
 
     tracing::info!(room_name = room.name(), "connected to LiveKit room");
 
+    // Install signal handler after LiveKit connects to avoid
+    // interfering with libwebrtc's internal signal handling.
+    let running_clone = running.clone();
+    ctrlc::set_handler(move || {
+        running_clone.store(false, Ordering::Relaxed);
+    })?;
+
     // Set up the broadcast bridge.
     let mut sink = BroadcastSink::new(4096);
     let audio_rx = sink.subscribe();
+    let data_rx = sink.subscribe();
 
     // Spawn LiveKit audio publisher.
     let publisher_room = Arc::clone(&room);
+    let audio_gain = cli.audio_gain;
     let audio_handle = tokio::spawn(async move {
-        let mut publisher = AudioPublisher::new(publisher_room);
+        let mut publisher = AudioPublisher::new(publisher_room, audio_gain);
         if let Err(e) = publisher.run(audio_rx).await {
             tracing::error!(error = %e, "audio publisher error");
         }
+    });
+
+    // Spawn LiveKit data channel publisher.
+    let data_room = Arc::clone(&room);
+    let data_handle = tokio::spawn(async move {
+        let publisher = DataPublisher::new(data_room);
+        publisher.run(data_rx).await;
     });
 
     // Spawn room event handler: log connection state changes and signal
@@ -218,9 +226,25 @@ async fn main() -> Result<()> {
         Some(cli.max_voices)
     };
 
-    // Run decode in a blocking thread so it doesn't block the Tokio runtime.
+    // Open SDR device just before starting the decode thread so the reader
+    // thread doesn't overflow while we wait for LiveKit to connect.
+    let gain = if cli.auto_gain { None } else { cli.gain };
+    let sample_source = SoapySource::open(
+        &cli.device,
+        cli.center_freq,
+        cli.sample_rate,
+        gain,
+        cli.antenna.as_deref(),
+        &settings,
+        cli.buffer_ms,
+        running.clone(),
+    )?;
+    let mut source = SampleSource::Soapy(sample_source);
+
+    // Run decode on a dedicated OS thread so it gets consistent scheduling
+    // and isn't throttled by Tokio's blocking thread pool.
     let decode_running = running.clone();
-    let decode_handle = tokio::task::spawn_blocking(move || {
+    let decode_handle = std::thread::spawn(move || {
         let config = trunker::decode::TrunkedDecoderConfig {
             sample_rate: cli.sample_rate,
             center_frequency: cli.center_freq,
@@ -243,15 +267,18 @@ async fn main() -> Result<()> {
         )
     });
 
-    // Wait for decode thread to finish.
-    match decode_handle.await {
-        Ok(Ok(())) => tracing::info!("decode thread finished"),
-        Ok(Err(e)) => tracing::error!(error = %e, "decode thread error"),
-        Err(e) => tracing::error!(error = %e, "decode thread panicked"),
+    // Wait for decode thread without blocking the Tokio runtime.
+    let decode_result = tokio::task::spawn_blocking(|| decode_handle.join()).await;
+    match decode_result {
+        Ok(Ok(Ok(()))) => tracing::info!("decode thread finished"),
+        Ok(Ok(Err(e))) => tracing::error!(error = %e, "decode thread error"),
+        Ok(Err(_)) => tracing::error!("decode thread panicked"),
+        Err(e) => tracing::error!(error = %e, "failed to join decode thread"),
     }
 
     // Clean up.
     audio_handle.abort();
+    data_handle.abort();
     let _ = room.close().await;
 
     tracing::info!("server shutdown complete");

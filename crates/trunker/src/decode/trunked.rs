@@ -182,15 +182,27 @@ pub fn decode_trunked(
             config.json_output,
             &mut stdout,
         );
-        // Forward voice frames to the event sink.
+        // Forward voice frames and decoded audio to the event sink.
         let mut sink_shutdown = false;
         if let Some(sink) = &mut event_sink {
             for voice_event in &voice_events {
-                if let ReceiverEvent::VoiceFrame(ref vf) = voice_event.event
-                    && !sink.handle(DecoderEvent::VoiceFrame(vf.clone()))
-                {
-                    sink_shutdown = true;
-                    break;
+                if let ReceiverEvent::VoiceFrame(ref vf) = voice_event.event {
+                    if !sink.handle(DecoderEvent::VoiceFrame(vf.clone())) {
+                        sink_shutdown = true;
+                        break;
+                    }
+                    // Send decoded PCM audio if available.
+                    if let Some(ref samples) = voice_event.audio
+                        && !sink.handle(DecoderEvent::AudioFrame {
+                            frequency: voice_event.frequency.hz(),
+                            talkgroup: voice_event.talkgroup.value(),
+                            source: voice_event.source.value(),
+                            samples: samples.clone(),
+                        })
+                    {
+                        sink_shutdown = true;
+                        break;
+                    }
                 }
             }
         }

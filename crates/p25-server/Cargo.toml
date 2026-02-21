@@ -15,6 +15,8 @@ clap = { version = "4", features = ["derive", "env"] }
 ctrlc = { version = "3", features = ["termination"] }
 livekit = "0.7"
 livekit-api = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

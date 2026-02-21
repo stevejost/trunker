@@ -34,6 +34,20 @@ pub enum DecoderEvent {
     /// A decoded IMBE voice frame.
     VoiceFrame(VoiceFrame),
 
+    /// Decoded PCM audio samples from a voice channel.
+    ///
+    /// Contains 160 f32 samples (20 ms at 8 kHz) along with call context.
+    AudioFrame {
+        /// Receive frequency in Hz.
+        frequency: u64,
+        /// Talkgroup ID.
+        talkgroup: u16,
+        /// Source unit ID.
+        source: u32,
+        /// PCM audio samples (8 kHz, mono, raw vocoder f32, typical peak ~1000).
+        samples: Vec<f32>,
+    },
+
     /// A decoded Link Control word (from LDU1).
     LinkControl(LinkControlFields),
 

@@ -15,21 +15,28 @@ use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::AudioSourceOptions;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
 use tokio::sync::broadcast;
+use tokio::time::{Duration, Instant};
 
 use crate::bridge::BroadcastEvent;
 
-/// Sample rate for P25 IMBE decoded audio.
-const AUDIO_SAMPLE_RATE: u32 = 8000;
+/// Output sample rate for LiveKit (WebRTC standard).
+const LIVEKIT_SAMPLE_RATE: u32 = 48000;
+
+/// Upsample ratio (48000 / 8000).
+const UPSAMPLE_RATIO: usize = 6;
 
 /// Number of audio channels (mono).
 const AUDIO_CHANNELS: u32 = 1;
 
-/// Convert an f32 audio sample in [-1.0, 1.0] to i16.
+/// Convert a raw vocoder f32 sample (after gain) to i16.
 ///
-/// Values outside [-1.0, 1.0] are clamped before conversion.
-fn f32_to_i16(sample: f32) -> i16 {
-    (sample.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
+/// Values outside the i16 range are clamped.
+fn vocoder_sample_to_i16(sample: f32) -> i16 {
+    sample.clamp(i16::MIN as f32, i16::MAX as f32) as i16
 }
+
+/// Duration of one IMBE voice frame (160 samples at 8 kHz).
+const FRAME_DURATION: Duration = Duration::from_millis(20);
 
 /// State for a single published talkgroup audio track.
 struct TalkgroupTrack {
@@ -37,6 +44,11 @@ struct TalkgroupTrack {
     source: NativeAudioSource,
     /// The published track handle (kept alive to maintain publication).
     _publication: LocalTrackPublication,
+    /// Earliest time the next frame should be sent (real-time pacing).
+    next_send: Instant,
+    /// Last sample from previous frame (pre-gain), for smooth interpolation
+    /// across frame boundaries.
+    last_sample: f32,
 }
 
 /// Manages LiveKit audio tracks for all active talkgroups.
@@ -45,14 +57,17 @@ pub struct AudioPublisher {
     room: Arc<Room>,
     /// Active tracks keyed by talkgroup ID.
     tracks: HashMap<u16, TalkgroupTrack>,
+    /// Gain multiplier applied to vocoder samples before publishing.
+    gain: f32,
 }
 
 impl AudioPublisher {
     /// Create a new publisher attached to the given room.
-    pub fn new(room: Arc<Room>) -> Self {
+    pub fn new(room: Arc<Room>, gain: f32) -> Self {
         Self {
             room,
             tracks: HashMap::new(),
+            gain,
         }
     }
 
@@ -92,16 +107,42 @@ impl AudioPublisher {
     ///
     /// Creates the track on first call for a given talkgroup.
     async fn publish_audio(&mut self, talkgroup: u16, samples: &[f32]) -> anyhow::Result<()> {
+        let gain = self.gain;
         let track = self.get_or_create_track(talkgroup).await?;
 
-        // Convert f32 samples to i16 for LiveKit.
-        let pcm_i16: Vec<i16> = samples.iter().copied().map(f32_to_i16).collect();
+        // Log peak level for debugging.
+        let peak = samples.iter().copied().map(f32::abs).fold(0.0f32, f32::max);
+        tracing::debug!(talkgroup, peak, "audio frame");
+
+        // Pace frames at real-time to prevent buffer overrun.
+        let now = Instant::now();
+        if now < track.next_send {
+            tokio::time::sleep_until(track.next_send).await;
+        }
+        track.next_send = Instant::now() + FRAME_DURATION;
+
+        // Upsample 8kHz → 48kHz via linear interpolation, convert to i16.
+        // Uses last_sample from the previous frame for a smooth transition
+        // at frame boundaries (avoids click/crackle between frames).
+        let upsampled_len = samples.len() * UPSAMPLE_RATIO;
+        let mut pcm_i16 = Vec::with_capacity(upsampled_len);
+        let mut prev = track.last_sample * gain;
+        for &sample in samples {
+            let current = sample * gain;
+            for j in 0..UPSAMPLE_RATIO {
+                let t = j as f32 / UPSAMPLE_RATIO as f32;
+                let interpolated = prev + (current - prev) * t;
+                pcm_i16.push(vocoder_sample_to_i16(interpolated));
+            }
+            prev = current;
+        }
+        track.last_sample = *samples.last().unwrap_or(&0.0);
 
         let frame = AudioFrame {
             data: pcm_i16.into(),
-            sample_rate: AUDIO_SAMPLE_RATE,
+            sample_rate: LIVEKIT_SAMPLE_RATE,
             num_channels: AUDIO_CHANNELS,
-            samples_per_channel: samples.len() as u32,
+            samples_per_channel: upsampled_len as u32,
         };
 
         track.source.capture_frame(&frame).await?;
@@ -117,7 +158,7 @@ impl AudioPublisher {
                     noise_suppression: false,
                     auto_gain_control: false,
                 },
-                AUDIO_SAMPLE_RATE,
+                LIVEKIT_SAMPLE_RATE,
                 AUDIO_CHANNELS,
                 1000, // 1 second buffer
             );
@@ -147,6 +188,8 @@ impl AudioPublisher {
                 TalkgroupTrack {
                     source,
                     _publication: publication,
+                    next_send: Instant::now(),
+                    last_sample: 0.0,
                 },
             );
         }
@@ -160,37 +203,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn f32_to_i16_zero() {
-        assert_eq!(f32_to_i16(0.0), 0);
+    fn vocoder_sample_zero() {
+        assert_eq!(vocoder_sample_to_i16(0.0), 0);
     }
 
     #[test]
-    fn f32_to_i16_positive_one() {
-        assert_eq!(f32_to_i16(1.0), i16::MAX);
+    fn vocoder_sample_typical_peak() {
+        // Vocoder typically peaks around ~1000.
+        assert_eq!(vocoder_sample_to_i16(1000.0), 1000);
+        assert_eq!(vocoder_sample_to_i16(-1000.0), -1000);
     }
 
     #[test]
-    fn f32_to_i16_negative_one() {
-        // -1.0 * 32767 = -32767, not i16::MIN (-32768).
-        assert_eq!(f32_to_i16(-1.0), -i16::MAX);
+    fn vocoder_sample_clamps_at_i16_bounds() {
+        assert_eq!(vocoder_sample_to_i16(40000.0), i16::MAX);
+        assert_eq!(vocoder_sample_to_i16(-40000.0), i16::MIN);
     }
 
     #[test]
-    fn f32_to_i16_clamps_above_one() {
-        assert_eq!(f32_to_i16(1.5), i16::MAX);
-        assert_eq!(f32_to_i16(100.0), i16::MAX);
-    }
-
-    #[test]
-    fn f32_to_i16_clamps_below_negative_one() {
-        assert_eq!(f32_to_i16(-1.5), -i16::MAX);
-        assert_eq!(f32_to_i16(-100.0), -i16::MAX);
-    }
-
-    #[test]
-    fn f32_to_i16_half_amplitude() {
-        let result = f32_to_i16(0.5);
-        // 0.5 * 32767 = 16383.5, truncated to 16383.
-        assert_eq!(result, 16383);
+    fn vocoder_sample_small_values() {
+        assert_eq!(vocoder_sample_to_i16(1.5), 1);
+        assert_eq!(vocoder_sample_to_i16(-1.5), -1);
     }
 }

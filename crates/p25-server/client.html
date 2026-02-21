@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>P25 LiveKit Listener</title>
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.js"></script>
+  <style>
+    body { font-family: monospace; background: #1a1a1a; color: #eee; padding: 20px; }
+    #status { margin: 10px 0; color: #aaa; }
+    #tracks { margin-top: 20px; }
+    .track {
+      padding: 10px 12px; margin: 4px 0; background: #2a2a2a;
+      border-radius: 4px; cursor: pointer; border-left: 3px solid transparent;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .track:hover { background: #333; }
+    .track.listening { border-left: 3px solid #4f4; background: #1a3a1a; }
+    .track.active { border-left: 3px solid #f44; }
+    .track.active.listening { border-left: 3px solid #f44; background: #1a3a1a; }
+    .track .label { font-weight: bold; }
+    .track .info { font-size: 12px; color: #888; display: flex; gap: 12px; align-items: center; }
+    .track .call-badge { color: #f44; font-weight: bold; font-size: 11px; }
+    button { padding: 10px 20px; font-size: 16px; cursor: pointer; }
+    #connect-btn { background: #4f4; color: #000; border: none; border-radius: 4px; }
+    #connect-btn:disabled { background: #666; }
+    #mute-all { background: #f44; color: #fff; border: none; border-radius: 4px;
+      padding: 6px 12px; font-size: 13px; margin-left: 10px; cursor: pointer; }
+    #events {
+      margin-top: 20px; max-height: 250px; overflow-y: auto;
+      background: #111; border: 1px solid #333; border-radius: 4px; padding: 8px;
+      font-size: 12px; line-height: 1.6;
+    }
+    #events .ev-start { color: #f44; }
+    #events .ev-end { color: #888; }
+    #events .ev-heartbeat { color: #88f; }
+    #heartbeat-bar {
+      margin-top: 10px; padding: 8px 12px; background: #1a1a2a;
+      border-radius: 4px; font-size: 13px; color: #88f; display: none;
+    }
+  </style>
+</head>
+<body>
+  <h2>P25 LiveKit Listener</h2>
+  <div>
+    <label>LiveKit URL: <input id="url" value="ws://192.168.1.24:7880" size="40"></label>
+  </div>
+  <div style="margin-top:8px">
+    <button id="connect-btn" onclick="toggle()">Connect</button>
+    <button id="mute-all" onclick="muteAll()" style="display:none">Mute All</button>
+  </div>
+  <div id="status">Disconnected</div>
+  <div id="heartbeat-bar"></div>
+  <div id="tracks"></div>
+  <div id="audio-container"></div>
+  <b style="margin-top:20px;display:block">Activity:</b>
+  <div id="events"></div>
+
+  <script>
+    const { Room, RoomEvent } = LivekitClient;
+    let room = null;
+    let connected = false;
+    let unmutedTracks = new Set();
+    let audioElements = new Map();
+    // talkgroup ID -> { active: bool, source, freq }
+    let talkgroupState = new Map();
+    // Track name (e.g. "tg-1234") -> talkgroup ID
+    let trackNameToTg = new Map();
+    const MAX_EVENTS = 100;
+
+    function addEvent(cls, text) {
+      const div = document.getElementById('events');
+      const el = document.createElement('div');
+      el.className = cls;
+      const ts = new Date().toLocaleTimeString();
+      el.textContent = ts + ' ' + text;
+      div.insertBefore(el, div.firstChild);
+      while (div.children.length > MAX_EVENTS) {
+        div.removeChild(div.lastChild);
+      }
+    }
+
+    function parseTgFromTrackName(name) {
+      const m = name.match(/^tg-(\d+)$/);
+      return m ? parseInt(m[1], 10) : null;
+    }
+
+    async function getToken() {
+      const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" })).replace(/=/g, '');
+      const now = Math.floor(Date.now() / 1000);
+      const payload = btoa(JSON.stringify({
+        iss: "devkey",
+        sub: "web-listener-" + Math.random().toString(36).slice(2, 6),
+        iat: now,
+        nbf: now,
+        exp: now + 86400,
+        video: {
+          roomJoin: true,
+          room: "p25",
+          canSubscribe: true,
+          canPublish: false
+        }
+      })).replace(/=/g, '');
+
+      const enc = new TextEncoder();
+      const key = await crypto.subtle.importKey(
+        "raw", enc.encode("secret_that_you_should_change"),
+        { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+      );
+      const sig = await crypto.subtle.sign("HMAC", key, enc.encode(header + '.' + payload));
+      const sigB64 = btoa(String.fromCharCode(...new Uint8Array(sig)))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+
+      return header.replace(/\+/g, '-').replace(/\//g, '_')
+        + '.' + payload.replace(/\+/g, '-').replace(/\//g, '_')
+        + '.' + sigB64;
+    }
+
+    async function toggle() {
+      if (connected) {
+        await room.disconnect();
+        connected = false;
+        unmutedTracks.clear();
+        audioElements.clear();
+        talkgroupState.clear();
+        trackNameToTg.clear();
+        document.getElementById('connect-btn').textContent = 'Connect';
+        document.getElementById('mute-all').style.display = 'none';
+        document.getElementById('status').textContent = 'Disconnected';
+        document.getElementById('heartbeat-bar').style.display = 'none';
+        document.getElementById('tracks').innerHTML = '';
+        document.getElementById('audio-container').innerHTML = '';
+        return;
+      }
+
+      const url = document.getElementById('url').value;
+      const status = document.getElementById('status');
+      const btn = document.getElementById('connect-btn');
+
+      btn.disabled = true;
+      status.textContent = 'Connecting...';
+
+      try {
+        const token = await getToken();
+        room = new Room();
+
+        room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+          if (track.kind === 'audio') {
+            const el = track.attach();
+            el.id = 'audio-' + publication.trackSid;
+            el.muted = true;
+            document.getElementById('audio-container').appendChild(el);
+            audioElements.set(publication.trackSid, el);
+            const tg = parseTgFromTrackName(publication.trackName || '');
+            if (tg !== null) trackNameToTg.set(publication.trackSid, tg);
+            updateTrackList();
+          }
+        });
+
+        room.on(RoomEvent.TrackUnsubscribed, (track, publication) => {
+          track.detach().forEach(el => el.remove());
+          unmutedTracks.delete(publication.trackSid);
+          audioElements.delete(publication.trackSid);
+          trackNameToTg.delete(publication.trackSid);
+          updateTrackList();
+        });
+
+        room.on(RoomEvent.DataReceived, (payload, participant, kind, topic) => {
+          try {
+            const text = new TextDecoder().decode(payload);
+            const msg = JSON.parse(text);
+            if (msg.e === 'call_start') {
+              const freqMhz = (msg.freq / 1e6).toFixed(4);
+              talkgroupState.set(msg.tg, { active: true, source: msg.src, freq: msg.freq });
+              addEvent('ev-start', 'CALL tg=' + msg.tg + ' src=' + msg.src + ' ' + freqMhz + ' MHz');
+              updateTrackList();
+            } else if (msg.e === 'call_end') {
+              const state = talkgroupState.get(msg.tg);
+              if (state) state.active = false;
+              addEvent('ev-end', 'END  tg=' + msg.tg);
+              updateTrackList();
+            } else if (msg.e === 'heartbeat') {
+              const bar = document.getElementById('heartbeat-bar');
+              bar.style.display = 'block';
+              bar.textContent = 'Uptime: ' + msg.up + 's | TSBKs: ' + msg.tsbks +
+                ' | Voice channels: ' + msg.voices + ' | CC sync: ' + (msg.cc_sync ? 'YES' : 'NO');
+            }
+          } catch (e) {
+            console.warn('bad data message:', e);
+          }
+        });
+
+        room.on(RoomEvent.Disconnected, () => {
+          status.textContent = 'Disconnected';
+          btn.textContent = 'Connect';
+          document.getElementById('mute-all').style.display = 'none';
+          document.getElementById('heartbeat-bar').style.display = 'none';
+          connected = false;
+          unmutedTracks.clear();
+          audioElements.clear();
+          talkgroupState.clear();
+          trackNameToTg.clear();
+          document.getElementById('tracks').innerHTML = '';
+          document.getElementById('audio-container').innerHTML = '';
+        });
+
+        room.on(RoomEvent.Reconnecting, () => { status.textContent = 'Reconnecting...'; });
+        room.on(RoomEvent.Reconnected, () => { status.textContent = 'Connected - ' + room.name; });
+
+        await room.connect(url, token);
+        connected = true;
+        status.textContent = 'Connected - ' + room.name;
+        btn.textContent = 'Disconnect';
+        btn.disabled = false;
+        document.getElementById('mute-all').style.display = 'inline';
+        updateTrackList();
+      } catch (e) {
+        status.textContent = 'Error: ' + e.message;
+        btn.disabled = false;
+        console.error(e);
+      }
+    }
+
+    function toggleTrack(trackSid) {
+      if (unmutedTracks.has(trackSid)) {
+        unmutedTracks.delete(trackSid);
+      } else {
+        unmutedTracks.add(trackSid);
+      }
+      const el = audioElements.get(trackSid);
+      if (el) el.muted = !unmutedTracks.has(trackSid);
+      updateTrackList();
+    }
+
+    function muteAll() {
+      unmutedTracks.clear();
+      audioElements.forEach((el) => { el.muted = true; });
+      updateTrackList();
+    }
+
+    function updateTrackList() {
+      const div = document.getElementById('tracks');
+      div.innerHTML = '<b>Audio Tracks (click to listen):</b>';
+      if (!room) return;
+      room.remoteParticipants.forEach((participant) => {
+        participant.audioTrackPublications.forEach((pub) => {
+          const sid = pub.trackSid;
+          const tg = trackNameToTg.get(sid);
+          const state = tg !== undefined ? talkgroupState.get(tg) : null;
+          const isActive = state && state.active;
+          const isListening = unmutedTracks.has(sid);
+
+          const el = document.createElement('div');
+          let cls = 'track';
+          if (isActive) cls += ' active';
+          if (isListening) cls += ' listening';
+          el.className = cls;
+          el.onclick = () => toggleTrack(sid);
+
+          const labelText = pub.trackName || sid;
+          const stateText = isListening ? 'LISTENING' : 'muted';
+          const badge = isActive ? '<span class="call-badge">ACTIVE</span>' : '';
+
+          el.innerHTML =
+            '<span class="label">' + labelText + '</span>' +
+            '<span class="info">' + badge + '<span class="state">' + stateText + '</span></span>';
+          div.appendChild(el);
+        });
+      });
+      if (div.children.length === 1) {
+        const el = document.createElement('div');
+        el.className = 'track';
+        el.style.cursor = 'default';
+        el.textContent = 'No tracks yet - waiting for p25-server to publish...';
+        div.appendChild(el);
+      }
+    }
+  </script>
+</body>
+</html>

@@ -26,9 +26,6 @@ pub enum BroadcastEvent {
         samples: Vec<f32>,
     },
 
-    /// A text-formatted metadata event (TSBK, heartbeat, etc.).
-    Metadata(String),
-
     /// The CC pipeline acquired frame sync.
     CcSync,
 
@@ -97,15 +94,22 @@ impl EventSink for BroadcastSink {
                     cc_sync,
                 });
             }
-            DecoderEvent::Tsbk(ref tsbk) => {
-                let text = format!("{tsbk:?}");
-                let _ = self.sender.send(BroadcastEvent::Metadata(text));
-            }
+            DecoderEvent::Tsbk(_) | DecoderEvent::RecordingCompleted(_) => {}
             DecoderEvent::VoiceFrame(_vf) => {
-                // TODO: Convert IMBE VoiceFrame to PCM audio samples and send
-                // as BroadcastEvent::Audio. Requires IMBE-to-PCM decode and
-                // voice channel context (frequency, talkgroup, source) which
-                // are not carried in DecoderEvent::VoiceFrame today.
+                // Raw IMBE frame — ignored, we use AudioFrame for PCM.
+            }
+            DecoderEvent::AudioFrame {
+                frequency,
+                talkgroup,
+                source,
+                samples,
+            } => {
+                let _ = self.sender.send(BroadcastEvent::Audio {
+                    frequency,
+                    talkgroup,
+                    source,
+                    samples,
+                });
             }
             _ => {}
         }
