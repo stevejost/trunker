@@ -133,16 +133,21 @@ pub fn decode_trunked(
             if matches!(event, ReceiverEvent::Nid(_)) {
                 stats.cc_syncs += 1;
                 heartbeat.record_cc_sync();
-                if let Some(sink) = &mut event_sink {
-                    sink.handle(DecoderEvent::CcSync);
+                if let Some(sink) = &mut event_sink
+                    && !sink.handle(DecoderEvent::CcSync)
+                {
+                    tracing::info!("event sink requested shutdown");
+                    break;
                 }
             }
 
             // Forward TSBK events to the event sink.
             if let ReceiverEvent::Tsbk(ref tsbk) = event
                 && let Some(sink) = &mut event_sink
+                && !sink.handle(DecoderEvent::Tsbk(tsbk.clone()))
             {
-                sink.handle(DecoderEvent::Tsbk(tsbk.clone()));
+                tracing::info!("event sink requested shutdown");
+                break;
             }
 
             if config.json_output {
@@ -178,12 +183,20 @@ pub fn decode_trunked(
             &mut stdout,
         );
         // Forward voice frames to the event sink.
+        let mut sink_shutdown = false;
         if let Some(sink) = &mut event_sink {
             for voice_event in &voice_events {
-                if let ReceiverEvent::VoiceFrame(ref vf) = voice_event.event {
-                    sink.handle(DecoderEvent::VoiceFrame(vf.clone()));
+                if let ReceiverEvent::VoiceFrame(ref vf) = voice_event.event
+                    && !sink.handle(DecoderEvent::VoiceFrame(vf.clone()))
+                {
+                    sink_shutdown = true;
+                    break;
                 }
             }
+        }
+        if sink_shutdown {
+            tracing::info!("event sink requested shutdown");
+            break;
         }
 
         // Periodic heartbeat (independent of stats mode).
@@ -194,8 +207,11 @@ pub fn decode_trunked(
             channel_manager.active_channel_count() as u32,
         ) {
             emit_heartbeat_event(&hb_event, &mut stdout);
-            if let Some(sink) = &mut event_sink {
-                sink.handle(hb_event);
+            if let Some(sink) = &mut event_sink
+                && !sink.handle(hb_event)
+            {
+                tracing::info!("event sink requested shutdown");
+                break;
             }
         }
 
