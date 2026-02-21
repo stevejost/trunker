@@ -705,6 +705,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "p25"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ctrlc",
+ "libc",
+ "num-complex",
+ "serde_json",
+ "tempfile",
+ "tracing",
+ "tracing-subscriber",
+ "trunker",
+]
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1220,7 +1236,6 @@ dependencies = [
  "anyhow",
  "clap",
  "crossterm",
- "ctrlc",
  "libc",
  "num-complex",
  "ogg",
@@ -1234,7 +1249,6 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

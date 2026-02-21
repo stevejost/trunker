@@ -8,7 +8,7 @@ use trunker::monitor::state::MonitorState;
 /// Feed all 1223 lines from the SRRCS CQPSK sample through MonitorState.
 fn load_sample_state() -> MonitorState {
     let mut state = MonitorState::new(Duration::from_secs(3));
-    let jsonl = include_str!("../samples/op25_reference/trunker_cqpsk_output.jsonl");
+    let jsonl = include_str!("../../../samples/op25_reference/trunker_cqpsk_output.jsonl");
     for line in jsonl.lines() {
         state.process_message(line);
     }

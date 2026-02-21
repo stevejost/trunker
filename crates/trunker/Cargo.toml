@@ -1,0 +1,26 @@
+[package]
+name = "trunker"
+version = "0.1.0"
+edition = "2024"
+description = "P25 trunked radio decoder library"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.28"
+libc = "0.2"
+num-complex = "0.4"
+ogg = "0.9"
+opus = "0.3"
+rand = "0.9"
+rand_distr = "0.5"
+ratatui = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+soapysdr = "0.4"
+thiserror = "2"
+tracing = "0.1"
+
+[dev-dependencies]
+tempfile = "3"
