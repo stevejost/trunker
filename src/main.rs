@@ -1,7 +1,7 @@
-use std::io::IsTerminal;
+use std::io::{self, IsTerminal, LineWriter, Write};
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::{Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -172,7 +172,7 @@ enum Command {
         /// SDR read buffer depth in milliseconds (live SDR mode only).
         ///
         /// Larger values absorb more processing jitter but add latency.
-        #[arg(long, default_value_t = 250)]
+        #[arg(long, default_value_t = 500)]
         buffer_ms: u32,
     },
 
@@ -236,8 +236,25 @@ enum Command {
         /// SDR read buffer depth in milliseconds (live SDR mode only).
         ///
         /// Larger values absorb more processing jitter but add latency.
-        #[arg(long, default_value_t = 250)]
+        #[arg(long, default_value_t = 500)]
         buffer_ms: u32,
+
+        /// Maximum simultaneous voice channel pipelines.
+        ///
+        /// Limits CPU load by capping how many voice channels are decoded
+        /// in parallel. Grants beyond this limit are silently dropped.
+        /// Set to 0 to disable the limit.
+        #[arg(long, default_value_t = 10)]
+        max_voices: usize,
+
+        /// Emit full JSON lines for every decoded event (TSBK, voice frame,
+        /// link control, etc.) instead of periodic stats summaries.
+        ///
+        /// Default behavior prints a compact stats line every 10 seconds.
+        /// Use --json-output to get per-event JSON for piping to downstream
+        /// consumers like `p25 monitor`.
+        #[arg(long)]
+        json_output: bool,
     },
 
     /// Diagnostic tools for inspecting IQ files and debugging the DSP pipeline.
@@ -354,6 +371,8 @@ fn main() -> Result<()> {
             decode_audio,
             output_dir,
             buffer_ms,
+            max_voices,
+            json_output,
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
@@ -393,6 +412,12 @@ fn main() -> Result<()> {
                 ?output_dir,
                 "starting wideband trunked decoder"
             );
+            // max_voices=0 means unlimited; otherwise cap at the given value.
+            let max_voices = if max_voices == 0 {
+                None
+            } else {
+                Some(max_voices)
+            };
             decode_trunked(
                 sample_source,
                 sample_rate,
@@ -403,6 +428,8 @@ fn main() -> Result<()> {
                 call_timeout,
                 decode_audio,
                 output_dir.as_deref().map(Path::new),
+                max_voices,
+                json_output,
                 &running,
             )?;
         }
@@ -431,6 +458,37 @@ enum SampleSource {
     U8(U8Reader),
     /// Stream from a SoapySDR device.
     Soapy(SoapySource),
+}
+
+impl SampleSource {
+    /// Returns shared SDR reader stats handles, or `None` for file-based sources.
+    ///
+    /// Call this before the source is consumed by a `for` loop so that stats
+    /// remain accessible during iteration.
+    fn sdr_stats_handles(&self) -> Option<SdrStatsHandles> {
+        match self {
+            SampleSource::Soapy(source) => Some(SdrStatsHandles {
+                chunk_count: source.chunk_count_handle(),
+                overflow_count: source.overflow_count_handle(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// Shared atomic counters from the SDR reader thread.
+struct SdrStatsHandles {
+    chunk_count: Arc<AtomicU64>,
+    overflow_count: Arc<AtomicU64>,
+}
+
+impl SdrStatsHandles {
+    fn snapshot(&self) -> (u64, u64) {
+        (
+            self.chunk_count.load(Ordering::Relaxed),
+            self.overflow_count.load(Ordering::Relaxed),
+        )
+    }
 }
 
 impl Iterator for SampleSource {
@@ -565,6 +623,7 @@ fn decode_control_channel(
         sample_rate,
         modulation,
         nid_integrity,
+        sync_timeout_samples: Some(pipeline::CC_SYNC_TIMEOUT_SAMPLES),
     };
     let mut pipeline = ChannelPipeline::new(config)?;
     let mut ident_table = IdentTable::new();
@@ -591,6 +650,8 @@ fn decode_control_channel(
         None
     };
 
+    let mut stdout = LineWriter::new(io::stdout().lock());
+
     for iq_sample in source {
         if !running.load(Ordering::Relaxed) {
             tracing::info!("interrupted by signal");
@@ -611,7 +672,7 @@ fn decode_control_channel(
                 &mut decoder,
                 wav_writer.as_mut(),
                 event,
-                &mut std::io::stdout(),
+                &mut stdout,
             );
         }
     }
@@ -631,6 +692,100 @@ fn decode_control_channel(
     Ok(())
 }
 
+/// Periodic stats counters for the trunked decoder.
+///
+/// Accumulates event counts between stats report intervals. The `prev_*`
+/// fields track totals at the last report so deltas can be computed.
+struct TrunkStats {
+    /// CC sync detections since last report.
+    cc_syncs: u64,
+    /// Voice frames decoded since last report.
+    voice_frames: u64,
+    /// Total TSBKs at last report (for computing delta).
+    prev_tsbk_count: u64,
+    /// Total expired-timeout at last report.
+    prev_expired_timeout: u64,
+    /// Total expired-no-carrier at last report.
+    prev_expired_no_carrier: u64,
+    /// Total SDR chunks at last report (for computing delta).
+    prev_sdr_chunks: u64,
+    /// Accumulated raw IQ power (|sample|^2) over interval.
+    iq_power_sum: f64,
+    /// Number of samples accumulated for power measurement.
+    iq_power_count: u64,
+}
+
+/// Snapshot of current decoder state for stats reporting.
+struct StatsSnapshot {
+    elapsed_seconds: u64,
+    tsbk_count: u64,
+    active_voices: usize,
+    costas_freq: f32,
+    expired_timeout: u64,
+    expired_no_carrier: u64,
+    /// `(chunk_count, overflow_count)` from the SDR reader thread, if live.
+    sdr_stats: Option<(u64, u64)>,
+    /// Average raw IQ power (|sample|^2) over this interval.
+    iq_power_db: f32,
+}
+
+impl TrunkStats {
+    fn new() -> Self {
+        Self {
+            cc_syncs: 0,
+            voice_frames: 0,
+            prev_tsbk_count: 0,
+            prev_expired_timeout: 0,
+            prev_expired_no_carrier: 0,
+            prev_sdr_chunks: 0,
+            iq_power_sum: 0.0,
+            iq_power_count: 0,
+        }
+    }
+
+    /// Print a stats line and reset interval counters.
+    fn report(&mut self, snap: &StatsSnapshot, out: &mut impl Write) {
+        let tsbk_delta = snap.tsbk_count - self.prev_tsbk_count;
+        let expired_delta =
+            (snap.expired_timeout - self.prev_expired_timeout)
+            + (snap.expired_no_carrier - self.prev_expired_no_carrier);
+        let no_carrier_delta = snap.expired_no_carrier - self.prev_expired_no_carrier;
+
+        // Base stats line.
+        let _ = write!(
+            out,
+            "[{:>4}s] tsbks={} (+{}) voices={} frames={} cc_syncs={} \
+             costas_freq={:.4} iq_power={:.1}dB expired={} (no_carrier={})",
+            snap.elapsed_seconds,
+            snap.tsbk_count,
+            tsbk_delta,
+            snap.active_voices,
+            self.voice_frames,
+            self.cc_syncs,
+            snap.costas_freq,
+            snap.iq_power_db,
+            expired_delta,
+            no_carrier_delta,
+        );
+
+        // Append SDR reader thread stats when running live.
+        if let Some((chunks, overflows)) = snap.sdr_stats {
+            let chunk_delta = chunks - self.prev_sdr_chunks;
+            let _ = write!(out, " sdr_chunks={chunks} (+{chunk_delta}) overflows={overflows}");
+            self.prev_sdr_chunks = chunks;
+        }
+
+        let _ = writeln!(out);
+
+        // Reset interval counters.
+        self.cc_syncs = 0;
+        self.voice_frames = 0;
+        self.prev_tsbk_count = snap.tsbk_count;
+        self.prev_expired_timeout = snap.expired_timeout;
+        self.prev_expired_no_carrier = snap.expired_no_carrier;
+    }
+}
+
 /// Run the wideband trunked decoder (CC + voice channels).
 #[allow(clippy::too_many_arguments)]
 fn decode_trunked(
@@ -643,12 +798,15 @@ fn decode_trunked(
     call_timeout: f64,
     decode_audio: bool,
     output_dir: Option<&Path>,
+    max_voices: Option<usize>,
+    json_output: bool,
     running: &Arc<AtomicBool>,
 ) -> Result<()> {
     let config = PipelineConfig {
         sample_rate,
         modulation,
         nid_integrity,
+        sync_timeout_samples: Some(pipeline::CC_SYNC_TIMEOUT_SAMPLES),
     };
     let mut cc_pipeline = ChannelPipeline::new(config)?;
     let mut ident_table = IdentTable::new();
@@ -668,16 +826,31 @@ fn decode_trunked(
         nid_integrity,
         modulation,
         decode_audio,
+        max_channels: max_voices,
     });
 
     let mut recorder = output_dir.map(CallRecorder::new);
     let mut voice_events = Vec::new();
+    let mut stdout = LineWriter::new(io::stdout().lock());
+
+    // Grab shared SDR stats handles before the for loop consumes `source`.
+    let sdr_handles = source.sdr_stats_handles();
+
+    // Stats mode: report every 10 seconds instead of per-event JSON.
+    let stats_interval_samples = u64::from(sample_rate) * 10;
+    let mut stats = TrunkStats::new();
+    let mut samples_since_report: u64 = 0;
+    let mut total_elapsed_seconds: u64 = 0;
 
     for iq_sample in source {
         if !running.load(Ordering::Relaxed) {
             tracing::info!("interrupted by signal");
             break;
         }
+
+        // Accumulate raw IQ power for diagnostics.
+        stats.iq_power_sum += (iq_sample.re * iq_sample.re + iq_sample.im * iq_sample.im) as f64;
+        stats.iq_power_count += 1;
 
         // Shift CC to baseband if needed, then feed to CC pipeline.
         let cc_sample = match &mut cc_nco {
@@ -690,14 +863,31 @@ fn decode_trunked(
             // Keep voice channel Costas seed in sync with CC's locked state.
             channel_manager.update_costas_seed(&cc_pipeline);
 
-            handle_cc_event(
-                nac,
-                &mut ident_table,
-                &mut tsbk_count,
-                &mut channel_manager,
-                recorder.as_mut(),
-                event,
-            );
+            // Count CC syncs for stats mode.
+            if matches!(event, ReceiverEvent::Nid(_)) {
+                stats.cc_syncs += 1;
+            }
+
+            if json_output {
+                handle_cc_event(
+                    nac,
+                    &mut ident_table,
+                    &mut tsbk_count,
+                    &mut channel_manager,
+                    recorder.as_mut(),
+                    event,
+                    &mut stdout,
+                );
+            } else {
+                // Stats mode: process the event without JSON output.
+                handle_cc_event_quiet(
+                    &mut ident_table,
+                    &mut tsbk_count,
+                    &mut channel_manager,
+                    recorder.as_mut(),
+                    event,
+                );
+            }
         }
 
         // Feed to all active voice channel pipelines.
@@ -709,7 +899,44 @@ fn decode_trunked(
             {
                 log_completed_recording(&completed);
             }
-            emit_voice_event(voice_event);
+            if matches!(voice_event.event, ReceiverEvent::VoiceFrame(_)) {
+                stats.voice_frames += 1;
+            }
+            if json_output {
+                emit_voice_event(voice_event, &mut stdout);
+            }
+        }
+
+        // Periodic stats reporting.
+        if !json_output {
+            samples_since_report += 1;
+            if samples_since_report >= stats_interval_samples {
+                total_elapsed_seconds += 10;
+                let avg_power = if stats.iq_power_count > 0 {
+                    (stats.iq_power_sum / stats.iq_power_count as f64) as f32
+                } else {
+                    0.0
+                };
+                let iq_power_db = if avg_power > 0.0 {
+                    10.0 * avg_power.log10()
+                } else {
+                    -100.0
+                };
+                let snap = StatsSnapshot {
+                    elapsed_seconds: total_elapsed_seconds,
+                    tsbk_count,
+                    active_voices: channel_manager.active_channel_count(),
+                    costas_freq: cc_pipeline.costas_frequency(),
+                    expired_timeout: channel_manager.expired_timeout(),
+                    expired_no_carrier: channel_manager.expired_no_carrier(),
+                    sdr_stats: sdr_handles.as_ref().map(|h| h.snapshot()),
+                    iq_power_db,
+                };
+                stats.iq_power_sum = 0.0;
+                stats.iq_power_count = 0;
+                stats.report(&snap, &mut io::stderr());
+                samples_since_report = 0;
+            }
         }
     }
 
@@ -743,6 +970,7 @@ fn handle_cc_event(
     channel_manager: &mut ChannelManager,
     recorder: Option<&mut CallRecorder>,
     event: ReceiverEvent,
+    out: &mut impl Write,
 ) {
     match event {
         ReceiverEvent::Nid(nid) => {
@@ -775,13 +1003,52 @@ fn handle_cc_event(
             }
 
             let line = json::to_json_line(nac, &tsbk, ident_table);
-            println!("{line}");
+            if writeln!(out, "{line}").is_err() {
+                return; // BrokenPipe or other I/O error
+            }
             *tsbk_count += 1;
         }
         ReceiverEvent::Error(err) => {
             tracing::debug!(error = %err, "CC decode error");
         }
         // CC shouldn't produce voice events, but handle gracefully.
+        _ => {}
+    }
+}
+
+/// Handle a CC pipeline event in stats mode: update ident table, forward
+/// grant events, and bump counters -- but skip JSON output.
+fn handle_cc_event_quiet(
+    ident_table: &mut IdentTable,
+    tsbk_count: &mut u64,
+    channel_manager: &mut ChannelManager,
+    recorder: Option<&mut CallRecorder>,
+    event: ReceiverEvent,
+) {
+    match event {
+        ReceiverEvent::Tsbk(tsbk) => {
+            if matches!(tsbk.payload, TsbkPayload::IdentifierUpdate { .. }) {
+                ident_table.update(&tsbk);
+            }
+
+            let is_grant = matches!(
+                tsbk.header.opcode,
+                TsbkOpcode::GroupVoiceChannelGrant
+                    | TsbkOpcode::GroupVoiceChannelGrantUpdate
+                    | TsbkOpcode::GroupVoiceChannelGrantUpdateExplicit
+            );
+            if is_grant {
+                channel_manager.handle_grant(&tsbk, ident_table);
+                if let Some(recorder) = recorder {
+                    start_recording_for_grant(recorder, &tsbk, ident_table, channel_manager);
+                }
+            }
+
+            *tsbk_count += 1;
+        }
+        ReceiverEvent::Error(err) => {
+            tracing::debug!(error = %err, "CC decode error");
+        }
         _ => {}
     }
 }
@@ -863,7 +1130,7 @@ fn log_completed_recording(recording: &CompletedRecording) {
 
 /// Emit a voice channel event as a JSON line with call context
 /// (frequency, talkgroup, source from the CC grant).
-fn emit_voice_event(voice_event: &VoiceChannelEvent) {
+fn emit_voice_event(voice_event: &VoiceChannelEvent, out: &mut impl Write) {
     let nac = voice_event.nac;
     let freq = voice_event.frequency;
     let tg = voice_event.talkgroup;
@@ -872,23 +1139,23 @@ fn emit_voice_event(voice_event: &VoiceChannelEvent) {
     match &voice_event.event {
         ReceiverEvent::VoiceFrame(vf) => {
             let line = json::voice_frame_with_context(nac, vf, freq, tg, src);
-            println!("{line}");
+            let _ = writeln!(out, "{line}");
         }
         ReceiverEvent::LinkControl(lc) => {
             let line = json::link_control_with_context(nac, lc, freq, tg, src);
-            println!("{line}");
+            let _ = writeln!(out, "{line}");
         }
         ReceiverEvent::CryptoControl(cc) => {
             let line = json::crypto_control_with_context(nac, cc, freq, tg, src);
-            println!("{line}");
+            let _ = writeln!(out, "{line}");
         }
         ReceiverEvent::VoiceHeader(hdr) => {
             let line = json::voice_header_with_context(nac, hdr, freq, tg, src);
-            println!("{line}");
+            let _ = writeln!(out, "{line}");
         }
         ReceiverEvent::DataFragment(frag) => {
             let line = json::data_fragment_with_context(nac, *frag, freq, tg, src);
-            println!("{line}");
+            let _ = writeln!(out, "{line}");
         }
         ReceiverEvent::Nid(nid) => {
             tracing::debug!(
