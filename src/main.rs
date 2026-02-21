@@ -3,6 +3,7 @@ use std::path::Path;
 use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Instant, SystemTime};
 
 use anyhow::{Result, bail};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -175,6 +176,16 @@ enum Command {
         /// Larger values absorb more processing jitter but add latency.
         #[arg(long, default_value_t = 500)]
         buffer_ms: u32,
+
+        /// Heartbeat interval in seconds. Emits a periodic JSON heartbeat
+        /// line to stdout with decoder health metrics.
+        /// Defaults to 10 for live SDR, 0 (disabled) for file input.
+        #[arg(long)]
+        heartbeat_interval: Option<u64>,
+
+        /// Disable heartbeat JSON output.
+        #[arg(long)]
+        no_heartbeat: bool,
     },
 
     /// Decode a wideband P25 trunked system (control + voice channels).
@@ -256,6 +267,16 @@ enum Command {
         /// consumers like `p25 monitor`.
         #[arg(long)]
         json_output: bool,
+
+        /// Heartbeat interval in seconds. Emits a periodic JSON heartbeat
+        /// line to stdout with decoder health metrics.
+        /// Defaults to 10 for live SDR, 0 (disabled) for file input.
+        #[arg(long)]
+        heartbeat_interval: Option<u64>,
+
+        /// Disable heartbeat JSON output.
+        #[arg(long)]
+        no_heartbeat: bool,
     },
 
     /// Diagnostic tools for inspecting IQ files and debugging the DSP pipeline.
@@ -311,6 +332,8 @@ fn main() -> Result<()> {
             decode_audio,
             audio_file,
             buffer_ms,
+            heartbeat_interval,
+            no_heartbeat,
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
@@ -336,6 +359,10 @@ fn main() -> Result<()> {
                 0.0
             };
 
+            let is_sdr = matches!(sample_source, SampleSource::Soapy(_));
+            let heartbeat_seconds =
+                resolve_heartbeat_interval(heartbeat_interval, no_heartbeat, is_sdr);
+
             let pipeline_modulation: pipeline::Modulation = modulation.into();
             let nid_policy: NidIntegrityPolicy = nid_integrity.into();
             tracing::info!(
@@ -344,6 +371,7 @@ fn main() -> Result<()> {
                 center_freq,
                 modulation = ?modulation,
                 nid_integrity = ?nid_policy,
+                heartbeat_seconds,
                 "starting control channel decoder"
             );
             decode_control_channel(
@@ -354,6 +382,7 @@ fn main() -> Result<()> {
                 nid_policy,
                 decode_audio,
                 audio_file.as_deref(),
+                heartbeat_seconds,
                 &running,
             )?;
             check_device_error(&sample_source);
@@ -375,6 +404,8 @@ fn main() -> Result<()> {
             buffer_ms,
             max_voices,
             json_output,
+            heartbeat_interval,
+            no_heartbeat,
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
@@ -401,6 +432,10 @@ fn main() -> Result<()> {
             // --output-dir implies --decode-audio.
             let decode_audio = decode_audio || output_dir.is_some();
 
+            let is_sdr = matches!(sample_source, SampleSource::Soapy(_));
+            let heartbeat_seconds =
+                resolve_heartbeat_interval(heartbeat_interval, no_heartbeat, is_sdr);
+
             let pipeline_modulation: pipeline::Modulation = modulation.into();
             let nid_policy: NidIntegrityPolicy = nid_integrity.into();
             tracing::info!(
@@ -412,6 +447,7 @@ fn main() -> Result<()> {
                 nid_integrity = ?nid_policy,
                 call_timeout,
                 ?output_dir,
+                heartbeat_seconds,
                 "starting wideband trunked decoder"
             );
             // max_voices=0 means unlimited; otherwise cap at the given value.
@@ -432,6 +468,7 @@ fn main() -> Result<()> {
                 output_dir.as_deref().map(Path::new),
                 max_voices,
                 json_output,
+                heartbeat_seconds,
                 &running,
             )?;
             check_device_error(&sample_source);
@@ -639,10 +676,145 @@ fn resolve_gain(gain_control: &GainControl) -> Option<f64> {
     }
 }
 
+/// Default heartbeat interval for live SDR mode (seconds).
+const DEFAULT_HEARTBEAT_INTERVAL_SECONDS: u64 = 10;
+
+/// Resolve the effective heartbeat interval in seconds.
+///
+/// Returns 0 (disabled) when `--no-heartbeat` is set or when running from
+/// a file without an explicit `--heartbeat-interval`. Returns the user's
+/// explicit value if provided, or the default (10s) for live SDR mode.
+fn resolve_heartbeat_interval(
+    explicit_interval: Option<u64>,
+    no_heartbeat: bool,
+    is_sdr: bool,
+) -> u64 {
+    if no_heartbeat {
+        return 0;
+    }
+    if let Some(interval) = explicit_interval {
+        return interval;
+    }
+    if is_sdr {
+        DEFAULT_HEARTBEAT_INTERVAL_SECONDS
+    } else {
+        0
+    }
+}
+
+/// Tracks state for periodic heartbeat emission.
+struct HeartbeatState {
+    /// Wall-clock start time for uptime calculation.
+    start: Instant,
+    /// Samples processed since last heartbeat emission.
+    samples_in_interval: u64,
+    /// TSBK count at the last heartbeat emission.
+    prev_tsbk_count: u64,
+    /// Whether CC sync was observed during the current interval.
+    cc_sync_seen: bool,
+}
+
+impl HeartbeatState {
+    fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            samples_in_interval: 0,
+            prev_tsbk_count: 0,
+            cc_sync_seen: false,
+        }
+    }
+
+    /// Record a CC sync (NID event) during this interval.
+    fn record_cc_sync(&mut self) {
+        self.cc_sync_seen = true;
+    }
+
+    /// Check if a heartbeat should be emitted, and if so, emit it.
+    ///
+    /// Returns `true` if a heartbeat was emitted.
+    fn maybe_emit(
+        &mut self,
+        heartbeat_samples: u64,
+        heartbeat_seconds: u64,
+        tsbk_count: u64,
+        active_voice_channels: u32,
+        out: &mut impl Write,
+    ) -> bool {
+        self.samples_in_interval += 1;
+        if heartbeat_samples == 0 || self.samples_in_interval < heartbeat_samples {
+            return false;
+        }
+
+        let uptime = self.start.elapsed().as_secs();
+        let tsbk_delta = tsbk_count - self.prev_tsbk_count;
+        let tsbk_rate = if heartbeat_seconds > 0 {
+            tsbk_delta as f64 / heartbeat_seconds as f64
+        } else {
+            0.0
+        };
+
+        let heartbeat = json::HeartbeatJson {
+            event_type: "heartbeat",
+            timestamp: format_utc_timestamp(SystemTime::now()),
+            uptime_seconds: uptime,
+            tsbk_count,
+            tsbk_rate,
+            active_voice_channels,
+            cc_sync: self.cc_sync_seen,
+        };
+        let line = json::heartbeat_line(&heartbeat);
+        let _ = writeln!(out, "{line}");
+
+        self.prev_tsbk_count = tsbk_count;
+        self.samples_in_interval = 0;
+        self.cc_sync_seen = false;
+        true
+    }
+}
+
+/// Format a `SystemTime` as an ISO 8601 UTC timestamp string.
+///
+/// Output format: `YYYY-MM-DDTHH:MM:SSZ`
+fn format_utc_timestamp(time: SystemTime) -> String {
+    let duration = time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default();
+    let total_seconds = duration.as_secs();
+
+    let days = (total_seconds / 86400) as i64;
+    let time_of_day = total_seconds % 86400;
+    let hour = time_of_day / 3600;
+    let minute = (time_of_day % 3600) / 60;
+    let second = time_of_day % 60;
+
+    // Reuse the same algorithm from call_audio.rs.
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+/// Convert days since 1970-01-01 to a civil date (year, month, day).
+///
+/// Howard Hinnant's algorithm. Duplicated from `output::call_audio` to
+/// avoid making that module's internal function public.
+fn civil_from_days(days: i64) -> (i32, u32, u32) {
+    let z = days + 719468;
+    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = (yoe as i64 + era * 400) as i32;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d)
+}
+
 /// Run the control channel decode pipeline.
 ///
 /// * `offset_hz` - NCO frequency offset in hertz. When non-zero, each sample
 ///   is shifted by this amount before entering the pipeline.
+/// * `heartbeat_seconds` - Heartbeat interval in seconds. 0 = disabled.
 #[allow(clippy::too_many_arguments)]
 fn decode_control_channel(
     source: &mut SampleSource,
@@ -652,6 +824,7 @@ fn decode_control_channel(
     nid_integrity: NidIntegrityPolicy,
     decode_audio: bool,
     audio_file: Option<&str>,
+    heartbeat_seconds: u64,
     running: &Arc<AtomicBool>,
 ) -> Result<()> {
     let config = PipelineConfig {
@@ -685,6 +858,9 @@ fn decode_control_channel(
         None
     };
 
+    let heartbeat_samples = u64::from(sample_rate) * heartbeat_seconds;
+    let mut heartbeat = HeartbeatState::new();
+
     let mut stdout = LineWriter::new(io::stdout().lock());
 
     for iq_sample in source.by_ref() {
@@ -699,6 +875,9 @@ fn decode_control_channel(
         };
 
         if let Some(event) = pipeline.process_sample(sample) {
+            if matches!(event, ReceiverEvent::Nid(_)) {
+                heartbeat.record_cc_sync();
+            }
             let nac = pipeline.current_nac();
             event_handler::handle_receiver_event(
                 nac,
@@ -710,6 +889,15 @@ fn decode_control_channel(
                 &mut stdout,
             );
         }
+
+        // CC mode has no voice channels.
+        heartbeat.maybe_emit(
+            heartbeat_samples,
+            heartbeat_seconds,
+            tsbk_count,
+            0,
+            &mut stdout,
+        );
     }
 
     if let Some(writer) = wav_writer {
@@ -837,6 +1025,7 @@ fn decode_trunked(
     output_dir: Option<&Path>,
     max_voices: Option<usize>,
     json_output: bool,
+    heartbeat_seconds: u64,
     running: &Arc<AtomicBool>,
 ) -> Result<()> {
     let config = PipelineConfig {
@@ -872,6 +1061,9 @@ fn decode_trunked(
 
     let sdr_handles = source.sdr_stats_handles();
 
+    let heartbeat_samples = u64::from(sample_rate) * heartbeat_seconds;
+    let mut heartbeat = HeartbeatState::new();
+
     // Stats mode: report every 10 seconds instead of per-event JSON.
     let stats_interval_samples = u64::from(sample_rate) * 10;
     let mut stats = TrunkStats::new();
@@ -899,9 +1091,10 @@ fn decode_trunked(
             // Keep voice channel Costas seed in sync with CC's locked state.
             channel_manager.update_costas_seed(&cc_pipeline);
 
-            // Count CC syncs for stats mode.
+            // Count CC syncs for stats mode and heartbeat.
             if matches!(event, ReceiverEvent::Nid(_)) {
                 stats.cc_syncs += 1;
+                heartbeat.record_cc_sync();
             }
 
             if json_output {
@@ -942,6 +1135,15 @@ fn decode_trunked(
                 emit_voice_event(voice_event, &mut stdout);
             }
         }
+
+        // Periodic heartbeat (independent of stats mode).
+        heartbeat.maybe_emit(
+            heartbeat_samples,
+            heartbeat_seconds,
+            tsbk_count,
+            channel_manager.active_channel_count() as u32,
+            &mut stdout,
+        );
 
         // Periodic stats reporting.
         if !json_output {
@@ -1679,5 +1881,144 @@ mod tests {
     #[test]
     fn exit_code_device_error_is_two() {
         assert_eq!(EXIT_CODE_DEVICE_ERROR, 2);
+    }
+
+    // -- Heartbeat tests --
+
+    #[test]
+    fn resolve_heartbeat_sdr_default() {
+        assert_eq!(resolve_heartbeat_interval(None, false, true), 10);
+    }
+
+    #[test]
+    fn resolve_heartbeat_file_default() {
+        assert_eq!(resolve_heartbeat_interval(None, false, false), 0);
+    }
+
+    #[test]
+    fn resolve_heartbeat_explicit_overrides_default() {
+        assert_eq!(resolve_heartbeat_interval(Some(30), false, true), 30);
+        assert_eq!(resolve_heartbeat_interval(Some(5), false, false), 5);
+    }
+
+    #[test]
+    fn resolve_heartbeat_no_heartbeat_disables() {
+        assert_eq!(resolve_heartbeat_interval(None, true, true), 0);
+        assert_eq!(resolve_heartbeat_interval(Some(10), true, true), 0);
+        assert_eq!(resolve_heartbeat_interval(Some(5), true, false), 0);
+    }
+
+    #[test]
+    fn resolve_heartbeat_zero_explicit_disables() {
+        assert_eq!(resolve_heartbeat_interval(Some(0), false, true), 0);
+    }
+
+    #[test]
+    fn heartbeat_state_emits_after_interval() {
+        let mut state = HeartbeatState::new();
+        let mut buf = Vec::new();
+        let heartbeat_samples = 10u64;
+        let heartbeat_seconds = 1u64;
+        for _ in 0..9 {
+            assert!(!state.maybe_emit(heartbeat_samples, heartbeat_seconds, 5, 0, &mut buf));
+        }
+        assert!(buf.is_empty());
+        assert!(state.maybe_emit(heartbeat_samples, heartbeat_seconds, 5, 0, &mut buf));
+        assert!(!buf.is_empty());
+        let line = String::from_utf8(buf.clone()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(v["type"], "heartbeat");
+        assert_eq!(v["tsbk_count"], 5);
+        assert_eq!(v["active_voice_channels"], 0);
+    }
+
+    #[test]
+    fn heartbeat_state_disabled_when_zero() {
+        let mut state = HeartbeatState::new();
+        let mut buf = Vec::new();
+        for _ in 0..100 {
+            assert!(!state.maybe_emit(0, 0, 10, 2, &mut buf));
+        }
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn heartbeat_state_tracks_cc_sync() {
+        let mut state = HeartbeatState::new();
+        let mut buf = Vec::new();
+        state.record_cc_sync();
+        state.maybe_emit(1, 1, 0, 0, &mut buf);
+        let line = String::from_utf8(buf.clone()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(v["cc_sync"], true);
+        buf.clear();
+        state.maybe_emit(1, 1, 0, 0, &mut buf);
+        let line2 = String::from_utf8(buf).unwrap();
+        let v2: serde_json::Value = serde_json::from_str(line2.trim()).unwrap();
+        assert_eq!(v2["cc_sync"], false);
+    }
+
+    #[test]
+    fn heartbeat_tsbk_rate_calculation() {
+        let mut state = HeartbeatState::new();
+        let mut buf = Vec::new();
+        for _ in 0..4 {
+            state.maybe_emit(5, 5, 20, 0, &mut buf);
+        }
+        buf.clear();
+        state.maybe_emit(5, 5, 20, 0, &mut buf);
+        let line = String::from_utf8(buf).unwrap();
+        let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+        assert_eq!(v["tsbk_count"], 20);
+        assert!((v["tsbk_rate"].as_f64().unwrap() - 4.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn format_utc_timestamp_epoch() {
+        let ts = format_utc_timestamp(SystemTime::UNIX_EPOCH);
+        assert_eq!(ts, "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn format_utc_timestamp_known_date() {
+        use std::time::Duration;
+        let time = SystemTime::UNIX_EPOCH + Duration::from_secs(1771601445);
+        let ts = format_utc_timestamp(time);
+        assert_eq!(ts, "2026-02-20T15:30:45Z");
+    }
+
+    #[test]
+    fn cli_cc_heartbeat_interval_parses() {
+        let cli = Cli::try_parse_from([
+            "p25", "cc", "--input", "test.iq", "--heartbeat-interval", "30",
+        ]);
+        assert!(cli.is_ok());
+        match cli.unwrap().command {
+            Command::Cc { heartbeat_interval, .. } => assert_eq!(heartbeat_interval, Some(30)),
+            _ => panic!("expected Cc command"),
+        }
+    }
+
+    #[test]
+    fn cli_cc_no_heartbeat_parses() {
+        let cli = Cli::try_parse_from(["p25", "cc", "--input", "test.iq", "--no-heartbeat"]);
+        assert!(cli.is_ok());
+        match cli.unwrap().command {
+            Command::Cc { no_heartbeat, .. } => assert!(no_heartbeat),
+            _ => panic!("expected Cc command"),
+        }
+    }
+
+    #[test]
+    fn cli_trunk_heartbeat_interval_parses() {
+        let cli = Cli::try_parse_from([
+            "p25", "trunk", "--input", "wideband.iq", "--center-freq", "852350000",
+            "--heartbeat-interval", "5",
+        ]);
+        assert!(cli.is_ok());
+        match cli.unwrap().command {
+            Command::Trunk { heartbeat_interval, .. } => assert_eq!(heartbeat_interval, Some(5)),
+            _ => panic!("expected Trunk command"),
+        }
     }
 }
