@@ -236,6 +236,35 @@ pub fn decode_trunked(
 // CC event handling (trunked mode)
 // ---------------------------------------------------------------------------
 
+/// Process a TSBK: update ident table, forward grants to the channel
+/// manager, and start recordings. Returns `true` if it was a TSBK event.
+fn process_tsbk(
+    ident_table: &mut IdentTable,
+    tsbk_count: &mut u64,
+    channel_manager: &mut ChannelManager,
+    recorder: Option<&mut CallRecorder>,
+    tsbk: &Tsbk,
+) {
+    if matches!(tsbk.payload, TsbkPayload::IdentifierUpdate { .. }) {
+        ident_table.update(tsbk);
+    }
+
+    let is_grant = matches!(
+        tsbk.header.opcode,
+        TsbkOpcode::GroupVoiceChannelGrant
+            | TsbkOpcode::GroupVoiceChannelGrantUpdate
+            | TsbkOpcode::GroupVoiceChannelGrantUpdateExplicit
+    );
+    if is_grant {
+        channel_manager.handle_grant(tsbk, ident_table);
+        if let Some(recorder) = recorder {
+            start_recording_for_grant(recorder, tsbk, ident_table, channel_manager);
+        }
+    }
+
+    *tsbk_count += 1;
+}
+
 /// Handle a CC pipeline event: print JSON, update ident table, forward
 /// grant events to the channel manager, and start recordings.
 fn handle_cc_event(
@@ -257,29 +286,9 @@ fn handle_cc_event(
             );
         }
         ReceiverEvent::Tsbk(tsbk) => {
-            if matches!(tsbk.payload, TsbkPayload::IdentifierUpdate { .. }) {
-                ident_table.update(&tsbk);
-            }
-
-            // Forward grant events to channel manager.
-            let is_grant = matches!(
-                tsbk.header.opcode,
-                TsbkOpcode::GroupVoiceChannelGrant
-                    | TsbkOpcode::GroupVoiceChannelGrantUpdate
-                    | TsbkOpcode::GroupVoiceChannelGrantUpdateExplicit
-            );
-            if is_grant {
-                channel_manager.handle_grant(&tsbk, ident_table);
-                if let Some(recorder) = recorder {
-                    start_recording_for_grant(recorder, &tsbk, ident_table, channel_manager);
-                }
-            }
-
+            process_tsbk(ident_table, tsbk_count, channel_manager, recorder, &tsbk);
             let line = json::to_json_line(nac, &tsbk, ident_table);
-            if writeln!(out, "{line}").is_err() {
-                return; // BrokenPipe or other I/O error
-            }
-            *tsbk_count += 1;
+            let _ = writeln!(out, "{line}");
         }
         ReceiverEvent::Error(err) => {
             tracing::debug!(error = %err, "CC decode error");
@@ -300,24 +309,7 @@ fn handle_cc_event_quiet(
 ) {
     match event {
         ReceiverEvent::Tsbk(tsbk) => {
-            if matches!(tsbk.payload, TsbkPayload::IdentifierUpdate { .. }) {
-                ident_table.update(&tsbk);
-            }
-
-            let is_grant = matches!(
-                tsbk.header.opcode,
-                TsbkOpcode::GroupVoiceChannelGrant
-                    | TsbkOpcode::GroupVoiceChannelGrantUpdate
-                    | TsbkOpcode::GroupVoiceChannelGrantUpdateExplicit
-            );
-            if is_grant {
-                channel_manager.handle_grant(&tsbk, ident_table);
-                if let Some(recorder) = recorder {
-                    start_recording_for_grant(recorder, &tsbk, ident_table, channel_manager);
-                }
-            }
-
-            *tsbk_count += 1;
+            process_tsbk(ident_table, tsbk_count, channel_manager, recorder, &tsbk);
         }
         ReceiverEvent::Error(err) => {
             tracing::debug!(error = %err, "CC decode error");
