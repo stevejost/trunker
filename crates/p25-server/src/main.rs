@@ -122,11 +122,10 @@ async fn main() -> Result<()> {
         .map(|s| {
             let (key, value) = s
                 .split_once('=')
-                .ok_or_else(|| anyhow::anyhow!("invalid setting '{s}': expected key=value"))
-                .unwrap();
-            (key.to_string(), value.to_string())
+                .ok_or_else(|| anyhow::anyhow!("invalid setting '{s}': expected key=value"))?;
+            Ok((key.to_string(), value.to_string()))
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     // Open SDR device.
     let gain = if cli.auto_gain { None } else { cli.gain };
