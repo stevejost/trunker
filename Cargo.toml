@@ -1,3 +1,4 @@
 [workspace]
-members = ["crates/trunker", "crates/p25"]
+members = ["crates/trunker", "crates/p25", "crates/p25-server"]
+default-members = ["crates/trunker", "crates/p25"]
 resolver = "3"
