@@ -6,6 +6,7 @@
 pub mod call_tracker;
 pub mod channel_manager;
 pub mod debug;
+pub mod decode;
 pub mod dsp;
 pub mod monitor;
 pub mod output;

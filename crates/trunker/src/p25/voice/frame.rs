@@ -18,7 +18,7 @@ use crate::p25::error::P25Error;
 use crate::p25::types::Dibit;
 
 /// Decoded IMBE voice frame containing 88 bits of voice data.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct VoiceFrame {
     /// Data chunks u_0 through u_7.
     ///
