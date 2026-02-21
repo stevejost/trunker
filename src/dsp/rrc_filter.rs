@@ -39,6 +39,12 @@ impl RrcFilter {
         }
     }
 
+    /// Clear the delay line for re-acquisition.
+    pub fn reset(&mut self) {
+        self.delay_line.fill(0.0);
+        self.delay_index = 0;
+    }
+
     /// Process one baseband sample through the matched filter.
     #[inline]
     pub fn process(&mut self, sample: f32) -> f32 {
@@ -128,6 +134,12 @@ impl ComplexRrcFilter {
             filter_i: RrcFilter::new(symbol_rate, sample_rate, excess_bw, num_symbols),
             filter_q: RrcFilter::new(symbol_rate, sample_rate, excess_bw, num_symbols),
         }
+    }
+
+    /// Clear both I and Q delay lines for re-acquisition.
+    pub fn reset(&mut self) {
+        self.filter_i.reset();
+        self.filter_q.reset();
     }
 
     /// Process one complex sample through the matched filter.

@@ -51,6 +51,14 @@ impl Agc {
         }
     }
 
+    /// Reset the power estimate to its initial value.
+    ///
+    /// Call this when the signal path is being reset for re-acquisition
+    /// so the AGC starts fresh instead of holding stale gain.
+    pub fn reset(&mut self) {
+        self.power_estimate = self.reference * self.reference;
+    }
+
     /// Current gain factor applied to input samples.
     ///
     /// Computed as `reference / sqrt(power_estimate)`. Higher values

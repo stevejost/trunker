@@ -53,6 +53,16 @@ impl DecimatingFilter {
         }
     }
 
+    /// Clear the delay line and reset the decimation counter.
+    ///
+    /// Call this when upstream state has been invalidated (e.g., after
+    /// a sync timeout reset) so stale samples don't corrupt the output.
+    pub fn reset(&mut self) {
+        self.delay_line.fill(Complex::new(0.0, 0.0));
+        self.delay_index = 0;
+        self.decimation_counter = self.decimation_factor;
+    }
+
     /// Process one input sample, returning a filtered output if this
     /// sample lands on a decimation boundary.
     #[inline]

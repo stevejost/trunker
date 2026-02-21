@@ -34,6 +34,11 @@ impl DifferentialDecoder {
         }
     }
 
+    /// Reset the previous sample for re-acquisition.
+    pub fn reset(&mut self) {
+        self.previous = Complex::new(1.0, 0.0);
+    }
+
     /// Compute the complex phase difference from the previous symbol.
     ///
     /// Returns `x[n] * conj(x[n-1])` — the raw differential product.
