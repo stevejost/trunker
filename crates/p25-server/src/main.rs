@@ -180,10 +180,27 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Spawn room event logger.
+    // Spawn room event handler: log connection state changes and signal
+    // shutdown on permanent disconnect.
+    let room_running = running.clone();
     tokio::spawn(async move {
         while let Some(event) = room_events.recv().await {
-            tracing::debug!(?event, "LiveKit room event");
+            match event {
+                RoomEvent::Reconnecting => {
+                    tracing::warn!("LiveKit connection lost, reconnecting...");
+                }
+                RoomEvent::Reconnected => {
+                    tracing::info!("LiveKit reconnected");
+                }
+                RoomEvent::Disconnected { reason } => {
+                    tracing::error!(?reason, "LiveKit disconnected, shutting down");
+                    room_running.store(false, Ordering::Relaxed);
+                    break;
+                }
+                _ => {
+                    tracing::debug!(?event, "LiveKit room event");
+                }
+            }
         }
     });
 
