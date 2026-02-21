@@ -504,13 +504,8 @@ mod tests {
         assert_eq!(recording.end_reason, EndReason::Timeout);
         assert!(recording.audio_file.is_some());
 
-        let second_path =
-            recording_path(recorder.recordings.get(&freq).unwrap()).to_path_buf();
-        assert_eq!(
-            recorder.active_recording_count(),
-            1,
-            "new call is pending"
-        );
+        let second_path = recording_path(recorder.recordings.get(&freq).unwrap()).to_path_buf();
+        assert_eq!(recorder.active_recording_count(), 1, "new call is pending");
         assert!(
             first_path.exists(),
             "first file should be finalized on disk"
@@ -627,8 +622,7 @@ mod tests {
         recorder.start_call(freq, test_talkgroup(), test_source());
         assert!(recorder.has_active_recording(&freq));
         assert_eq!(recorder.active_recording_count(), 1);
-        let original_path =
-            recording_path(recorder.recordings.get(&freq).unwrap()).to_path_buf();
+        let original_path = recording_path(recorder.recordings.get(&freq).unwrap()).to_path_buf();
 
         // Simulate a grant update arriving before first audio — the caller
         // checks has_active_recording() and should NOT call start_call again.
@@ -643,8 +637,7 @@ mod tests {
             recorder.recordings.get(&freq),
             Some(RecordingState::Active(_, _))
         ));
-        let active_path =
-            recording_path(recorder.recordings.get(&freq).unwrap()).to_path_buf();
+        let active_path = recording_path(recorder.recordings.get(&freq).unwrap()).to_path_buf();
         assert_eq!(original_path, active_path, "path should not change");
     }
 
@@ -668,10 +661,22 @@ mod tests {
         assert_eq!(recordings.len(), 2);
         assert_eq!(recorder.active_recording_count(), 0);
 
-        let with_audio = recordings.iter().find(|r| r.talkgroup == TalkgroupId::new(100)).unwrap();
-        assert!(with_audio.audio_file.is_some(), "active recording should have a file");
+        let with_audio = recordings
+            .iter()
+            .find(|r| r.talkgroup == TalkgroupId::new(100))
+            .unwrap();
+        assert!(
+            with_audio.audio_file.is_some(),
+            "active recording should have a file"
+        );
 
-        let without_audio = recordings.iter().find(|r| r.talkgroup == TalkgroupId::new(200)).unwrap();
-        assert!(without_audio.audio_file.is_none(), "pending recording should have no file");
+        let without_audio = recordings
+            .iter()
+            .find(|r| r.talkgroup == TalkgroupId::new(200))
+            .unwrap();
+        assert!(
+            without_audio.audio_file.is_none(),
+            "pending recording should have no file"
+        );
     }
 }

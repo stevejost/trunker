@@ -15,6 +15,7 @@ use trunker::output::call_recorder::{CallRecorder, CompletedRecording};
 use trunker::output::call_writer::AudioFormat;
 use trunker::output::event_handler;
 use trunker::output::json;
+use trunker::output::time::format_utc_timestamp;
 use trunker::output::wav::WavWriter;
 use trunker::p25::ident::IdentTable;
 use trunker::p25::nid::NidIntegrityPolicy;
@@ -798,44 +799,6 @@ impl HeartbeatState {
         self.cc_sync_seen = false;
         true
     }
-}
-
-/// Format a `SystemTime` as an ISO 8601 UTC timestamp string.
-///
-/// Output format: `YYYY-MM-DDTHH:MM:SSZ`
-fn format_utc_timestamp(time: SystemTime) -> String {
-    let duration = time
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default();
-    let total_seconds = duration.as_secs();
-
-    let days = (total_seconds / 86400) as i64;
-    let time_of_day = total_seconds % 86400;
-    let hour = time_of_day / 3600;
-    let minute = (time_of_day % 3600) / 60;
-    let second = time_of_day % 60;
-
-    // Reuse the same algorithm from call_audio.rs.
-    let (year, month, day) = civil_from_days(days);
-    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
-}
-
-/// Convert days since 1970-01-01 to a civil date (year, month, day).
-///
-/// Howard Hinnant's algorithm. Duplicated from `output::call_audio` to
-/// avoid making that module's internal function public.
-fn civil_from_days(days: i64) -> (i32, u32, u32) {
-    let z = days + 719468;
-    let era = (if z >= 0 { z } else { z - 146096 }) / 146097;
-    let doe = (z - era * 146097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = (yoe as i64 + era * 400) as i32;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
 }
 
 /// Run the control channel decode pipeline.
@@ -2003,27 +1966,20 @@ mod tests {
     }
 
     #[test]
-    fn format_utc_timestamp_epoch() {
-        let ts = format_utc_timestamp(SystemTime::UNIX_EPOCH);
-        assert_eq!(ts, "1970-01-01T00:00:00Z");
-    }
-
-    #[test]
-    fn format_utc_timestamp_known_date() {
-        use std::time::Duration;
-        let time = SystemTime::UNIX_EPOCH + Duration::from_secs(1771601445);
-        let ts = format_utc_timestamp(time);
-        assert_eq!(ts, "2026-02-20T15:30:45Z");
-    }
-
-    #[test]
     fn cli_cc_heartbeat_interval_parses() {
         let cli = Cli::try_parse_from([
-            "p25", "cc", "--input", "test.iq", "--heartbeat-interval", "30",
+            "p25",
+            "cc",
+            "--input",
+            "test.iq",
+            "--heartbeat-interval",
+            "30",
         ]);
         assert!(cli.is_ok());
         match cli.unwrap().command {
-            Command::Cc { heartbeat_interval, .. } => assert_eq!(heartbeat_interval, Some(30)),
+            Command::Cc {
+                heartbeat_interval, ..
+            } => assert_eq!(heartbeat_interval, Some(30)),
             _ => panic!("expected Cc command"),
         }
     }
@@ -2041,12 +1997,20 @@ mod tests {
     #[test]
     fn cli_trunk_heartbeat_interval_parses() {
         let cli = Cli::try_parse_from([
-            "p25", "trunk", "--input", "wideband.iq", "--center-freq", "852350000",
-            "--heartbeat-interval", "5",
+            "p25",
+            "trunk",
+            "--input",
+            "wideband.iq",
+            "--center-freq",
+            "852350000",
+            "--heartbeat-interval",
+            "5",
         ]);
         assert!(cli.is_ok());
         match cli.unwrap().command {
-            Command::Trunk { heartbeat_interval, .. } => assert_eq!(heartbeat_interval, Some(5)),
+            Command::Trunk {
+                heartbeat_interval, ..
+            } => assert_eq!(heartbeat_interval, Some(5)),
             _ => panic!("expected Trunk command"),
         }
     }
