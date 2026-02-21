@@ -225,6 +225,7 @@ fn decode_cc(
         sample_rate: file.sample_rate,
         modulation,
         nid_integrity,
+        sync_timeout_samples: Some(crate::pipeline::CC_SYNC_TIMEOUT_SAMPLES),
     };
     let mut pipeline = ChannelPipeline::new(config)?;
     let mut ident_table = IdentTable::new();
@@ -286,6 +287,7 @@ fn decode_voice(
         sample_rate: file.sample_rate,
         modulation,
         nid_integrity,
+        sync_timeout_samples: Some(crate::pipeline::CC_SYNC_TIMEOUT_SAMPLES),
     };
     let mut pipeline = ChannelPipeline::new(config)?;
     let mut ident_table = IdentTable::new();

@@ -22,6 +22,16 @@ use crate::p25::types::{Dibit, Nac};
 /// Target IF rate after all decimation: 24 kHz (5 samples/symbol at 4800 baud).
 const CHANNEL_RATE: u32 = 24_000;
 
+/// Default sync timeout for CC pipelines: 2500 post-decimation samples (~104 ms).
+///
+/// At the 24 kHz channel rate (5 samples per 4800-baud symbol), 2500 samples
+/// equals 500 symbol periods. This is enough time for normal inter-data-unit
+/// gaps but short enough to recover from a stuck PLL within a few hundred ms.
+///
+/// The timeout counts post-decimation samples (not symbols) so that it fires
+/// even when the demodulator is unlocked and stops producing symbol events.
+pub const CC_SYNC_TIMEOUT_SAMPLES: u32 = 24_000;
+
 /// Reference filter parameters for first and final decimation stages.
 ///
 /// This reference produces moderate tap counts that preserve CQPSK phase
@@ -249,6 +259,15 @@ pub struct PipelineConfig {
     pub modulation: Modulation,
     /// NID integrity policy for accepting/rejecting data units.
     pub nid_integrity: NidIntegrityPolicy,
+    /// Post-decimation samples without frame sync before resetting the
+    /// demod for re-acquisition. `None` disables the timeout entirely.
+    ///
+    /// CC pipelines use [`CC_SYNC_TIMEOUT_SAMPLES`] (24000, ~1 s) to
+    /// allow cold-start re-acquisition after PLL divergence. Voice channel pipelines should
+    /// set `None` — they need 250 ms-1 s for initial acquisition, and
+    /// zombie channels are handled by the acquisition timeout in
+    /// [`ChannelManager`].
+    pub sync_timeout_samples: Option<u32>,
 }
 
 /// Per-channel DSP and protocol decode pipeline.
@@ -269,6 +288,12 @@ pub struct ChannelPipeline {
     current_nac: Nac,
     /// Total input samples processed.
     sample_count: u64,
+    /// Post-decimation samples received while not synced. When this
+    /// exceeds the configured timeout, the Costas loop and Gardner TED
+    /// are reset to allow re-acquisition.
+    unsynced_samples: u32,
+    /// Sync timeout threshold in post-decimation samples (`None` = disabled).
+    sync_timeout_samples: Option<u32>,
 }
 
 impl ChannelPipeline {
@@ -319,6 +344,8 @@ impl ChannelPipeline {
             synced: false,
             current_nac: Nac::new(0),
             sample_count: 0,
+            unsynced_samples: 0,
+            sync_timeout_samples: config.sync_timeout_samples,
         })
     }
 
@@ -336,6 +363,17 @@ impl ChannelPipeline {
         }
         let filtered = current;
 
+        // Check sync timeout on every post-decimation sample so it fires
+        // even when the demodulator is unlocked and stops producing symbols.
+        if !self.synced
+            && let Some(timeout) = self.sync_timeout_samples
+        {
+            self.unsynced_samples += 1;
+            if self.unsynced_samples >= timeout {
+                self.reset_tracking();
+            }
+        }
+
         // Demodulate through the selected path.
         let event = match &mut self.demod_path {
             DemodPath::C4fm {
@@ -352,6 +390,7 @@ impl ChannelPipeline {
 
         match event {
             Some(SymbolEvent::SyncDetected) => {
+                self.unsynced_samples = 0;
                 self.handle_sync();
                 None
             }
@@ -381,6 +420,13 @@ impl ChannelPipeline {
         }
     }
 
+    /// Return the Costas loop frequency from a CQPSK pipeline.
+    ///
+    /// Returns `0.0` for C4FM pipelines (no Costas loop).
+    pub fn costas_frequency(&self) -> f32 {
+        self.costas_state().map_or(0.0, |(_, freq)| freq)
+    }
+
     /// Seed the Costas loop with phase and frequency from another
     /// locked pipeline (e.g., the control channel).
     ///
@@ -389,6 +435,52 @@ impl ChannelPipeline {
         if let DemodPath::Cqpsk { demod } = &mut self.demod_path {
             demod.seed_costas(phase, frequency);
         }
+    }
+
+    /// Reset the entire signal path for re-acquisition.
+    ///
+    /// Clears decimation filter delay lines and all demodulator state
+    /// so stale samples don't prevent the Costas loop from converging.
+    fn reset_tracking(&mut self) {
+        // Log diagnostics BEFORE reset so we can see what state the demod was in.
+        match &self.demod_path {
+            DemodPath::Cqpsk { demod } => {
+                let (agc_gain, costas_phase, costas_freq, locked) = demod.diagnostics();
+                tracing::info!(
+                    sample = self.sample_count,
+                    unsynced_samples = self.unsynced_samples,
+                    agc_gain = format_args!("{agc_gain:.2}"),
+                    costas_phase = format_args!("{costas_phase:.4}"),
+                    costas_freq = format_args!("{costas_freq:.6}"),
+                    locked,
+                    "CC sync timeout: resetting demodulator"
+                );
+            }
+            DemodPath::C4fm { .. } => {
+                tracing::info!(
+                    sample = self.sample_count,
+                    unsynced_samples = self.unsynced_samples,
+                    "CC sync timeout: resetting demodulator"
+                );
+            }
+        }
+        for filter in &mut self.filters {
+            filter.reset();
+        }
+        match &mut self.demod_path {
+            DemodPath::Cqpsk { demod } => demod.reset_tracking(),
+            DemodPath::C4fm {
+                demod: _,
+                dc_block,
+                rrc,
+                timing,
+            } => {
+                *dc_block = DcBlocker::default();
+                rrc.reset();
+                *timing = SymbolTiming::new();
+            }
+        }
+        self.unsynced_samples = 0;
     }
 
     /// Reset protocol state when a new frame sync is detected.
@@ -450,6 +542,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::C4fm,
             nid_integrity: NidIntegrityPolicy::default(),
+            sync_timeout_samples: None,
         };
         let pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
         assert_eq!(pipeline.sample_count(), 0);
@@ -462,6 +555,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::Cqpsk,
             nid_integrity: NidIntegrityPolicy::default(),
+            sync_timeout_samples: None,
         };
         let pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
         assert_eq!(pipeline.sample_count(), 0);
@@ -473,6 +567,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::Cqpsk,
             nid_integrity: NidIntegrityPolicy::default(),
+            sync_timeout_samples: None,
         };
         let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
@@ -494,6 +589,7 @@ mod tests {
             sample_rate: 2_400_000,
             modulation: Modulation::C4fm,
             nid_integrity: NidIntegrityPolicy::default(),
+            sync_timeout_samples: None,
         };
         let mut pipeline = ChannelPipeline::new(config).expect("2.4M should be valid");
 
