@@ -1,13 +1,13 @@
+use anyhow::{Result, bail};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::io::{self, IsTerminal, LineWriter, Write};
 use std::path::Path;
 use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Instant, SystemTime};
-
-use anyhow::{Result, bail};
-use clap::{Args, Parser, Subcommand, ValueEnum};
 use trunker::channel_manager::{ChannelManager, ChannelManagerConfig, VoiceChannelEvent};
+use trunker::decode::DecoderEvent;
+use trunker::decode::heartbeat::{self, HeartbeatState};
 use trunker::dsp::nco::Nco;
 use trunker::output::call_recorder::{CallRecorder, CompletedRecording};
 use trunker::output::call_writer::AudioFormat;
@@ -387,7 +387,7 @@ fn main() -> Result<()> {
 
             let is_sdr = matches!(sample_source, SampleSource::Soapy(_));
             let heartbeat_seconds =
-                resolve_heartbeat_interval(heartbeat_interval, no_heartbeat, is_sdr);
+                heartbeat::resolve_heartbeat_interval(heartbeat_interval, no_heartbeat, is_sdr);
 
             let pipeline_modulation: pipeline::Modulation = modulation.into();
             let nid_policy: NidIntegrityPolicy = nid_integrity.into();
@@ -461,7 +461,7 @@ fn main() -> Result<()> {
 
             let is_sdr = matches!(sample_source, SampleSource::Soapy(_));
             let heartbeat_seconds =
-                resolve_heartbeat_interval(heartbeat_interval, no_heartbeat, is_sdr);
+                heartbeat::resolve_heartbeat_interval(heartbeat_interval, no_heartbeat, is_sdr);
 
             let pipeline_modulation: pipeline::Modulation = modulation.into();
             let nid_policy: NidIntegrityPolicy = nid_integrity.into();
@@ -639,102 +639,6 @@ fn resolve_gain(gain_control: &GainControl) -> Option<f64> {
     }
 }
 
-/// Default heartbeat interval for live SDR mode (seconds).
-const DEFAULT_HEARTBEAT_INTERVAL_SECONDS: u64 = 10;
-
-/// Resolve the effective heartbeat interval in seconds.
-///
-/// Returns 0 (disabled) when `--no-heartbeat` is set or when running from
-/// a file without an explicit `--heartbeat-interval`. Returns the user's
-/// explicit value if provided, or the default (10s) for live SDR mode.
-fn resolve_heartbeat_interval(
-    explicit_interval: Option<u64>,
-    no_heartbeat: bool,
-    is_sdr: bool,
-) -> u64 {
-    if no_heartbeat {
-        return 0;
-    }
-    if let Some(interval) = explicit_interval {
-        return interval;
-    }
-    if is_sdr {
-        DEFAULT_HEARTBEAT_INTERVAL_SECONDS
-    } else {
-        0
-    }
-}
-
-/// Tracks state for periodic heartbeat emission.
-struct HeartbeatState {
-    /// Wall-clock start time for uptime calculation.
-    start: Instant,
-    /// Samples processed since last heartbeat emission.
-    samples_in_interval: u64,
-    /// TSBK count at the last heartbeat emission.
-    prev_tsbk_count: u64,
-    /// Whether CC sync was observed during the current interval.
-    cc_sync_seen: bool,
-}
-
-impl HeartbeatState {
-    fn new() -> Self {
-        Self {
-            start: Instant::now(),
-            samples_in_interval: 0,
-            prev_tsbk_count: 0,
-            cc_sync_seen: false,
-        }
-    }
-
-    /// Record a CC sync (NID event) during this interval.
-    fn record_cc_sync(&mut self) {
-        self.cc_sync_seen = true;
-    }
-
-    /// Check if a heartbeat should be emitted, and if so, emit it.
-    ///
-    /// Returns `true` if a heartbeat was emitted.
-    fn maybe_emit(
-        &mut self,
-        heartbeat_samples: u64,
-        heartbeat_seconds: u64,
-        tsbk_count: u64,
-        active_voice_channels: u32,
-        out: &mut impl Write,
-    ) -> bool {
-        self.samples_in_interval += 1;
-        if heartbeat_samples == 0 || self.samples_in_interval < heartbeat_samples {
-            return false;
-        }
-
-        let uptime = self.start.elapsed().as_secs();
-        let tsbk_delta = tsbk_count - self.prev_tsbk_count;
-        let tsbk_rate = if heartbeat_seconds > 0 {
-            tsbk_delta as f64 / heartbeat_seconds as f64
-        } else {
-            0.0
-        };
-
-        let heartbeat = json::HeartbeatJson {
-            event_type: "heartbeat",
-            timestamp: format_utc_timestamp(SystemTime::now()),
-            uptime_seconds: uptime,
-            tsbk_count,
-            tsbk_rate,
-            active_voice_channels,
-            cc_sync: self.cc_sync_seen,
-        };
-        let line = json::heartbeat_line(&heartbeat);
-        let _ = writeln!(out, "{line}");
-
-        self.prev_tsbk_count = tsbk_count;
-        self.samples_in_interval = 0;
-        self.cc_sync_seen = false;
-        true
-    }
-}
-
 /// Run the control channel decode pipeline.
 ///
 /// * `offset_hz` - NCO frequency offset in hertz. When non-zero, each sample
@@ -816,13 +720,11 @@ fn decode_control_channel(
         }
 
         // CC mode has no voice channels.
-        heartbeat.maybe_emit(
-            heartbeat_samples,
-            heartbeat_seconds,
-            tsbk_count,
-            0,
-            &mut stdout,
-        );
+        if let Some(event) =
+            heartbeat.maybe_produce(heartbeat_samples, heartbeat_seconds, tsbk_count, 0)
+        {
+            emit_heartbeat_event(&event, &mut stdout);
+        }
     }
 
     if let Some(writer) = wav_writer {
@@ -1063,13 +965,14 @@ fn decode_trunked(
         }
 
         // Periodic heartbeat (independent of stats mode).
-        heartbeat.maybe_emit(
+        if let Some(event) = heartbeat.maybe_produce(
             heartbeat_samples,
             heartbeat_seconds,
             tsbk_count,
             channel_manager.active_channel_count() as u32,
-            &mut stdout,
-        );
+        ) {
+            emit_heartbeat_event(&event, &mut stdout);
+        }
 
         // Periodic stats reporting.
         if !json_output {
@@ -1290,6 +1193,31 @@ fn log_completed_recording(recording: &CompletedRecording) {
         audio_file = ?recording.audio_file,
         "call recording completed"
     );
+}
+
+/// Emit a heartbeat event as a JSON line.
+fn emit_heartbeat_event(event: &DecoderEvent, out: &mut impl Write) {
+    if let DecoderEvent::Heartbeat {
+        timestamp,
+        uptime_seconds,
+        tsbk_count,
+        tsbk_rate,
+        active_voice_channels,
+        cc_sync,
+    } = event
+    {
+        let heartbeat = json::HeartbeatJson {
+            event_type: "heartbeat",
+            timestamp: format_utc_timestamp(*timestamp),
+            uptime_seconds: *uptime_seconds,
+            tsbk_count: *tsbk_count,
+            tsbk_rate: *tsbk_rate,
+            active_voice_channels: *active_voice_channels,
+            cc_sync: *cc_sync,
+        };
+        let line = json::heartbeat_line(&heartbeat);
+        let _ = writeln!(out, "{line}");
+    }
 }
 
 /// Emit a voice channel event as a JSON line with call context
@@ -1808,96 +1736,6 @@ mod tests {
     #[test]
     fn exit_code_device_error_is_two() {
         assert_eq!(EXIT_CODE_DEVICE_ERROR, 2);
-    }
-
-    // -- Heartbeat tests --
-
-    #[test]
-    fn resolve_heartbeat_sdr_default() {
-        assert_eq!(resolve_heartbeat_interval(None, false, true), 10);
-    }
-
-    #[test]
-    fn resolve_heartbeat_file_default() {
-        assert_eq!(resolve_heartbeat_interval(None, false, false), 0);
-    }
-
-    #[test]
-    fn resolve_heartbeat_explicit_overrides_default() {
-        assert_eq!(resolve_heartbeat_interval(Some(30), false, true), 30);
-        assert_eq!(resolve_heartbeat_interval(Some(5), false, false), 5);
-    }
-
-    #[test]
-    fn resolve_heartbeat_no_heartbeat_disables() {
-        assert_eq!(resolve_heartbeat_interval(None, true, true), 0);
-        assert_eq!(resolve_heartbeat_interval(Some(10), true, true), 0);
-        assert_eq!(resolve_heartbeat_interval(Some(5), true, false), 0);
-    }
-
-    #[test]
-    fn resolve_heartbeat_zero_explicit_disables() {
-        assert_eq!(resolve_heartbeat_interval(Some(0), false, true), 0);
-    }
-
-    #[test]
-    fn heartbeat_state_emits_after_interval() {
-        let mut state = HeartbeatState::new();
-        let mut buf = Vec::new();
-        let heartbeat_samples = 10u64;
-        let heartbeat_seconds = 1u64;
-        for _ in 0..9 {
-            assert!(!state.maybe_emit(heartbeat_samples, heartbeat_seconds, 5, 0, &mut buf));
-        }
-        assert!(buf.is_empty());
-        assert!(state.maybe_emit(heartbeat_samples, heartbeat_seconds, 5, 0, &mut buf));
-        assert!(!buf.is_empty());
-        let line = String::from_utf8(buf.clone()).unwrap();
-        let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-        assert_eq!(v["type"], "heartbeat");
-        assert_eq!(v["tsbk_count"], 5);
-        assert_eq!(v["active_voice_channels"], 0);
-    }
-
-    #[test]
-    fn heartbeat_state_disabled_when_zero() {
-        let mut state = HeartbeatState::new();
-        let mut buf = Vec::new();
-        for _ in 0..100 {
-            assert!(!state.maybe_emit(0, 0, 10, 2, &mut buf));
-        }
-        assert!(buf.is_empty());
-    }
-
-    #[test]
-    fn heartbeat_state_tracks_cc_sync() {
-        let mut state = HeartbeatState::new();
-        let mut buf = Vec::new();
-        state.record_cc_sync();
-        state.maybe_emit(1, 1, 0, 0, &mut buf);
-        let line = String::from_utf8(buf.clone()).unwrap();
-        let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-        assert_eq!(v["cc_sync"], true);
-        buf.clear();
-        state.maybe_emit(1, 1, 0, 0, &mut buf);
-        let line2 = String::from_utf8(buf).unwrap();
-        let v2: serde_json::Value = serde_json::from_str(line2.trim()).unwrap();
-        assert_eq!(v2["cc_sync"], false);
-    }
-
-    #[test]
-    fn heartbeat_tsbk_rate_calculation() {
-        let mut state = HeartbeatState::new();
-        let mut buf = Vec::new();
-        for _ in 0..4 {
-            state.maybe_emit(5, 5, 20, 0, &mut buf);
-        }
-        buf.clear();
-        state.maybe_emit(5, 5, 20, 0, &mut buf);
-        let line = String::from_utf8(buf).unwrap();
-        let v: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
-        assert_eq!(v["tsbk_count"], 20);
-        assert!((v["tsbk_rate"].as_f64().unwrap() - 4.0).abs() < 0.001);
     }
 
     #[test]

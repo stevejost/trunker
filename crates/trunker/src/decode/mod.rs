@@ -6,6 +6,8 @@
 
 pub mod error;
 pub mod event;
+pub mod heartbeat;
 
 pub use error::DecodeError;
 pub use event::{DecoderEvent, EventSink};
+pub use heartbeat::HeartbeatState;
