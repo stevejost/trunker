@@ -5,6 +5,10 @@
 //!
 //! Each talkgroup gets its own track so that LiveKit clients can
 //! subscribe to individual channels.
+//!
+//! **Status: skeleton.** The publisher is functional but will never
+//! receive events until the `BroadcastSink` is wired into the decode
+//! loop (see `bridge.rs` and `main.rs` TODOs).
 
 use std::collections::HashMap;
 

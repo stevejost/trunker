@@ -3,6 +3,12 @@
 //! [`BroadcastSink`] implements [`EventSink`] and forwards events to a
 //! `tokio::sync::broadcast` channel, allowing multiple async consumers
 //! (LiveKit publisher, data channel, metrics) to receive decode events.
+//!
+//! **Status: skeleton.** The sink is not yet wired into the decode loop.
+//! `decode_trunked()` does not accept an `EventSink` parameter, so the
+//! sink currently receives no events. Wiring requires extending
+//! `decode_trunked` (or adding a parallel event tap) to forward events
+//! through the sink. See TODO comments in `main.rs` and below.
 
 use tokio::sync::broadcast;
 use trunker::decode::event::{DecoderEvent, EventSink};
@@ -100,9 +106,12 @@ impl EventSink for BroadcastSink {
                 let text = format!("{tsbk:?}");
                 let _ = self.sender.send(BroadcastEvent::Metadata(text));
             }
-            // Voice frames, link control, etc. are handled by the
-            // trunked decoder's voice event path, not through EventSink.
-            // The server will tap into voice events separately.
+            DecoderEvent::VoiceFrame(_vf) => {
+                // TODO: Convert IMBE VoiceFrame to PCM audio samples and send
+                // as BroadcastEvent::Audio. Requires IMBE-to-PCM decode and
+                // voice channel context (frequency, talkgroup, source) which
+                // are not carried in DecoderEvent::VoiceFrame today.
+            }
             _ => {}
         }
         true

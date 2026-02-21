@@ -3,7 +3,12 @@
 //! Decodes a P25 trunked radio system and publishes audio via LiveKit
 //! WebRTC, with JSON metadata on a data channel.
 //!
-//! Architecture:
+//! **Status: skeleton.** The LiveKit connection and audio publisher are
+//! functional, but the `BroadcastSink` is not yet wired into the decode
+//! loop. `decode_trunked()` does not accept an `EventSink` parameter,
+//! so the audio publisher will never receive events until that is added.
+//!
+//! Architecture (target):
 //! - A sync decode thread runs the trunked decoder, producing events
 //! - Events are broadcast to async consumers via `BroadcastSink`
 //! - An audio publisher creates one LiveKit track per talkgroup
@@ -169,6 +174,8 @@ async fn main() -> Result<()> {
     tracing::info!(room_name = room.name(), "connected to LiveKit room");
 
     // Set up the broadcast bridge.
+    // TODO: Pass `sink` to the decode loop once `decode_trunked` accepts
+    // an `EventSink` parameter. Currently the sink receives no events.
     let sink = BroadcastSink::new(4096);
     let audio_rx = sink.subscribe();
 
@@ -202,6 +209,8 @@ async fn main() -> Result<()> {
     };
 
     // Run decode in a blocking thread so it doesn't block the Tokio runtime.
+    // TODO: Wire `sink` into this call so decoded events reach the
+    // audio publisher. Requires `decode_trunked` to accept an EventSink.
     let decode_running = running.clone();
     let decode_handle = tokio::task::spawn_blocking(move || {
         let config = trunker::decode::TrunkedDecoderConfig {
