@@ -1,7 +1,7 @@
 //! Error types for P25 protocol decoding.
 
 /// Errors that can occur during P25 protocol decoding.
-#[derive(Debug, thiserror::Error)]
+#[derive(Clone, Debug, thiserror::Error)]
 pub enum P25Error {
     /// CRC check failed on a TSBK payload.
     #[error("CRC mismatch: expected 0x{expected:04X}, got 0x{actual:04X}")]

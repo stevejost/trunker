@@ -4,9 +4,11 @@
 //! by the P25 decode pipeline, and [`EventSink`], the trait that consumers
 //! implement to handle events.
 
+pub mod cc_handler;
 pub mod error;
 pub mod event;
 pub mod heartbeat;
+pub mod voice_handler;
 
 pub use error::DecodeError;
 pub use event::{DecoderEvent, EventSink};
