@@ -3,12 +3,6 @@
 //! [`BroadcastSink`] implements [`EventSink`] and forwards events to a
 //! `tokio::sync::broadcast` channel, allowing multiple async consumers
 //! (LiveKit publisher, data channel, metrics) to receive decode events.
-//!
-//! **Status: skeleton.** The sink is not yet wired into the decode loop.
-//! `decode_trunked()` does not accept an `EventSink` parameter, so the
-//! sink currently receives no events. Wiring requires extending
-//! `decode_trunked` (or adding a parallel event tap) to forward events
-//! through the sink. See TODO comments in `main.rs` and below.
 
 use tokio::sync::broadcast;
 use trunker::decode::event::{DecoderEvent, EventSink};

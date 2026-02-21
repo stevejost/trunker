@@ -487,7 +487,7 @@ fn main() -> Result<()> {
                 json_output,
                 heartbeat_seconds,
             };
-            trunked::decode_trunked(&mut sample_source, &trunk_config, &running)?;
+            trunked::decode_trunked(&mut sample_source, &trunk_config, &running, None)?;
             check_device_error(&sample_source);
         }
         Command::Debug { action } => {

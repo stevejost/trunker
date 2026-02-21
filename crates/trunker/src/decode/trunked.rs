@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::channel_manager::{ChannelManager, ChannelManagerConfig, VoiceChannelEvent};
 use crate::decode::control_channel::emit_heartbeat_event;
+use crate::decode::event::{DecoderEvent, EventSink};
 use crate::decode::heartbeat::HeartbeatState;
 use crate::dsp::nco::Nco;
 use crate::output::call_recorder::{CallRecorder, CompletedRecording};
@@ -52,10 +53,15 @@ pub struct TrunkedDecoderConfig {
 }
 
 /// Run the wideband trunked decoder (CC + voice channels).
+///
+/// If `event_sink` is provided, decoded events (TSBKs, heartbeats,
+/// CC sync, voice events) are forwarded to it in addition to the
+/// normal JSON/stats output.
 pub fn decode_trunked(
     source: &mut SampleSource,
     config: &TrunkedDecoderConfig,
     running: &Arc<AtomicBool>,
+    mut event_sink: Option<&mut dyn EventSink>,
 ) -> anyhow::Result<()> {
     let pipeline_config = PipelineConfig {
         sample_rate: config.sample_rate,
@@ -127,6 +133,16 @@ pub fn decode_trunked(
             if matches!(event, ReceiverEvent::Nid(_)) {
                 stats.cc_syncs += 1;
                 heartbeat.record_cc_sync();
+                if let Some(sink) = &mut event_sink {
+                    sink.handle(DecoderEvent::CcSync);
+                }
+            }
+
+            // Forward TSBK events to the event sink.
+            if let ReceiverEvent::Tsbk(ref tsbk) = event
+                && let Some(sink) = &mut event_sink
+            {
+                sink.handle(DecoderEvent::Tsbk(tsbk.clone()));
             }
 
             if config.json_output {
@@ -161,15 +177,26 @@ pub fn decode_trunked(
             config.json_output,
             &mut stdout,
         );
+        // Forward voice frames to the event sink.
+        if let Some(sink) = &mut event_sink {
+            for voice_event in &voice_events {
+                if let ReceiverEvent::VoiceFrame(ref vf) = voice_event.event {
+                    sink.handle(DecoderEvent::VoiceFrame(vf.clone()));
+                }
+            }
+        }
 
         // Periodic heartbeat (independent of stats mode).
-        if let Some(event) = heartbeat.maybe_produce(
+        if let Some(hb_event) = heartbeat.maybe_produce(
             heartbeat_samples,
             config.heartbeat_seconds,
             tsbk_count,
             channel_manager.active_channel_count() as u32,
         ) {
-            emit_heartbeat_event(&event, &mut stdout);
+            emit_heartbeat_event(&hb_event, &mut stdout);
+            if let Some(sink) = &mut event_sink {
+                sink.handle(hb_event);
+            }
         }
 
         // Periodic stats reporting.
