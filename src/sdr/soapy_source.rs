@@ -38,7 +38,7 @@ const MAX_CONSECUTIVE_ERRORS: u32 = 50;
 /// The stream stops when `running` is set to `false` (e.g. from a
 /// Ctrl-C handler) or when the reader thread encounters a fatal error.
 pub struct SoapySource {
-    receiver: Option<Receiver<Vec<Complex<f32>>>>,
+    receiver: Option<Receiver<Result<Vec<Complex<f32>>, SdrError>>>,
     current_chunk: Vec<Complex<f32>>,
     position: usize,
     reader_thread: Option<JoinHandle<()>>,
@@ -47,6 +47,9 @@ pub struct SoapySource {
     chunk_count: Arc<AtomicU64>,
     /// Total overflows (hardware + channel-full drops) in the reader thread.
     overflow_count: Arc<AtomicU64>,
+    /// Device error captured when the reader thread reports a fatal failure.
+    /// `None` means the stream ended normally (signal or EOF).
+    device_error: Option<SdrError>,
 }
 
 impl std::fmt::Debug for SoapySource {
@@ -54,9 +57,18 @@ impl std::fmt::Debug for SoapySource {
         f.debug_struct("SoapySource")
             .field("position", &self.position)
             .field("chunk_len", &self.current_chunk.len())
-            .field("thread_alive", &self.reader_thread.as_ref().is_some_and(|h| !h.is_finished()))
+            .field(
+                "thread_alive",
+                &self
+                    .reader_thread
+                    .as_ref()
+                    .is_some_and(|h| !h.is_finished()),
+            )
             .field("chunk_count", &self.chunk_count.load(Ordering::Relaxed))
-            .field("overflow_count", &self.overflow_count.load(Ordering::Relaxed))
+            .field(
+                "overflow_count",
+                &self.overflow_count.load(Ordering::Relaxed),
+            )
             .finish()
     }
 }
@@ -124,8 +136,8 @@ impl SoapySource {
 
         // Compute channel capacity from buffer_ms.
         let buffer_ms = buffer_ms.max(1);
-        let capacity = ((buffer_ms as u64 * sample_rate_hz as u64) / (mtu as u64 * 1000))
-            .max(2) as usize;
+        let capacity =
+            ((buffer_ms as u64 * sample_rate_hz as u64) / (mtu as u64 * 1000)).max(2) as usize;
 
         tracing::info!(
             device_args,
@@ -153,7 +165,8 @@ impl SoapySource {
         }
         tracing::debug!(discarded, "settling samples discarded");
 
-        let (sender, receiver) = mpsc::sync_channel::<Vec<Complex<f32>>>(capacity);
+        let (sender, receiver) =
+            mpsc::sync_channel::<Result<Vec<Complex<f32>>, SdrError>>(capacity);
         let thread_running = running.clone();
         let chunk_count = Arc::new(AtomicU64::new(0));
         let overflow_count = Arc::new(AtomicU64::new(0));
@@ -163,7 +176,14 @@ impl SoapySource {
         let handle = thread::Builder::new()
             .name("sdr-reader".into())
             .spawn(move || {
-                reader_loop(stream, mtu, sender, thread_running, thread_chunks, thread_overflows);
+                reader_loop(
+                    stream,
+                    mtu,
+                    sender,
+                    thread_running,
+                    thread_chunks,
+                    thread_overflows,
+                );
             })
             .map_err(|e| SdrError::StreamCreate(format!("failed to spawn reader thread: {e}")))?;
 
@@ -175,6 +195,7 @@ impl SoapySource {
             running,
             chunk_count,
             overflow_count,
+            device_error: None,
         })
     }
 
@@ -197,6 +218,15 @@ impl SoapySource {
     pub fn overflow_count_handle(&self) -> Arc<AtomicU64> {
         self.overflow_count.clone()
     }
+
+    /// Return the device error if the stream ended due to a hardware failure.
+    ///
+    /// Returns `None` if the stream ended normally (signal or EOF).
+    /// Check this after the iterator returns `None` to distinguish
+    /// graceful shutdown from device errors.
+    pub fn device_error(&self) -> Option<&SdrError> {
+        self.device_error.as_ref()
+    }
 }
 
 impl Iterator for SoapySource {
@@ -213,13 +243,18 @@ impl Iterator for SoapySource {
         // Need a new chunk from the reader thread.
         let receiver = self.receiver.as_ref()?;
         match receiver.recv() {
-            Ok(chunk) => {
+            Ok(Ok(chunk)) => {
                 self.current_chunk = chunk;
                 self.position = 1;
                 Some(self.current_chunk[0])
             }
+            Ok(Err(err)) => {
+                // Reader thread sent a fatal device error.
+                self.device_error = Some(err);
+                None
+            }
             Err(_) => {
-                // Channel closed — reader thread exited.
+                // Channel closed — reader thread exited (normal shutdown).
                 None
             }
         }
@@ -275,7 +310,7 @@ fn read_chunk(stream: &mut RxStream<Complex<f32>>, buffer: &mut [Complex<f32>]) 
 fn reader_loop(
     mut stream: RxStream<Complex<f32>>,
     mtu: usize,
-    sender: SyncSender<Vec<Complex<f32>>>,
+    sender: SyncSender<Result<Vec<Complex<f32>>, SdrError>>,
     running: Arc<AtomicBool>,
     chunk_count: Arc<AtomicU64>,
     overflow_count: Arc<AtomicU64>,
@@ -297,7 +332,7 @@ fn reader_loop(
                 }
 
                 buffer.truncate(count);
-                match sender.try_send(buffer) {
+                match sender.try_send(Ok(buffer)) {
                     Ok(()) => {}
                     Err(TrySendError::Full(_)) => {
                         let n = overflow_count.fetch_add(1, Ordering::Relaxed) + 1;
@@ -334,6 +369,12 @@ fn reader_loop(
                     tracing::error!(
                         "SoapySDR stream failed after {consecutive_errors} consecutive errors, giving up"
                     );
+                    // Send the error through the channel so the consumer
+                    // can distinguish device failure from normal EOF.
+                    let _ = sender.send(Err(SdrError::StreamRead(format!(
+                        "{} after {} consecutive errors",
+                        e.message, consecutive_errors
+                    ))));
                     break;
                 }
             }
@@ -636,6 +677,23 @@ pub fn list_devices() {
 mod tests {
     use super::*;
 
+    /// Create a SoapySource backed by a pre-built channel for testing
+    /// error propagation without real hardware.
+    fn source_from_receiver(
+        receiver: Receiver<Result<Vec<Complex<f32>>, SdrError>>,
+    ) -> SoapySource {
+        SoapySource {
+            receiver: Some(receiver),
+            current_chunk: Vec::new(),
+            position: 0,
+            reader_thread: None,
+            running: Arc::new(AtomicBool::new(true)),
+            chunk_count: Arc::new(AtomicU64::new(0)),
+            overflow_count: Arc::new(AtomicU64::new(0)),
+            device_error: None,
+        }
+    }
+
     #[test]
     fn open_nonexistent_device_returns_error() {
         let running = Arc::new(AtomicBool::new(true));
@@ -656,5 +714,83 @@ mod tests {
             }
             Ok(_) => panic!("expected error for nonexistent device"),
         }
+    }
+
+    #[test]
+    fn iterator_yields_samples_from_channel() {
+        let (sender, receiver) = mpsc::sync_channel(4);
+        let mut source = source_from_receiver(receiver);
+
+        sender
+            .send(Ok(vec![Complex::new(1.0, 2.0), Complex::new(3.0, 4.0)]))
+            .unwrap();
+        drop(sender);
+
+        assert_eq!(source.next(), Some(Complex::new(1.0, 2.0)));
+        assert_eq!(source.next(), Some(Complex::new(3.0, 4.0)));
+        assert_eq!(source.next(), None);
+        assert!(
+            source.device_error().is_none(),
+            "normal EOF should not set device_error"
+        );
+    }
+
+    #[test]
+    fn error_from_channel_sets_device_error() {
+        let (sender, receiver) = mpsc::sync_channel(4);
+        let mut source = source_from_receiver(receiver);
+
+        // Send one good chunk, then a fatal error.
+        sender.send(Ok(vec![Complex::new(1.0, 0.0)])).unwrap();
+        sender
+            .send(Err(SdrError::StreamRead(
+                "USB transfer failed after 50 consecutive errors".to_string(),
+            )))
+            .unwrap();
+        drop(sender);
+
+        // First sample succeeds.
+        assert_eq!(source.next(), Some(Complex::new(1.0, 0.0)));
+        // Next call hits the error.
+        assert_eq!(source.next(), None);
+
+        let err = source
+            .device_error()
+            .expect("device_error should be set after stream error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("USB transfer failed"),
+            "error message should include description: {msg}"
+        );
+        assert!(
+            msg.contains("50 consecutive errors"),
+            "error message should include consecutive error count: {msg}"
+        );
+    }
+
+    #[test]
+    fn device_error_is_none_when_channel_closes_normally() {
+        let (sender, receiver) = mpsc::sync_channel(4);
+        let mut source = source_from_receiver(receiver);
+
+        // Drop sender without sending an error (normal shutdown).
+        drop(sender);
+
+        assert_eq!(source.next(), None);
+        assert!(
+            source.device_error().is_none(),
+            "normal channel close should not set device_error"
+        );
+    }
+
+    #[test]
+    fn device_error_is_none_before_iteration() {
+        let (_sender, receiver) = mpsc::sync_channel(4);
+        let source = source_from_receiver(receiver);
+
+        assert!(
+            source.device_error().is_none(),
+            "device_error should be None before iteration starts"
+        );
     }
 }

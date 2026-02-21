@@ -1,5 +1,6 @@
 use std::io::{self, IsTerminal, LineWriter, Write};
 use std::path::Path;
+use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -313,7 +314,7 @@ fn main() -> Result<()> {
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
-            let sample_source = open_sample_source(
+            let mut sample_source = open_sample_source(
                 source,
                 format,
                 &gain_control,
@@ -346,7 +347,7 @@ fn main() -> Result<()> {
                 "starting control channel decoder"
             );
             decode_control_channel(
-                sample_source,
+                &mut sample_source,
                 sample_rate,
                 offset_hz,
                 pipeline_modulation,
@@ -355,6 +356,7 @@ fn main() -> Result<()> {
                 audio_file.as_deref(),
                 &running,
             )?;
+            check_device_error(&sample_source);
         }
         Command::Trunk {
             source,
@@ -376,7 +378,7 @@ fn main() -> Result<()> {
         } => {
             let running = setup_signal_handler()?;
             let settings = parse_settings(&device_settings.settings)?;
-            let sample_source = open_sample_source(
+            let mut sample_source = open_sample_source(
                 source,
                 format,
                 &gain_control,
@@ -419,7 +421,7 @@ fn main() -> Result<()> {
                 Some(max_voices)
             };
             decode_trunked(
-                sample_source,
+                &mut sample_source,
                 sample_rate,
                 center_freq,
                 cc_offset_hz,
@@ -432,6 +434,7 @@ fn main() -> Result<()> {
                 json_output,
                 &running,
             )?;
+            check_device_error(&sample_source);
         }
         Command::Debug { action } => {
             trunker::debug::run(action)?;
@@ -448,6 +451,26 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Process exit code for device hardware errors.
+///
+/// Used when the SDR reader thread encounters a fatal stream failure,
+/// distinguishing hardware problems from normal termination (0) and
+/// general application errors (1).
+const EXIT_CODE_DEVICE_ERROR: i32 = 2;
+
+/// Check the sample source for a device error after iteration completes.
+///
+/// If the SDR reader thread reported a fatal hardware failure, logs the
+/// error and exits the process with `EXIT_CODE_DEVICE_ERROR` (2). For
+/// file-based sources or normal SDR shutdown this is a no-op.
+fn check_device_error(source: &SampleSource) {
+    if let Some(err) = source.device_error() {
+        tracing::error!(error = %err, "SDR device error — exiting with code {EXIT_CODE_DEVICE_ERROR}");
+        eprintln!("device error: {err}");
+        process::exit(EXIT_CODE_DEVICE_ERROR);
+    }
 }
 
 /// IQ sample source: file or live SDR hardware.
@@ -471,6 +494,18 @@ impl SampleSource {
                 chunk_count: source.chunk_count_handle(),
                 overflow_count: source.overflow_count_handle(),
             }),
+            _ => None,
+        }
+    }
+
+    /// Return the device error if the stream ended due to a hardware failure.
+    ///
+    /// Returns `None` for file-based sources or when the SDR stream ended
+    /// normally. Check this after iteration completes to distinguish
+    /// graceful shutdown from device errors.
+    fn device_error(&self) -> Option<&trunker::sdr::error::SdrError> {
+        match self {
+            SampleSource::Soapy(source) => source.device_error(),
             _ => None,
         }
     }
@@ -610,7 +645,7 @@ fn resolve_gain(gain_control: &GainControl) -> Option<f64> {
 ///   is shifted by this amount before entering the pipeline.
 #[allow(clippy::too_many_arguments)]
 fn decode_control_channel(
-    source: SampleSource,
+    source: &mut SampleSource,
     sample_rate: u32,
     offset_hz: f64,
     modulation: pipeline::Modulation,
@@ -652,7 +687,7 @@ fn decode_control_channel(
 
     let mut stdout = LineWriter::new(io::stdout().lock());
 
-    for iq_sample in source {
+    for iq_sample in source.by_ref() {
         if !running.load(Ordering::Relaxed) {
             tracing::info!("interrupted by signal");
             break;
@@ -746,8 +781,7 @@ impl TrunkStats {
     /// Print a stats line and reset interval counters.
     fn report(&mut self, snap: &StatsSnapshot, out: &mut impl Write) {
         let tsbk_delta = snap.tsbk_count - self.prev_tsbk_count;
-        let expired_delta =
-            (snap.expired_timeout - self.prev_expired_timeout)
+        let expired_delta = (snap.expired_timeout - self.prev_expired_timeout)
             + (snap.expired_no_carrier - self.prev_expired_no_carrier);
         let no_carrier_delta = snap.expired_no_carrier - self.prev_expired_no_carrier;
 
@@ -771,7 +805,10 @@ impl TrunkStats {
         // Append SDR reader thread stats when running live.
         if let Some((chunks, overflows)) = snap.sdr_stats {
             let chunk_delta = chunks - self.prev_sdr_chunks;
-            let _ = write!(out, " sdr_chunks={chunks} (+{chunk_delta}) overflows={overflows}");
+            let _ = write!(
+                out,
+                " sdr_chunks={chunks} (+{chunk_delta}) overflows={overflows}"
+            );
             self.prev_sdr_chunks = chunks;
         }
 
@@ -789,7 +826,7 @@ impl TrunkStats {
 /// Run the wideband trunked decoder (CC + voice channels).
 #[allow(clippy::too_many_arguments)]
 fn decode_trunked(
-    source: SampleSource,
+    source: &mut SampleSource,
     sample_rate: u32,
     center_freq: u64,
     cc_offset_hz: f64,
@@ -833,7 +870,6 @@ fn decode_trunked(
     let mut voice_events = Vec::new();
     let mut stdout = LineWriter::new(io::stdout().lock());
 
-    // Grab shared SDR stats handles before the for loop consumes `source`.
     let sdr_handles = source.sdr_stats_handles();
 
     // Stats mode: report every 10 seconds instead of per-event JSON.
@@ -842,7 +878,7 @@ fn decode_trunked(
     let mut samples_since_report: u64 = 0;
     let mut total_elapsed_seconds: u64 = 0;
 
-    for iq_sample in source {
+    for iq_sample in source.by_ref() {
         if !running.load(Ordering::Relaxed) {
             tracing::info!("interrupted by signal");
             break;
@@ -1597,5 +1633,51 @@ mod tests {
             }
             _ => panic!("expected Cc command"),
         }
+    }
+
+    // -- Device error recovery tests --
+
+    #[test]
+    fn device_error_returns_none_for_file_source() {
+        let temp = write_test_cf32(&[Complex::new(1.0, 0.0)]);
+        let reader = Cf32Reader::open(temp.path(), 48_000).unwrap();
+        let mut source = SampleSource::Cf32(reader);
+
+        // Consume the iterator completely (normal EOF).
+        while source.next().is_some() {}
+
+        assert!(
+            source.device_error().is_none(),
+            "file source should report no device error on EOF"
+        );
+    }
+
+    #[test]
+    fn device_error_returns_none_for_empty_file_source() {
+        let temp = write_test_cf32(&[]);
+        let reader = Cf32Reader::open(temp.path(), 48_000).unwrap();
+        let source = SampleSource::Cf32(reader);
+        assert!(
+            source.device_error().is_none(),
+            "empty file source should report no device error"
+        );
+    }
+
+    #[test]
+    fn check_device_error_is_noop_for_file_source() {
+        let temp = write_test_cf32(&[Complex::new(1.0, 0.0)]);
+        let reader = Cf32Reader::open(temp.path(), 48_000).unwrap();
+        let mut source = SampleSource::Cf32(reader);
+
+        // Consume the iterator.
+        while source.next().is_some() {}
+
+        // Should not panic or exit.
+        check_device_error(&source);
+    }
+
+    #[test]
+    fn exit_code_device_error_is_two() {
+        assert_eq!(EXIT_CODE_DEVICE_ERROR, 2);
     }
 }
