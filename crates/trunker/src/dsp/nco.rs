@@ -12,6 +12,9 @@ use num_complex::Complex;
 ///
 /// Generates `exp(-j * 2 * pi * offset_hz / sample_rate * n)` incrementally,
 /// multiplying each input sample to shift the target channel to DC.
+///
+/// The phase accumulator is f64 for long-term precision, but sin/cos is
+/// computed at f32 precision since the output is `Complex<f32>`.
 #[derive(Debug)]
 pub struct Nco {
     /// Phase increment per sample in radians.
@@ -37,8 +40,8 @@ impl Nco {
     /// Frequency-shift one complex sample and advance the phase.
     #[inline]
     pub fn shift(&mut self, sample: Complex<f32>) -> Complex<f32> {
-        let (sin, cos) = self.phase.sin_cos();
-        let rotator = Complex::new(cos as f32, sin as f32);
+        let (sin, cos) = (self.phase as f32).sin_cos();
+        let rotator = Complex::new(cos, sin);
         self.phase += self.phase_increment;
         if self.phase >= TAU {
             self.phase -= TAU;
@@ -183,6 +186,38 @@ mod tests {
             (nco.phase_increment - expected).abs() < 1e-12,
             "phase increment mismatch: got {}, expected {expected}",
             nco.phase_increment
+        );
+    }
+
+    #[test]
+    fn f32_sincos_precision_is_sufficient() {
+        // Verify that computing sin_cos at f32 precision (from f64 phase)
+        // produces results close to full f64 sin_cos cast to f32.
+        let mut max_sin_error: f32 = 0.0;
+        let mut max_cos_error: f32 = 0.0;
+
+        let num_points = 10_000;
+        for i in 0..num_points {
+            let phase_f64 = TAU * i as f64 / num_points as f64;
+            let (ref_sin, ref_cos) = phase_f64.sin_cos();
+
+            let (f32_sin, f32_cos) = (phase_f64 as f32).sin_cos();
+
+            let sin_err = (f32_sin - ref_sin as f32).abs();
+            let cos_err = (f32_cos - ref_cos as f32).abs();
+            max_sin_error = max_sin_error.max(sin_err);
+            max_cos_error = max_cos_error.max(cos_err);
+        }
+
+        // f32 sincos should be within ~1e-6 of f64 sincos cast to f32.
+        let tolerance = 2e-6;
+        assert!(
+            max_sin_error < tolerance,
+            "f32 sin max error {max_sin_error} exceeds tolerance {tolerance}"
+        );
+        assert!(
+            max_cos_error < tolerance,
+            "f32 cos max error {max_cos_error} exceeds tolerance {tolerance}"
         );
     }
 }
