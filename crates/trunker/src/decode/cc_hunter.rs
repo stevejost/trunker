@@ -164,7 +164,10 @@ impl CcHunter {
 
                 let nac_ok = match self.config.expected_nac {
                     Some(expected) => nac == expected,
-                    None => true,
+                    None => match candidate.observed_nac {
+                        Some(seen) => nac == seen,
+                        None => true, // first TSBK, accept any NAC
+                    },
                 };
 
                 if nac_ok {
