@@ -196,7 +196,10 @@ impl SystemMetadata {
 async fn main() -> Result<()> {
     // Load .env file before CLI parse so clap's env= attributes pick up values.
     let env_file = std::env::var("TRUNKER_ENV_FILE").unwrap_or_else(|_| ".env".to_string());
-    let _ = dotenvy::from_filename(&env_file);
+    match dotenvy::from_filename(&env_file) {
+        Ok(path) => eprintln!("loaded env from {}", path.display()),
+        Err(e) => eprintln!("warning: failed to load {env_file}: {e}"),
+    }
 
     tracing_subscriber::fmt()
         .with_env_filter(
