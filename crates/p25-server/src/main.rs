@@ -242,6 +242,7 @@ async fn main() -> Result<()> {
     let center_freq: u64;
     let cc_offset_hz: f64;
     let device: String;
+    let control_channels: Vec<u64>;
 
     match &mode {
         config::ServerMode::Managed {
@@ -320,10 +321,10 @@ async fn main() -> Result<()> {
                 );
             }
 
-            // For now, use the first valid CC candidate as the frequency.
-            // CC hunter (Task 6) will scan all candidates.
-            let cc_freq = valid_candidates[0];
-            cc_offset_hz = cc_freq as f64 - center_freq as f64;
+            // CC hunter will scan all valid candidates in parallel.
+            // cc_offset_hz is unused when control_channels is non-empty.
+            cc_offset_hz = 0.0;
+            control_channels = valid_candidates;
 
             // Merge system identification: CLI overrides API.
             let api_system_id = config::parse_hex_string(&api_config.system.system_id);
@@ -359,7 +360,7 @@ async fn main() -> Result<()> {
                 system = api_config.system.name,
                 short_name = api_config.system.short_name,
                 center_freq,
-                control_channels = ?valid_candidates,
+                control_channels = ?control_channels,
                 "managed config loaded"
             );
         }
@@ -378,6 +379,7 @@ async fn main() -> Result<()> {
                 Some(freq) if freq != 0 => freq as f64 - center_freq as f64,
                 _ => 0.0,
             };
+            control_channels = vec![];
 
             metadata = SystemMetadata {
                 system_id: cli.system_id,
@@ -571,7 +573,7 @@ async fn main() -> Result<()> {
             max_voices,
             json_output: false,
             heartbeat_seconds: 10,
-            control_channels: vec![], // Will be populated from API config in Task 8
+            control_channels,
         };
         trunker::decode::trunked::decode_trunked(
             &mut source,
