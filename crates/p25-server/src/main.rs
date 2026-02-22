@@ -10,6 +10,7 @@
 //! - A data channel publishes JSON metadata (grants, heartbeats)
 
 mod bridge;
+mod config;
 mod data_publisher;
 mod livekit_publisher;
 
