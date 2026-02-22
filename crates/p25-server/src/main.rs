@@ -9,6 +9,7 @@
 //! - An audio publisher creates one LiveKit track per talkgroup
 //! - A data channel publishes JSON metadata (grants, heartbeats)
 
+mod api_heartbeat;
 mod bridge;
 mod config;
 mod data_publisher;
@@ -511,6 +512,20 @@ async fn main() -> Result<()> {
             }
         }
     });
+
+    // Spawn API heartbeat in managed mode.
+    if let config::ServerMode::Managed {
+        ref api_url,
+        feeder_id,
+        ref api_key,
+        ..
+    } = mode
+    {
+        let hb_url = api_url.clone();
+        let hb_key = api_key.clone();
+        let hb_running = running.clone();
+        tokio::spawn(api_heartbeat::run(hb_url, feeder_id, hb_key, hb_running));
+    }
 
     let max_voices = if cli.max_voices == 0 {
         None
