@@ -43,12 +43,10 @@ struct CandidateChannel {
     offset_hz: f64,
     /// NCO for frequency shifting.
     nco: Nco,
-    /// Decode pipeline.
-    pipeline: ChannelPipeline,
+    /// Decode pipeline (`None` after the winner is extracted).
+    pipeline: Option<ChannelPipeline>,
     /// Number of valid TSBKs decoded so far.
     tsbk_count: u32,
-    /// Sample counter at last TSBK decode.
-    last_tsbk_sample: u64,
     /// NAC seen in decoded TSBKs.
     observed_nac: Option<Nac>,
     /// TSBKs collected during hunting (for ident table seeding).
@@ -115,9 +113,8 @@ impl CcHunter {
                 frequency: Frequency::from_hz(freq_hz),
                 offset_hz: offset,
                 nco,
-                pipeline,
+                pipeline: Some(pipeline),
                 tsbk_count: 0,
-                last_tsbk_sample: 0,
                 observed_nac: None,
                 collected_tsbks: Vec::new(),
             });
@@ -147,8 +144,8 @@ impl CcHunter {
     /// Feed one IQ sample to all candidate pipelines.
     ///
     /// Returns `HuntResult::Locked` when a candidate reaches the lock
-    /// threshold. The winning candidate's pipeline is moved out via
-    /// `std::mem::take` on an Option wrapper.
+    /// threshold. The winning candidate's pipeline is extracted via
+    /// `Option::take`.
     pub fn process_sample(&mut self, sample: Complex<f32>) -> HuntResult {
         self.samples_processed += 1;
 
@@ -157,10 +154,13 @@ impl CcHunter {
         }
 
         for candidate in &mut self.candidates {
+            let pipeline = match candidate.pipeline.as_mut() {
+                Some(p) => p,
+                None => continue,
+            };
             let shifted = candidate.nco.shift(sample);
-            if let Some(ReceiverEvent::Tsbk(ref tsbk)) = candidate.pipeline.process_sample(shifted)
-            {
-                let nac = candidate.pipeline.current_nac();
+            if let Some(ReceiverEvent::Tsbk(ref tsbk)) = pipeline.process_sample(shifted) {
+                let nac = pipeline.current_nac();
 
                 let nac_ok = match self.config.expected_nac {
                     Some(expected) => nac == expected,
@@ -169,7 +169,6 @@ impl CcHunter {
 
                 if nac_ok {
                     candidate.tsbk_count += 1;
-                    candidate.last_tsbk_sample = self.samples_processed;
                     candidate.observed_nac = Some(nac);
                     candidate.collected_tsbks.push(tsbk.clone());
 
@@ -188,24 +187,24 @@ impl CcHunter {
                             "locked onto control channel"
                         );
 
-                        // Extract the winning pipeline. Replace with a
-                        // dummy that will be dropped with the hunter.
-                        let dummy_config = PipelineConfig {
-                            sample_rate: self.config.sample_rate,
-                            modulation: self.config.modulation,
-                            nid_integrity: self.config.nid_integrity,
-                            sync_timeout_samples: None,
-                        };
-                        let dummy =
-                            ChannelPipeline::new(dummy_config).expect("dummy pipeline creation");
-                        let pipeline = std::mem::replace(&mut candidate.pipeline, dummy);
+                        let winner = candidate.pipeline.take().ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "pipeline already extracted for {}",
+                                candidate.frequency
+                            )
+                        });
+                        // Safety: we just matched Some(p) above, so take() always succeeds.
+                        // Use ok_or_else for library-safe error handling per CLAUDE.md.
                         let collected_tsbks = std::mem::take(&mut candidate.collected_tsbks);
 
-                        return HuntResult::Locked {
-                            frequency: candidate.frequency,
-                            offset_hz: candidate.offset_hz,
-                            pipeline: Box::new(pipeline),
-                            collected_tsbks,
+                        return match winner {
+                            Ok(pipeline) => HuntResult::Locked {
+                                frequency: candidate.frequency,
+                                offset_hz: candidate.offset_hz,
+                                pipeline: Box::new(pipeline),
+                                collected_tsbks,
+                            },
+                            Err(_) => HuntResult::Timeout,
                         };
                     }
                 }
