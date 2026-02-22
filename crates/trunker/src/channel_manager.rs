@@ -66,8 +66,8 @@ struct VoiceChannel {
 /// thread; this handle provides the IQ send channel, shared carrier
 /// state, and metadata for grant refresh and expiry.
 struct VoiceThreadHandle {
-    /// Send batched IQ samples to this thread. Drop to signal shutdown.
-    iq_sender: crossbeam_channel::Sender<Arc<[Complex<f32>]>>,
+    /// Send sequenced IQ batches to this thread. Drop to signal shutdown.
+    iq_sender: crossbeam_channel::Sender<IqBatch>,
     /// Thread join handle for cleanup.
     join_handle: Option<thread::JoinHandle<()>>,
     /// Whether carrier has been acquired (shared with voice thread).
@@ -91,9 +91,23 @@ const IQ_BATCH_SIZE: usize = 512;
 
 /// Capacity of the bounded IQ batch channel per voice thread.
 ///
-/// 8 batches of 512 samples = 4096 samples total, the same buffering
-/// depth as the previous per-sample channel.
-const IQ_CHANNEL_CAPACITY: usize = 8;
+/// 2048 batches of 512 samples = 1048576 samples (~437 ms at 2.4 MSPS).
+/// Large buffer absorbs thread startup latency, OS scheduling jitter,
+/// and LiveKit/WebRTC thread contention without dropping batches.
+/// Memory overhead is minimal: the sample data is `Arc`-shared across
+/// channels, so per-channel cost is ~32 KB for the channel's batch queue.
+const IQ_CHANNEL_CAPACITY: usize = 2048;
+
+/// A sequenced batch of IQ samples sent to voice threads.
+///
+/// The sequence number allows voice threads to detect dropped batches
+/// and advance the NCO phase to maintain coherence.
+struct IqBatch {
+    /// Monotonic batch sequence number (per manager).
+    sequence: u64,
+    /// The IQ samples in this batch.
+    samples: Arc<[Complex<f32>]>,
+}
 
 /// Voice thread entry point.
 ///
@@ -102,12 +116,56 @@ const IQ_CHANNEL_CAPACITY: usize = 8;
 /// back to the manager via the event channel.
 fn voice_thread_main(
     mut channel: VoiceChannel,
-    iq_receiver: crossbeam_channel::Receiver<Arc<[Complex<f32>]>>,
+    iq_receiver: crossbeam_channel::Receiver<IqBatch>,
     event_sender: crossbeam_channel::Sender<VoiceChannelEvent>,
     carrier_acquired: Arc<AtomicBool>,
 ) {
+    // Drain batches that accumulated while the OS was scheduling this
+    // thread. These are stale — processing them would just produce a
+    // burst of "dropped IQ batches" warnings since the thread missed
+    // the intervening sends that filled the channel.
+    let mut drained = 0u64;
+    while iq_receiver.try_recv().is_ok() {
+        drained += 1;
+    }
+    if drained > 0 {
+        tracing::debug!(
+            frequency = %channel.frequency,
+            drained_batches = drained,
+            "drained stale startup batches"
+        );
+    }
+
+    // First batch initializes the expected sequence; subsequent batches
+    // detect gaps. This avoids a false gap when a voice thread starts
+    // mid-stream (the global batch_sequence may already be large).
+    let mut expected_sequence: Option<u64> = None;
+    let mut total_dropped: u64 = 0;
+    let mut batches_processed: u64 = 0;
+
     while let Ok(batch) = iq_receiver.recv() {
-        for &sample in batch.iter() {
+        // Detect dropped batches and advance NCO phase to maintain coherence.
+        if let Some(expected) = expected_sequence
+            && batch.sequence > expected
+        {
+            let dropped = batch.sequence - expected;
+            let skipped_samples = dropped * IQ_BATCH_SIZE as u64;
+            channel.nco.advance(skipped_samples);
+            total_dropped += dropped;
+            // Rate-limit logging: first drop, then every 1000 batches.
+            if total_dropped == dropped || batches_processed.is_multiple_of(1000) {
+                tracing::warn!(
+                    frequency = %channel.frequency,
+                    dropped_batches = dropped,
+                    total_dropped = total_dropped,
+                    "dropped IQ batches, advanced NCO phase"
+                );
+            }
+        }
+        expected_sequence = Some(batch.sequence + 1);
+        batches_processed += 1;
+
+        for &sample in batch.samples.iter() {
             let shifted = channel.nco.shift(sample);
             if let Some(event) = channel.pipeline.process_sample(shifted) {
                 // Mark carrier acquired on first valid NID decode.
@@ -208,6 +266,8 @@ pub struct ChannelManager {
     event_sender: crossbeam_channel::Sender<VoiceChannelEvent>,
     /// Accumulates IQ samples before flushing as a batch to voice threads.
     iq_batch: Vec<Complex<f32>>,
+    /// Monotonic batch sequence number for gap detection.
+    batch_sequence: u64,
 }
 
 /// Fraction of sample rate considered usable bandwidth.
@@ -247,6 +307,7 @@ impl ChannelManager {
             event_receiver,
             event_sender,
             iq_batch: Vec::with_capacity(IQ_BATCH_SIZE),
+            batch_sequence: 0,
         }
     }
 
@@ -330,14 +391,21 @@ impl ChannelManager {
             return;
         }
 
-        let batch: Arc<[Complex<f32>]> = Arc::from(self.iq_batch.as_slice());
+        let samples: Arc<[Complex<f32>]> = Arc::from(self.iq_batch.as_slice());
+        let sequence = self.batch_sequence;
+        self.batch_sequence += 1;
         self.iq_batch.clear();
 
         for handle in self.active_channels.values() {
-            if handle.iq_sender.try_send(Arc::clone(&batch)).is_err() {
+            let batch = IqBatch {
+                sequence,
+                samples: Arc::clone(&samples),
+            };
+            if handle.iq_sender.try_send(batch).is_err() {
                 tracing::trace!(
                     frequency = %handle.frequency,
-                    "voice thread lagging, dropped batch"
+                    sequence = sequence,
+                    "voice thread lagging, dropped IQ batch"
                 );
             }
         }

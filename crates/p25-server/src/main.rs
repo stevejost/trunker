@@ -101,7 +101,7 @@ struct Cli {
     audio_gain: f32,
 }
 
-#[tokio::main]
+#[tokio::main(worker_threads = 2)]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(

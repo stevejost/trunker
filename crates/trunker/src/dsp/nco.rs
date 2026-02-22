@@ -37,6 +37,17 @@ impl Nco {
         }
     }
 
+    /// Advance the NCO phase by `n_samples` without computing sin/cos.
+    ///
+    /// Used to maintain phase coherence when IQ samples are dropped.
+    /// The NCO phase is advanced as if `n_samples` had been processed,
+    /// keeping downstream demodulation (Costas PLL) in sync.
+    #[inline]
+    pub fn advance(&mut self, n_samples: u64) {
+        self.phase += self.phase_increment * n_samples as f64;
+        self.phase = self.phase.rem_euclid(TAU);
+    }
+
     /// Frequency-shift one complex sample and advance the phase.
     #[inline]
     pub fn shift(&mut self, sample: Complex<f32>) -> Complex<f32> {
@@ -186,6 +197,40 @@ mod tests {
             (nco.phase_increment - expected).abs() < 1e-12,
             "phase increment mismatch: got {}, expected {expected}",
             nco.phase_increment
+        );
+    }
+
+    #[test]
+    fn advance_matches_shift_phase() {
+        // Advancing by N samples should produce the same phase as
+        // shifting N dummy samples.
+        let mut nco_shift = Nco::new(1234.5, 2_400_000.0);
+        let mut nco_advance = Nco::new(1234.5, 2_400_000.0);
+        let dummy = Complex::new(1.0, 0.0);
+
+        let n: u64 = 512;
+        for _ in 0..n {
+            nco_shift.shift(dummy);
+        }
+        nco_advance.advance(n);
+
+        assert!(
+            (nco_shift.phase - nco_advance.phase).abs() < 1e-10,
+            "advance phase {} != shift phase {}",
+            nco_advance.phase,
+            nco_shift.phase
+        );
+    }
+
+    #[test]
+    fn advance_wraps_correctly() {
+        let mut nco = Nco::new(100_000.0, 2_400_000.0);
+        // Advance by a large number that would cause many wraps.
+        nco.advance(10_000_000);
+        assert!(
+            nco.phase >= 0.0 && nco.phase < TAU,
+            "phase out of range after advance: {}",
+            nco.phase
         );
     }
 

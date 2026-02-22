@@ -5,10 +5,17 @@
   <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.js"></script>
   <style>
     body { font-family: monospace; background: #1a1a1a; color: #eee; padding: 20px; }
-    #status { margin: 10px 0; color: #aaa; }
+    #status { margin: 10px 0; color: #aaa; display: flex; align-items: baseline; gap: 12px; }
+    #bandwidth { color: #4f4; font-size: 13px; }
     #tracks { margin-top: 20px; }
+    .track-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 8px;
+    }
+    @media (max-width: 700px) {
+      .track-grid { grid-template-columns: 1fr; }
+    }
     .track {
-      padding: 10px 12px; margin: 4px 0; background: #2a2a2a;
+      padding: 10px 12px; background: #2a2a2a;
       border-radius: 4px; cursor: pointer; border-left: 3px solid transparent;
       display: flex; justify-content: space-between; align-items: center;
     }
@@ -47,7 +54,7 @@
     <button id="connect-btn" onclick="toggle()">Connect</button>
     <button id="mute-all" onclick="muteAll()" style="display:none">Mute All</button>
   </div>
-  <div id="status">Disconnected</div>
+  <div id="status"><span id="status-text">Disconnected</span><span id="bandwidth"></span></div>
   <div id="heartbeat-bar"></div>
   <div id="tracks"></div>
   <div id="audio-container"></div>
@@ -65,6 +72,9 @@
     // Track name (e.g. "tg-1234") -> talkgroup ID
     let trackNameToTg = new Map();
     const MAX_EVENTS = 100;
+    let bwInterval = null;
+    let lastBytes = 0;
+    let lastBwTime = 0;
 
     function addEvent(cls, text) {
       const div = document.getElementById('events');
@@ -116,6 +126,7 @@
 
     async function toggle() {
       if (connected) {
+        if (bwInterval) { clearInterval(bwInterval); bwInterval = null; }
         await room.disconnect();
         connected = false;
         unmutedTracks.clear();
@@ -124,7 +135,8 @@
         trackNameToTg.clear();
         document.getElementById('connect-btn').textContent = 'Connect';
         document.getElementById('mute-all').style.display = 'none';
-        document.getElementById('status').textContent = 'Disconnected';
+        document.getElementById('status-text').textContent = 'Disconnected';
+        document.getElementById('bandwidth').textContent = '';
         document.getElementById('heartbeat-bar').style.display = 'none';
         document.getElementById('tracks').innerHTML = '';
         document.getElementById('audio-container').innerHTML = '';
@@ -132,11 +144,11 @@
       }
 
       const url = document.getElementById('url').value;
-      const status = document.getElementById('status');
+      const statusEl = document.getElementById('status-text');
       const btn = document.getElementById('connect-btn');
 
       btn.disabled = true;
-      status.textContent = 'Connecting...';
+      statusEl.textContent = 'Connecting...';
 
       try {
         const token = await getToken();
@@ -189,7 +201,9 @@
         });
 
         room.on(RoomEvent.Disconnected, () => {
-          status.textContent = 'Disconnected';
+          if (bwInterval) { clearInterval(bwInterval); bwInterval = null; }
+          statusEl.textContent = 'Disconnected';
+          document.getElementById('bandwidth').textContent = '';
           btn.textContent = 'Connect';
           document.getElementById('mute-all').style.display = 'none';
           document.getElementById('heartbeat-bar').style.display = 'none';
@@ -202,21 +216,86 @@
           document.getElementById('audio-container').innerHTML = '';
         });
 
-        room.on(RoomEvent.Reconnecting, () => { status.textContent = 'Reconnecting...'; });
-        room.on(RoomEvent.Reconnected, () => { status.textContent = 'Connected - ' + room.name; });
+        room.on(RoomEvent.Reconnecting, () => { statusEl.textContent = 'Reconnecting...'; });
+        room.on(RoomEvent.Reconnected, () => { statusEl.textContent = 'Connected - ' + room.name; });
 
         await room.connect(url, token);
         connected = true;
-        status.textContent = 'Connected - ' + room.name;
+        statusEl.textContent = 'Connected - ' + room.name;
         btn.textContent = 'Disconnect';
         btn.disabled = false;
         document.getElementById('mute-all').style.display = 'inline';
+        lastBytes = 0; lastBwTime = Date.now();
+        bwInterval = setInterval(updateBandwidth, 2000);
         updateTrackList();
       } catch (e) {
-        status.textContent = 'Error: ' + e.message;
+        statusEl.textContent = 'Error: ' + e.message;
         btn.disabled = false;
         console.error(e);
       }
+    }
+
+    function findSubscriberPC() {
+      if (!room) return null;
+      const eng = room.engine || room._engine;
+      if (!eng) return null;
+      // livekit-client v1.x
+      if (eng.subscriber && eng.subscriber.pc) return eng.subscriber.pc;
+      // livekit-client v2.x
+      if (eng.pcManager) {
+        const sub = eng.pcManager.subscriber;
+        if (sub && sub.pc) return sub.pc;
+        if (eng.pcManager.subscriberPC) return eng.pcManager.subscriberPC;
+      }
+      // walk engine looking for an RTCPeerConnection
+      for (const key of Object.keys(eng)) {
+        const val = eng[key];
+        if (val && typeof val === 'object') {
+          if (val.pc instanceof RTCPeerConnection) return val.pc;
+          if (val instanceof RTCPeerConnection) return val;
+          for (const k2 of Object.keys(val)) {
+            const v2 = val[k2];
+            if (v2 && v2.pc instanceof RTCPeerConnection) return v2.pc;
+          }
+        }
+      }
+      return null;
+    }
+
+    async function updateBandwidth() {
+      const pc = findSubscriberPC();
+      if (!pc) {
+        if (!updateBandwidth.warned) {
+          const eng = room && (room.engine || room._engine);
+          console.warn('BW: no RTCPeerConnection found. engine keys:', eng ? Object.keys(eng) : 'none');
+          updateBandwidth.warned = true;
+        }
+        return;
+      }
+      try {
+        const stats = await pc.getStats();
+        let totalBytes = 0;
+        stats.forEach(report => {
+          if (report.type === 'transport' && report.bytesReceived !== undefined) {
+            totalBytes = report.bytesReceived;
+          }
+        });
+        if (totalBytes === 0) {
+          stats.forEach(report => {
+            if (report.type === 'inbound-rtp' && report.bytesReceived) {
+              totalBytes += report.bytesReceived;
+            }
+          });
+        }
+        const now = Date.now();
+        const elapsed = (now - lastBwTime) / 1000;
+        if (elapsed > 0 && lastBytes > 0) {
+          const kbps = ((totalBytes - lastBytes) / elapsed / 1024).toFixed(1);
+          document.getElementById('bandwidth').textContent = kbps + ' kB/s';
+        }
+        lastBytes = totalBytes;
+        lastBwTime = now;
+      } catch (e) { console.warn('BW stats error:', e); }
     }
 
     function toggleTrack(trackSid) {
@@ -239,7 +318,9 @@
     function updateTrackList() {
       const div = document.getElementById('tracks');
       div.innerHTML = '<b>Audio Tracks (click to listen):</b>';
-      if (!room) return;
+      const grid = document.createElement('div');
+      grid.className = 'track-grid';
+      if (!room) { div.appendChild(grid); return; }
       room.remoteParticipants.forEach((participant) => {
         participant.audioTrackPublications.forEach((pub) => {
           const sid = pub.trackSid;
@@ -262,16 +343,17 @@
           el.innerHTML =
             '<span class="label">' + labelText + '</span>' +
             '<span class="info">' + badge + '<span class="state">' + stateText + '</span></span>';
-          div.appendChild(el);
+          grid.appendChild(el);
         });
       });
-      if (div.children.length === 1) {
+      if (grid.children.length === 0) {
         const el = document.createElement('div');
         el.className = 'track';
         el.style.cursor = 'default';
         el.textContent = 'No tracks yet - waiting for p25-server to publish...';
-        div.appendChild(el);
+        grid.appendChild(el);
       }
+      div.appendChild(grid);
     }
   </script>
 </body>

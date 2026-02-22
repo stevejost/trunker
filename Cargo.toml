@@ -2,3 +2,6 @@
 members = ["crates/trunker", "crates/p25", "crates/p25-server"]
 default-members = ["crates/trunker", "crates/p25"]
 resolver = "3"
+
+[profile.release]
+debug = 2  # Full debug info for profiling

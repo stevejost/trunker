@@ -437,6 +437,17 @@ impl ChannelPipeline {
         }
     }
 
+    /// Reset FIR delay lines after a gap in IQ samples.
+    ///
+    /// Called by voice threads when dropped batches are detected. Clears
+    /// stale samples from filter delay lines so they don't convolve with
+    /// post-gap samples and produce corrupted output.
+    pub fn reset_filters(&mut self) {
+        for filter in &mut self.filters {
+            filter.reset();
+        }
+    }
+
     /// Reset the entire signal path for re-acquisition.
     ///
     /// Clears decimation filter delay lines and all demodulator state
