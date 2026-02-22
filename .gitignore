@@ -18,3 +18,14 @@ samples/iq/audio/
 debug.log
 output.jsonl
 stderr.log
+
+# Profiling artifacts
+perf.data*
+flamegraph.svg
+perf-report.txt
+profile.json
+
+# Claude Code local/ephemeral files
+.claude/settings.local.json
+.claude/CLAUDE.local.md
+.claude/worktrees/
