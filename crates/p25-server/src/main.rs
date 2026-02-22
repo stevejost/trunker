@@ -13,12 +13,15 @@ mod bridge;
 mod data_publisher;
 mod livekit_publisher;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
 use clap::Parser;
 use livekit::prelude::*;
+use serde::Serialize;
+use uuid::Uuid;
 
 use bridge::BroadcastSink;
 use data_publisher::DataPublisher;
@@ -88,17 +91,80 @@ struct Cli {
     #[arg(long, env = "LIVEKIT_API_SECRET")]
     livekit_api_secret: String,
 
-    /// LiveKit room name to join.
-    #[arg(long, default_value = "p25")]
-    livekit_room: String,
+    /// LiveKit room name to join (defaults to "trunker:{trunker_system_id}").
+    #[arg(long)]
+    livekit_room: Option<String>,
 
-    /// Participant identity in the LiveKit room.
-    #[arg(long, default_value = "p25-decoder")]
-    livekit_identity: String,
+    /// Participant identity in the LiveKit room (defaults to "feeder:{trunker_feeder_id}").
+    #[arg(long)]
+    livekit_identity: Option<String>,
 
     /// Audio gain multiplier for LiveKit output (default: 16.0).
     #[arg(long, default_value_t = 16.0)]
     audio_gain: f32,
+
+    /// P25 system ID.
+    #[arg(long)]
+    system_id: Option<u32>,
+
+    /// Wide Area Communications Network ID.
+    #[arg(long)]
+    wacn: Option<u32>,
+
+    /// P25 site identifier.
+    #[arg(long)]
+    site_id: Option<u32>,
+
+    /// RadioReference.com database ID.
+    #[arg(long)]
+    radioreference_id: Option<u32>,
+
+    /// Trunker system unique identifier (auto-generated if omitted).
+    #[arg(long)]
+    trunker_system_id: Option<Uuid>,
+
+    /// Trunker feeder unique identifier (auto-generated if omitted).
+    #[arg(long)]
+    trunker_feeder_id: Option<Uuid>,
+}
+
+/// System identification metadata embedded in LiveKit participant info.
+#[derive(Debug, Serialize)]
+struct SystemMetadata {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system_id: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    wacn: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    site_id: Option<u32>,
+    /// RadioReference.com database identifier for this system.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    radioreference_id: Option<u32>,
+    trunker_system_id: Uuid,
+    trunker_feeder_id: Uuid,
+}
+
+impl SystemMetadata {
+    /// Convert to key-value pairs for LiveKit participant attributes.
+    ///
+    /// Skips `None` values so only populated fields appear in attributes.
+    fn to_attributes(&self) -> HashMap<String, String> {
+        // Serialize to a JSON Value and flatten into string key-value pairs,
+        // so the attribute map stays in sync with the struct fields.
+        let value = serde_json::to_value(self).expect("SystemMetadata is always serializable");
+        value
+            .as_object()
+            .expect("SystemMetadata serializes as object")
+            .iter()
+            .map(|(k, v)| {
+                let s = match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                (k.clone(), s)
+            })
+            .collect()
+    }
 }
 
 #[tokio::main(worker_threads = 2)]
@@ -113,8 +179,34 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Signal handler — installed after LiveKit connects to avoid
-    // interfering with libwebrtc's signal handling during ICE.
+    // Build system identification metadata.
+    let metadata = SystemMetadata {
+        system_id: cli.system_id,
+        wacn: cli.wacn,
+        site_id: cli.site_id,
+        radioreference_id: cli.radioreference_id,
+        trunker_system_id: cli.trunker_system_id.unwrap_or_else(Uuid::new_v4),
+        trunker_feeder_id: cli.trunker_feeder_id.unwrap_or_else(Uuid::new_v4),
+    };
+    let metadata_json = serde_json::to_string(&metadata)?;
+
+    tracing::info!(
+        trunker_system_id = %metadata.trunker_system_id,
+        trunker_feeder_id = %metadata.trunker_feeder_id,
+        system_id = ?metadata.system_id,
+        wacn = ?metadata.wacn,
+        site_id = ?metadata.site_id,
+        "system metadata"
+    );
+
+    // Derive LiveKit room/identity defaults from system metadata.
+    let livekit_room = cli
+        .livekit_room
+        .unwrap_or_else(|| format!("trunker:{}", metadata.trunker_system_id));
+    let livekit_identity = cli
+        .livekit_identity
+        .unwrap_or_else(|| format!("feeder:{}", metadata.trunker_feeder_id));
+
     let running = Arc::new(AtomicBool::new(true));
 
     // Parse device settings.
@@ -129,26 +221,27 @@ async fn main() -> Result<()> {
         })
         .collect::<Result<Vec<_>>>()?;
 
+    tracing::info!(
+        room = livekit_room,
+        identity = livekit_identity,
+        "connecting to LiveKit server"
+    );
+
     // Generate access token for LiveKit.
     let token = livekit_api::access_token::AccessToken::with_api_key(
         &cli.livekit_api_key,
         &cli.livekit_api_secret,
     )
-    .with_identity(&cli.livekit_identity)
+    .with_identity(&livekit_identity)
+    .with_metadata(&metadata_json)
     .with_grants(livekit_api::access_token::VideoGrants {
         room_join: true,
-        room: cli.livekit_room.clone(),
+        room: livekit_room,
         can_publish: true,
         can_subscribe: false,
         ..Default::default()
     })
     .to_jwt()?;
-
-    tracing::info!(
-        room = cli.livekit_room,
-        identity = cli.livekit_identity,
-        "connecting to LiveKit server"
-    );
 
     // Connect to LiveKit room.
     let mut room_options = RoomOptions::default();
@@ -159,6 +252,15 @@ async fn main() -> Result<()> {
     let room = Arc::new(room);
 
     tracing::info!(room_name = room.name(), "connected to LiveKit room");
+
+    // Publish system metadata on the local participant so subscribers
+    // (and the future central server) can identify this feeder.
+    room.local_participant()
+        .set_metadata(metadata_json)
+        .await?;
+    room.local_participant()
+        .set_attributes(metadata.to_attributes())
+        .await?;
 
     // Install signal handler after LiveKit connects to avoid
     // interfering with libwebrtc's internal signal handling.
@@ -283,4 +385,118 @@ async fn main() -> Result<()> {
 
     tracing::info!("server shutdown complete");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    const SYSTEM_UUID: &str = "00000000-0000-0000-0000-000000000001";
+    const FEEDER_UUID: &str = "00000000-0000-0000-0000-000000000002";
+
+    fn metadata_all_fields() -> SystemMetadata {
+        SystemMetadata {
+            system_id: Some(42),
+            wacn: Some(0xBEEF),
+            site_id: Some(7),
+            radioreference_id: Some(12345),
+            trunker_system_id: Uuid::parse_str(SYSTEM_UUID).unwrap(),
+            trunker_feeder_id: Uuid::parse_str(FEEDER_UUID).unwrap(),
+        }
+    }
+
+    fn metadata_no_optional() -> SystemMetadata {
+        SystemMetadata {
+            system_id: None,
+            wacn: None,
+            site_id: None,
+            radioreference_id: None,
+            trunker_system_id: Uuid::parse_str(SYSTEM_UUID).unwrap(),
+            trunker_feeder_id: Uuid::parse_str(FEEDER_UUID).unwrap(),
+        }
+    }
+
+    #[test]
+    fn test_json_serialization_all_fields() {
+        let meta = metadata_all_fields();
+        let json = serde_json::to_string(&meta).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["system_id"], 42);
+        assert_eq!(parsed["wacn"], 0xBEEF_u32);
+        assert_eq!(parsed["site_id"], 7);
+        assert_eq!(parsed["radioreference_id"], 12345);
+        assert_eq!(parsed["trunker_system_id"], SYSTEM_UUID);
+        assert_eq!(parsed["trunker_feeder_id"], FEEDER_UUID);
+    }
+
+    #[test]
+    fn test_json_serialization_optional_fields_skipped() {
+        let meta = metadata_no_optional();
+        let json = serde_json::to_string(&meta).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert!(parsed.get("system_id").is_none(), "system_id should be absent");
+        assert!(parsed.get("wacn").is_none(), "wacn should be absent");
+        assert!(parsed.get("site_id").is_none(), "site_id should be absent");
+        assert!(
+            parsed.get("radioreference_id").is_none(),
+            "radioreference_id should be absent"
+        );
+        // UUID fields must still appear.
+        assert_eq!(parsed["trunker_system_id"], SYSTEM_UUID);
+        assert_eq!(parsed["trunker_feeder_id"], FEEDER_UUID);
+    }
+
+    #[test]
+    fn test_to_attributes_all_fields() {
+        let meta = metadata_all_fields();
+        let attrs = meta.to_attributes();
+
+        assert_eq!(attrs.get("system_id").map(String::as_str), Some("42"));
+        assert_eq!(attrs.get("wacn").map(String::as_str), Some("48879"));
+        assert_eq!(attrs.get("site_id").map(String::as_str), Some("7"));
+        assert_eq!(
+            attrs.get("radioreference_id").map(String::as_str),
+            Some("12345")
+        );
+        assert_eq!(
+            attrs.get("trunker_system_id").map(String::as_str),
+            Some(SYSTEM_UUID)
+        );
+        assert_eq!(
+            attrs.get("trunker_feeder_id").map(String::as_str),
+            Some(FEEDER_UUID)
+        );
+    }
+
+    #[test]
+    fn test_to_attributes_none_fields_skipped() {
+        let meta = metadata_no_optional();
+        let attrs = meta.to_attributes();
+
+        assert!(!attrs.contains_key("system_id"), "system_id should be absent");
+        assert!(!attrs.contains_key("wacn"), "wacn should be absent");
+        assert!(!attrs.contains_key("site_id"), "site_id should be absent");
+        assert!(
+            !attrs.contains_key("radioreference_id"),
+            "radioreference_id should be absent"
+        );
+    }
+
+    #[test]
+    fn test_to_attributes_uuid_fields_always_present() {
+        let meta = metadata_no_optional();
+        let attrs = meta.to_attributes();
+
+        assert!(
+            attrs.contains_key("trunker_system_id"),
+            "trunker_system_id must always be present"
+        );
+        assert!(
+            attrs.contains_key("trunker_feeder_id"),
+            "trunker_feeder_id must always be present"
+        );
+    }
 }
