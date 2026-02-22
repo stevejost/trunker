@@ -206,35 +206,8 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Build system identification metadata.
-    let metadata = SystemMetadata {
-        system_id: cli.system_id,
-        wacn: cli.wacn,
-        site_id: cli.site_id,
-        radioreference_id: cli.radioreference_id,
-        trunker_system_id: cli.trunker_system_id.unwrap_or_else(Uuid::new_v4),
-        trunker_feeder_id: cli.trunker_feeder_id.unwrap_or_else(Uuid::new_v4),
-    };
-    let metadata_json = serde_json::to_string(&metadata)?;
-
-    tracing::info!(
-        trunker_system_id = %metadata.trunker_system_id,
-        trunker_feeder_id = %metadata.trunker_feeder_id,
-        system_id = ?metadata.system_id,
-        wacn = ?metadata.wacn,
-        site_id = ?metadata.site_id,
-        "system metadata"
-    );
-
-    // Derive LiveKit room/identity defaults from system metadata.
-    let livekit_room = cli
-        .livekit_room
-        .unwrap_or_else(|| format!("trunker:{}", metadata.trunker_system_id));
-    let livekit_identity = cli
-        .livekit_identity
-        .unwrap_or_else(|| format!("feeder:{}", metadata.trunker_feeder_id));
-
-    let running = Arc::new(AtomicBool::new(true));
+    // Detect operating mode.
+    let mode = config::ServerMode::detect(cli.feeder_id, cli.api_key.as_deref(), &cli.api_url)?;
 
     // Merge TRUNKER_SETTINGS env var with --setting CLI args.
     // CLI --setting values override env values with the same key.
@@ -255,34 +228,195 @@ async fn main() -> Result<()> {
     }
     let settings: Vec<(String, String)> = settings_map.into_iter().collect();
 
-    // Require LiveKit credentials for now (managed mode will fill these from API).
-    let livekit_url = cli
-        .livekit_url
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--livekit-url or LIVEKIT_URL is required"))?;
-    let livekit_api_key = cli
-        .livekit_api_key
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--livekit-api-key or LIVEKIT_API_KEY is required"))?;
-    let livekit_api_secret = cli
-        .livekit_api_secret
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--livekit-api-secret or LIVEKIT_API_SECRET is required"))?;
+    let running = Arc::new(AtomicBool::new(true));
 
-    tracing::info!(
-        room = livekit_room,
-        identity = livekit_identity,
-        "connecting to LiveKit server"
-    );
+    // Resolved configuration values (filled from API or CLI depending on mode).
+    let livekit_url: String;
+    let livekit_token: String;
+    let livekit_room: String;
+    let livekit_identity: String;
+    let metadata: SystemMetadata;
+    let metadata_json: String;
+    let center_freq: u64;
+    let cc_offset_hz: f64;
+    let device: String;
 
-    // Generate access token for LiveKit.
-    let token =
-        livekit_api::access_token::AccessToken::with_api_key(livekit_api_key, livekit_api_secret)
+    match &mode {
+        config::ServerMode::Managed {
+            feeder_id,
+            api_key,
+            api_url,
+        } => {
+            tracing::info!(%feeder_id, %api_url, "managed mode: fetching config from API");
+
+            // Warn about ignored standalone-only options.
+            if cli.livekit_url.is_some() {
+                tracing::warn!(
+                    "--livekit-url is ignored in managed mode (LiveKit config comes from API)"
+                );
+            }
+            if cli.livekit_api_key.is_some() {
+                tracing::warn!(
+                    "--livekit-api-key is ignored in managed mode (LiveKit token comes from API)"
+                );
+            }
+            if cli.livekit_api_secret.is_some() {
+                tracing::warn!(
+                    "--livekit-api-secret is ignored in managed mode (LiveKit token comes from API)"
+                );
+            }
+
+            let api_config = config::fetch_config(api_url, feeder_id, api_key).await?;
+
+            let sdr = api_config.sdr.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "feeder {feeder_id} is not assigned to a site\n  \
+                     hint: assign this feeder to a system in the trunker-web dashboard"
+                )
+            })?;
+
+            // Use CLI center_freq if provided, otherwise use API value.
+            center_freq = cli.center_freq.unwrap_or(sdr.center_frequency);
+
+            // Validate sample rate covers the network bandwidth.
+            if (cli.sample_rate as u64) < sdr.bandwidth {
+                anyhow::bail!(
+                    "sample rate {} Hz < network bandwidth {} Hz\n  \
+                     hint: set TRUNKER_SAMPLE_RATE >= {}",
+                    cli.sample_rate,
+                    sdr.bandwidth,
+                    sdr.bandwidth
+                );
+            }
+
+            // Validate all CC candidates fit within capture bandwidth.
+            let half_bw = cli.sample_rate as f64 / 2.0;
+            let valid_candidates: Vec<u64> = sdr
+                .control_channels
+                .iter()
+                .filter(|&&freq| {
+                    let offset = (freq as f64 - center_freq as f64).abs();
+                    if offset > half_bw {
+                        tracing::warn!(
+                            frequency = freq,
+                            offset_hz = offset,
+                            "CC candidate outside capture bandwidth, skipping"
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .copied()
+                .collect();
+            if valid_candidates.is_empty() {
+                anyhow::bail!(
+                    "no CC candidates within capture bandwidth\n  \
+                     hint: center_freq={center_freq}, sample_rate={}, candidates={:?}",
+                    cli.sample_rate,
+                    sdr.control_channels
+                );
+            }
+
+            // For now, use the first valid CC candidate as the frequency.
+            // CC hunter (Task 6) will scan all candidates.
+            let cc_freq = valid_candidates[0];
+            cc_offset_hz = cc_freq as f64 - center_freq as f64;
+
+            // Merge system identification: CLI overrides API.
+            let api_system_id = config::parse_hex_string(&api_config.system.system_id);
+            let api_wacn = config::parse_hex_string(&api_config.system.wacn);
+
+            metadata = SystemMetadata {
+                system_id: cli.system_id.or(api_system_id),
+                wacn: cli.wacn.or(api_wacn),
+                site_id: cli.site_id,
+                radioreference_id: cli.radioreference_id,
+                trunker_system_id: cli.trunker_system_id.unwrap_or(api_config.system.id),
+                trunker_feeder_id: cli.trunker_feeder_id.unwrap_or(*feeder_id),
+            };
+            metadata_json = serde_json::to_string(&metadata)?;
+
+            // LiveKit config comes directly from the API.
+            livekit_url = api_config.url;
+            livekit_token = api_config.token;
+            livekit_room = api_config.room;
+            livekit_identity = cli
+                .livekit_identity
+                .clone()
+                .unwrap_or_else(|| format!("feeder:{}", metadata.trunker_feeder_id));
+
+            // Device must come from CLI/env (API cannot know local hardware).
+            device = cli.device.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--device or TRUNKER_DEVICE is required (API cannot know local hardware)"
+                )
+            })?;
+
+            tracing::info!(
+                system = api_config.system.name,
+                short_name = api_config.system.short_name,
+                center_freq,
+                control_channels = ?valid_candidates,
+                "managed config loaded"
+            );
+        }
+        config::ServerMode::Standalone => {
+            tracing::info!("standalone mode");
+
+            device = cli
+                .device
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("--device or TRUNKER_DEVICE is required"))?;
+            center_freq = cli.center_freq.ok_or_else(|| {
+                anyhow::anyhow!("--center-freq or TRUNKER_CENTER_FREQ is required")
+            })?;
+
+            cc_offset_hz = match cli.frequency {
+                Some(freq) if freq != 0 => freq as f64 - center_freq as f64,
+                _ => 0.0,
+            };
+
+            metadata = SystemMetadata {
+                system_id: cli.system_id,
+                wacn: cli.wacn,
+                site_id: cli.site_id,
+                radioreference_id: cli.radioreference_id,
+                trunker_system_id: cli.trunker_system_id.unwrap_or_else(Uuid::new_v4),
+                trunker_feeder_id: cli.trunker_feeder_id.unwrap_or_else(Uuid::new_v4),
+            };
+            metadata_json = serde_json::to_string(&metadata)?;
+
+            let livekit_url_str = cli
+                .livekit_url
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--livekit-url or LIVEKIT_URL is required"))?;
+            let livekit_api_key = cli.livekit_api_key.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("--livekit-api-key or LIVEKIT_API_KEY is required")
+            })?;
+            let livekit_api_secret = cli.livekit_api_secret.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("--livekit-api-secret or LIVEKIT_API_SECRET is required")
+            })?;
+
+            livekit_room = cli
+                .livekit_room
+                .clone()
+                .unwrap_or_else(|| format!("trunker:{}", metadata.trunker_system_id));
+            livekit_identity = cli
+                .livekit_identity
+                .clone()
+                .unwrap_or_else(|| format!("feeder:{}", metadata.trunker_feeder_id));
+
+            // Generate access token for LiveKit.
+            livekit_token = livekit_api::access_token::AccessToken::with_api_key(
+                livekit_api_key,
+                livekit_api_secret,
+            )
             .with_identity(&livekit_identity)
             .with_metadata(&metadata_json)
             .with_grants(livekit_api::access_token::VideoGrants {
                 room_join: true,
-                room: livekit_room,
+                room: livekit_room.clone(),
                 can_publish: true,
                 can_subscribe: false,
                 can_update_own_metadata: true,
@@ -290,11 +424,30 @@ async fn main() -> Result<()> {
             })
             .to_jwt()?;
 
+            livekit_url = livekit_url_str.to_string();
+        }
+    }
+
+    tracing::info!(
+        trunker_system_id = %metadata.trunker_system_id,
+        trunker_feeder_id = %metadata.trunker_feeder_id,
+        system_id = ?metadata.system_id,
+        wacn = ?metadata.wacn,
+        site_id = ?metadata.site_id,
+        "system metadata"
+    );
+
+    tracing::info!(
+        room = livekit_room,
+        identity = livekit_identity,
+        "connecting to LiveKit server"
+    );
+
     // Connect to LiveKit room.
     let mut room_options = RoomOptions::default();
     room_options.auto_subscribe = false;
     room_options.single_peer_connection = true;
-    let (room, mut room_events) = Room::connect(livekit_url, &token, room_options).await?;
+    let (room, mut room_events) = Room::connect(&livekit_url, &livekit_token, room_options).await?;
     let room = Arc::new(room);
 
     tracing::info!(room_name = room.name(), "connected to LiveKit room");
@@ -359,21 +512,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Require device and center_freq for now (managed mode will fill from API).
-    let device = cli
-        .device
-        .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("--device or TRUNKER_DEVICE is required"))?;
-    let center_freq = cli
-        .center_freq
-        .ok_or_else(|| anyhow::anyhow!("--center-freq or TRUNKER_CENTER_FREQ is required"))?;
-
-    // Compute CC offset.
-    let cc_offset_hz = match cli.frequency {
-        Some(freq) if freq != 0 => freq as f64 - center_freq as f64,
-        _ => 0.0,
-    };
-
     let max_voices = if cli.max_voices == 0 {
         None
     } else {
@@ -384,7 +522,7 @@ async fn main() -> Result<()> {
     // thread doesn't overflow while we wait for LiveKit to connect.
     let gain = if cli.auto_gain { None } else { cli.gain };
     let sample_source = SoapySource::open(
-        device,
+        &device,
         center_freq,
         cli.sample_rate,
         gain,
