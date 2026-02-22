@@ -14,6 +14,11 @@ samples/iq/*.cu8
 samples/iq/audio/
 !samples/iq/.gitkeep
 
+# Environment files (secrets)
+.env
+.env.*
+!.env.example
+
 # Debug/runtime artifacts
 debug.log
 output.jsonl
