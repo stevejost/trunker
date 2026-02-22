@@ -248,6 +248,7 @@ async fn main() -> Result<()> {
         room: livekit_room,
         can_publish: true,
         can_subscribe: false,
+        can_update_own_metadata: true,
         ..Default::default()
     })
     .to_jwt()?;
