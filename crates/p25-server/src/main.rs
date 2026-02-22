@@ -23,6 +23,15 @@ use livekit::prelude::*;
 use serde::Serialize;
 use uuid::Uuid;
 
+/// Parse a u32 from decimal or hex (with `0x` prefix).
+fn parse_hex_u32(s: &str) -> Result<u32, String> {
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u32::from_str_radix(hex, 16).map_err(|e| format!("invalid hex: {e}"))
+    } else {
+        s.parse::<u32>().map_err(|e| format!("invalid number: {e} (use 0x prefix for hex)"))
+    }
+}
+
 use bridge::BroadcastSink;
 use data_publisher::DataPublisher;
 use livekit_publisher::AudioPublisher;
@@ -103,16 +112,16 @@ struct Cli {
     #[arg(long, default_value_t = 16.0)]
     audio_gain: f32,
 
-    /// P25 system ID.
-    #[arg(long)]
+    /// P25 system ID (decimal or 0x hex).
+    #[arg(long, value_parser = parse_hex_u32)]
     system_id: Option<u32>,
 
-    /// Wide Area Communications Network ID.
-    #[arg(long)]
+    /// Wide Area Communications Network ID (decimal or 0x hex).
+    #[arg(long, value_parser = parse_hex_u32)]
     wacn: Option<u32>,
 
-    /// P25 site identifier.
-    #[arg(long)]
+    /// P25 site identifier (decimal or 0x hex).
+    #[arg(long, value_parser = parse_hex_u32)]
     site_id: Option<u32>,
 
     /// RadioReference.com database ID.
