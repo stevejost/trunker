@@ -11,6 +11,7 @@
 
 mod api_heartbeat;
 mod bridge;
+mod command;
 mod config;
 mod data_publisher;
 mod livekit_publisher;
@@ -513,7 +514,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Spawn API heartbeat in managed mode.
+    // Spawn managed-mode background tasks.
     if let config::ServerMode::Managed {
         ref api_url,
         feeder_id,
@@ -525,6 +526,11 @@ async fn main() -> Result<()> {
         let hb_key = api_key.clone();
         let hb_running = running.clone();
         tokio::spawn(api_heartbeat::run(hb_url, feeder_id, hb_key, hb_running));
+
+        let ws_url = api_url.clone();
+        let ws_key = api_key.clone();
+        let ws_running = running.clone();
+        tokio::spawn(command::run(ws_url, feeder_id, ws_key, ws_running));
     }
 
     let max_voices = if cli.max_voices == 0 {
