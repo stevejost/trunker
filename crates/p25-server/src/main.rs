@@ -571,6 +571,7 @@ async fn main() -> Result<()> {
             max_voices,
             json_output: false,
             heartbeat_seconds: 10,
+            control_channels: vec![], // Will be populated from API config in Task 8
         };
         trunker::decode::trunked::decode_trunked(
             &mut source,
