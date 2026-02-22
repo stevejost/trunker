@@ -66,8 +66,8 @@ struct VoiceChannel {
 /// thread; this handle provides the IQ send channel, shared carrier
 /// state, and metadata for grant refresh and expiry.
 struct VoiceThreadHandle {
-    /// Send IQ samples to this thread. Drop to signal shutdown.
-    iq_sender: crossbeam_channel::Sender<Complex<f32>>,
+    /// Send batched IQ samples to this thread. Drop to signal shutdown.
+    iq_sender: crossbeam_channel::Sender<Arc<[Complex<f32>]>>,
     /// Thread join handle for cleanup.
     join_handle: Option<thread::JoinHandle<()>>,
     /// Whether carrier has been acquired (shared with voice thread).
@@ -82,10 +82,18 @@ struct VoiceThreadHandle {
     last_grant_sample: u64,
 }
 
-/// Capacity of the bounded IQ sample channel per voice thread.
+/// Number of IQ samples per batch sent to voice threads.
 ///
-/// 4096 samples at 2.4 MS/s is ~1.7 ms of buffering.
-const IQ_CHANNEL_CAPACITY: usize = 4096;
+/// 512 samples at 2.4 MS/s is ~0.21 ms per batch. Batching amortizes
+/// crossbeam channel overhead across many samples, reducing sends from
+/// millions/sec (per-sample) to ~23K/sec at 2.4 MSPS with 5 channels.
+const IQ_BATCH_SIZE: usize = 512;
+
+/// Capacity of the bounded IQ batch channel per voice thread.
+///
+/// 8 batches of 512 samples = 4096 samples total, the same buffering
+/// depth as the previous per-sample channel.
+const IQ_CHANNEL_CAPACITY: usize = 8;
 
 /// Voice thread entry point.
 ///
@@ -94,49 +102,51 @@ const IQ_CHANNEL_CAPACITY: usize = 4096;
 /// back to the manager via the event channel.
 fn voice_thread_main(
     mut channel: VoiceChannel,
-    iq_receiver: crossbeam_channel::Receiver<Complex<f32>>,
+    iq_receiver: crossbeam_channel::Receiver<Arc<[Complex<f32>]>>,
     event_sender: crossbeam_channel::Sender<VoiceChannelEvent>,
     carrier_acquired: Arc<AtomicBool>,
 ) {
-    while let Ok(sample) = iq_receiver.recv() {
-        let shifted = channel.nco.shift(sample);
-        if let Some(event) = channel.pipeline.process_sample(shifted) {
-            // Mark carrier acquired on first valid NID decode.
-            if let ReceiverEvent::Nid(nid) = &event
-                && nid.parity_ok
-                && !carrier_acquired.load(Ordering::Relaxed)
-            {
-                carrier_acquired.store(true, Ordering::Relaxed);
-                tracing::debug!(
-                    frequency = %channel.frequency,
-                    "carrier acquired, audio output enabled"
-                );
-            }
-
-            // Decode audio only after carrier is acquired.
-            let audio = if carrier_acquired.load(Ordering::Relaxed) {
-                if let (Some(decoder), ReceiverEvent::VoiceFrame(vf)) =
-                    (channel.decoder.as_mut(), &event)
+    while let Ok(batch) = iq_receiver.recv() {
+        for &sample in batch.iter() {
+            let shifted = channel.nco.shift(sample);
+            if let Some(event) = channel.pipeline.process_sample(shifted) {
+                // Mark carrier acquired on first valid NID decode.
+                if let ReceiverEvent::Nid(nid) = &event
+                    && nid.parity_ok
+                    && !carrier_acquired.load(Ordering::Relaxed)
                 {
-                    let received = ReceivedFrame::from(vf);
-                    let mut buffer: AudioBuffer = [0.0; SAMPLES_PER_FRAME];
-                    decoder.decode(received, &mut buffer);
-                    Some(buffer.to_vec())
+                    carrier_acquired.store(true, Ordering::Relaxed);
+                    tracing::debug!(
+                        frequency = %channel.frequency,
+                        "carrier acquired, audio output enabled"
+                    );
+                }
+
+                // Decode audio only after carrier is acquired.
+                let audio = if carrier_acquired.load(Ordering::Relaxed) {
+                    if let (Some(decoder), ReceiverEvent::VoiceFrame(vf)) =
+                        (channel.decoder.as_mut(), &event)
+                    {
+                        let received = ReceivedFrame::from(vf);
+                        let mut buffer: AudioBuffer = [0.0; SAMPLES_PER_FRAME];
+                        decoder.decode(received, &mut buffer);
+                        Some(buffer.to_vec())
+                    } else {
+                        None
+                    }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
 
-            let _ = event_sender.send(VoiceChannelEvent {
-                frequency: channel.frequency,
-                talkgroup: channel.talkgroup,
-                source: channel.source,
-                nac: channel.pipeline.current_nac(),
-                event,
-                audio,
-            });
+                let _ = event_sender.send(VoiceChannelEvent {
+                    frequency: channel.frequency,
+                    talkgroup: channel.talkgroup,
+                    source: channel.source,
+                    nac: channel.pipeline.current_nac(),
+                    event,
+                    audio,
+                });
+            }
         }
     }
     // iq_receiver disconnected — sender was dropped, thread exits cleanly.
@@ -196,6 +206,8 @@ pub struct ChannelManager {
     event_receiver: crossbeam_channel::Receiver<VoiceChannelEvent>,
     /// Sender cloned into each voice thread.
     event_sender: crossbeam_channel::Sender<VoiceChannelEvent>,
+    /// Accumulates IQ samples before flushing as a batch to voice threads.
+    iq_batch: Vec<Complex<f32>>,
 }
 
 /// Fraction of sample rate considered usable bandwidth.
@@ -234,6 +246,7 @@ impl ChannelManager {
             expired_no_carrier: 0,
             event_receiver,
             event_sender,
+            iq_batch: Vec::with_capacity(IQ_BATCH_SIZE),
         }
     }
 
@@ -289,14 +302,10 @@ impl ChannelManager {
     pub fn process_sample(&mut self, sample: Complex<f32>, events: &mut Vec<VoiceChannelEvent>) {
         self.sample_count += 1;
 
-        // Fan out IQ sample to all voice threads.
-        for handle in self.active_channels.values() {
-            if handle.iq_sender.try_send(sample).is_err() {
-                tracing::trace!(
-                    frequency = %handle.frequency,
-                    "voice thread lagging, dropped sample"
-                );
-            }
+        // Accumulate samples into a batch before sending to voice threads.
+        self.iq_batch.push(sample);
+        if self.iq_batch.len() >= IQ_BATCH_SIZE {
+            self.flush_iq_batch();
         }
 
         // Drain events from voice threads.
@@ -308,6 +317,29 @@ impl ChannelManager {
         // avoid HashMap iteration overhead on every sample).
         if self.sample_count.is_multiple_of(10_000) {
             self.expire_channels();
+        }
+    }
+
+    /// Flush the accumulated IQ batch to all voice threads.
+    ///
+    /// Converts the batch buffer to an `Arc` slice and sends a clone to
+    /// each voice thread. This amortizes crossbeam channel overhead across
+    /// `IQ_BATCH_SIZE` samples per send.
+    fn flush_iq_batch(&mut self) {
+        if self.iq_batch.is_empty() {
+            return;
+        }
+
+        let batch: Arc<[Complex<f32>]> = Arc::from(self.iq_batch.as_slice());
+        self.iq_batch.clear();
+
+        for handle in self.active_channels.values() {
+            if handle.iq_sender.try_send(Arc::clone(&batch)).is_err() {
+                tracing::trace!(
+                    frequency = %handle.frequency,
+                    "voice thread lagging, dropped batch"
+                );
+            }
         }
     }
 
@@ -536,6 +568,9 @@ impl ChannelManager {
     /// Drops all IQ senders and joins all threads. Called on
     /// `ChannelManager` drop to ensure clean shutdown.
     pub fn shutdown(&mut self) {
+        // Flush any partial batch so voice threads get all samples.
+        self.flush_iq_batch();
+
         // Drain remaining events before shutdown.
         while self.event_receiver.try_recv().is_ok() {}
 
