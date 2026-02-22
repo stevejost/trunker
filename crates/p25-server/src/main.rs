@@ -28,7 +28,8 @@ fn parse_hex_u32(s: &str) -> Result<u32, String> {
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         u32::from_str_radix(hex, 16).map_err(|e| format!("invalid hex: {e}"))
     } else {
-        s.parse::<u32>().map_err(|e| format!("invalid number: {e} (use 0x prefix for hex)"))
+        s.parse::<u32>()
+            .map_err(|e| format!("invalid number: {e} (use 0x prefix for hex)"))
     }
 }
 
@@ -45,31 +46,31 @@ use trunker::sdr::soapy_source::SoapySource;
 #[command(name = "p25-server", version, about)]
 struct Cli {
     /// SoapySDR device argument string (e.g. "driver=sdrplay").
-    #[arg(short, long)]
-    device: String,
+    #[arg(short, long, env = "TRUNKER_DEVICE")]
+    device: Option<String>,
 
     /// Control channel frequency in Hz.
     #[arg(long)]
-    frequency: u64,
+    frequency: Option<u64>,
 
     /// Center frequency of the capture in Hz.
-    #[arg(short = 'f', long)]
-    center_freq: u64,
+    #[arg(short = 'f', long, env = "TRUNKER_CENTER_FREQ")]
+    center_freq: Option<u64>,
 
     /// Sample rate in Hz.
-    #[arg(short, long, default_value_t = 2_400_000)]
+    #[arg(short, long, default_value_t = 2_400_000, env = "TRUNKER_SAMPLE_RATE")]
     sample_rate: u32,
 
     /// Manual gain in dB (mutually exclusive with --auto-gain).
-    #[arg(long)]
+    #[arg(long, env = "TRUNKER_GAIN")]
     gain: Option<f64>,
 
     /// Enable automatic gain control.
-    #[arg(long)]
+    #[arg(long, env = "TRUNKER_AUTO_GAIN")]
     auto_gain: bool,
 
     /// Antenna port name.
-    #[arg(long)]
+    #[arg(long, env = "TRUNKER_ANTENNA")]
     antenna: Option<String>,
 
     /// Device-specific setting as key=value (repeatable).
@@ -77,7 +78,7 @@ struct Cli {
     settings: Vec<String>,
 
     /// SDR read buffer depth in milliseconds.
-    #[arg(long, default_value_t = 500)]
+    #[arg(long, default_value_t = 500, env = "TRUNKER_BUFFER_MS")]
     buffer_ms: u32,
 
     /// Seconds before tearing down an idle voice channel.
@@ -90,15 +91,15 @@ struct Cli {
 
     /// LiveKit server URL (e.g. "wss://my-server.livekit.cloud").
     #[arg(long, env = "LIVEKIT_URL")]
-    livekit_url: String,
+    livekit_url: Option<String>,
 
     /// LiveKit API key.
     #[arg(long, env = "LIVEKIT_API_KEY")]
-    livekit_api_key: String,
+    livekit_api_key: Option<String>,
 
     /// LiveKit API secret.
     #[arg(long, env = "LIVEKIT_API_SECRET")]
-    livekit_api_secret: String,
+    livekit_api_secret: Option<String>,
 
     /// LiveKit room name to join (defaults to "trunker:{trunker_system_id}").
     #[arg(long)]
@@ -109,7 +110,7 @@ struct Cli {
     livekit_identity: Option<String>,
 
     /// Audio gain multiplier for LiveKit output (default: 16.0).
-    #[arg(long, default_value_t = 16.0)]
+    #[arg(long, default_value_t = 16.0, env = "TRUNKER_AUDIO_GAIN")]
     audio_gain: f32,
 
     /// P25 system ID (decimal or 0x hex).
@@ -135,6 +136,18 @@ struct Cli {
     /// Trunker feeder unique identifier (auto-generated if omitted).
     #[arg(long)]
     trunker_feeder_id: Option<Uuid>,
+
+    /// Trunker API base URL for managed mode.
+    #[arg(long, env = "TRUNKER_API_URL", default_value = "https://trunker.app")]
+    api_url: String,
+
+    /// Feeder identifier for API registration.
+    #[arg(long, env = "TRUNKER_FEEDER_ID")]
+    feeder_id: Option<Uuid>,
+
+    /// API key for authentication with trunker-web.
+    #[arg(long, env = "TRUNKER_API_KEY")]
+    api_key: Option<String>,
 }
 
 /// System identification metadata embedded in LiveKit participant info.
@@ -178,6 +191,10 @@ impl SystemMetadata {
 
 #[tokio::main(worker_threads = 2)]
 async fn main() -> Result<()> {
+    // Load .env file before CLI parse so clap's env= attributes pick up values.
+    let env_file = std::env::var("TRUNKER_ENV_FILE").unwrap_or_else(|_| ".env".to_string());
+    let _ = dotenvy::from_filename(&env_file);
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -218,17 +235,38 @@ async fn main() -> Result<()> {
 
     let running = Arc::new(AtomicBool::new(true));
 
-    // Parse device settings.
-    let settings: Vec<(String, String)> = cli
-        .settings
-        .iter()
-        .map(|s| {
-            let (key, value) = s
-                .split_once('=')
-                .ok_or_else(|| anyhow::anyhow!("invalid setting '{s}': expected key=value"))?;
-            Ok((key.to_string(), value.to_string()))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    // Merge TRUNKER_SETTINGS env var with --setting CLI args.
+    // CLI --setting values override env values with the same key.
+    let mut settings_map: HashMap<String, String> = HashMap::new();
+    if let Ok(env_settings) = std::env::var("TRUNKER_SETTINGS") {
+        for item in env_settings.split(',') {
+            let item = item.trim();
+            if let Some((key, value)) = item.split_once('=') {
+                settings_map.insert(key.to_string(), value.to_string());
+            }
+        }
+    }
+    for s in &cli.settings {
+        let (key, value) = s
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("invalid setting '{s}': expected key=value"))?;
+        settings_map.insert(key.to_string(), value.to_string());
+    }
+    let settings: Vec<(String, String)> = settings_map.into_iter().collect();
+
+    // Require LiveKit credentials for now (managed mode will fill these from API).
+    let livekit_url = cli
+        .livekit_url
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--livekit-url or LIVEKIT_URL is required"))?;
+    let livekit_api_key = cli
+        .livekit_api_key
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--livekit-api-key or LIVEKIT_API_KEY is required"))?;
+    let livekit_api_secret = cli
+        .livekit_api_secret
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--livekit-api-secret or LIVEKIT_API_SECRET is required"))?;
 
     tracing::info!(
         room = livekit_room,
@@ -237,37 +275,32 @@ async fn main() -> Result<()> {
     );
 
     // Generate access token for LiveKit.
-    let token = livekit_api::access_token::AccessToken::with_api_key(
-        &cli.livekit_api_key,
-        &cli.livekit_api_secret,
-    )
-    .with_identity(&livekit_identity)
-    .with_metadata(&metadata_json)
-    .with_grants(livekit_api::access_token::VideoGrants {
-        room_join: true,
-        room: livekit_room,
-        can_publish: true,
-        can_subscribe: false,
-        can_update_own_metadata: true,
-        ..Default::default()
-    })
-    .to_jwt()?;
+    let token =
+        livekit_api::access_token::AccessToken::with_api_key(livekit_api_key, livekit_api_secret)
+            .with_identity(&livekit_identity)
+            .with_metadata(&metadata_json)
+            .with_grants(livekit_api::access_token::VideoGrants {
+                room_join: true,
+                room: livekit_room,
+                can_publish: true,
+                can_subscribe: false,
+                can_update_own_metadata: true,
+                ..Default::default()
+            })
+            .to_jwt()?;
 
     // Connect to LiveKit room.
     let mut room_options = RoomOptions::default();
     room_options.auto_subscribe = false;
     room_options.single_peer_connection = true;
-    let (room, mut room_events) =
-        Room::connect(&cli.livekit_url, &token, room_options).await?;
+    let (room, mut room_events) = Room::connect(livekit_url, &token, room_options).await?;
     let room = Arc::new(room);
 
     tracing::info!(room_name = room.name(), "connected to LiveKit room");
 
     // Publish system metadata on the local participant so subscribers
     // (and the future central server) can identify this feeder.
-    room.local_participant()
-        .set_metadata(metadata_json)
-        .await?;
+    room.local_participant().set_metadata(metadata_json).await?;
     room.local_participant()
         .set_attributes(metadata.to_attributes())
         .await?;
@@ -325,11 +358,19 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Require device and center_freq for now (managed mode will fill from API).
+    let device = cli
+        .device
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--device or TRUNKER_DEVICE is required"))?;
+    let center_freq = cli
+        .center_freq
+        .ok_or_else(|| anyhow::anyhow!("--center-freq or TRUNKER_CENTER_FREQ is required"))?;
+
     // Compute CC offset.
-    let cc_offset_hz = if cli.frequency != 0 {
-        cli.frequency as f64 - cli.center_freq as f64
-    } else {
-        0.0
+    let cc_offset_hz = match cli.frequency {
+        Some(freq) if freq != 0 => freq as f64 - center_freq as f64,
+        _ => 0.0,
     };
 
     let max_voices = if cli.max_voices == 0 {
@@ -342,8 +383,8 @@ async fn main() -> Result<()> {
     // thread doesn't overflow while we wait for LiveKit to connect.
     let gain = if cli.auto_gain { None } else { cli.gain };
     let sample_source = SoapySource::open(
-        &cli.device,
-        cli.center_freq,
+        device,
+        center_freq,
         cli.sample_rate,
         gain,
         cli.antenna.as_deref(),
@@ -359,7 +400,7 @@ async fn main() -> Result<()> {
     let decode_handle = std::thread::spawn(move || {
         let config = trunker::decode::TrunkedDecoderConfig {
             sample_rate: cli.sample_rate,
-            center_frequency: cli.center_freq,
+            center_frequency: center_freq,
             cc_offset_hz,
             modulation: pipeline::Modulation::Cqpsk,
             nid_integrity: NidIntegrityPolicy::Strict,
@@ -447,7 +488,10 @@ mod tests {
         let json = serde_json::to_string(&meta).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        assert!(parsed.get("system_id").is_none(), "system_id should be absent");
+        assert!(
+            parsed.get("system_id").is_none(),
+            "system_id should be absent"
+        );
         assert!(parsed.get("wacn").is_none(), "wacn should be absent");
         assert!(parsed.get("site_id").is_none(), "site_id should be absent");
         assert!(
@@ -486,7 +530,10 @@ mod tests {
         let meta = metadata_no_optional();
         let attrs = meta.to_attributes();
 
-        assert!(!attrs.contains_key("system_id"), "system_id should be absent");
+        assert!(
+            !attrs.contains_key("system_id"),
+            "system_id should be absent"
+        );
         assert!(!attrs.contains_key("wacn"), "wacn should be absent");
         assert!(!attrs.contains_key("site_id"), "site_id should be absent");
         assert!(

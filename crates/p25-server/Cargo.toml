@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
+dotenvy = "0.15"
 ctrlc = { version = "3", features = ["termination"] }
 livekit = "0.7"
 livekit-api = "0.4"
