@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::channel_manager::{ChannelManager, ChannelManagerConfig, VoiceChannelEvent};
+use crate::decode::cc_hunter;
 use crate::decode::control_channel::emit_heartbeat_event;
 use crate::decode::event::{DecoderEvent, EventSink};
 use crate::decode::heartbeat::HeartbeatState;
@@ -50,6 +51,12 @@ pub struct TrunkedDecoderConfig {
     pub json_output: bool,
     /// Heartbeat interval in seconds (0 = disabled).
     pub heartbeat_seconds: u64,
+    /// Candidate control channel frequencies for CC hunting (Hz).
+    ///
+    /// If non-empty, the decoder uses [`CcHunter`](super::cc_hunter::CcHunter)
+    /// to find the active CC before starting normal trunked decode.
+    /// If empty, uses `cc_offset_hz` directly (legacy behavior).
+    pub control_channels: Vec<u64>,
 }
 
 /// Run the wideband trunked decoder (CC + voice channels).
@@ -63,22 +70,35 @@ pub fn decode_trunked(
     running: &Arc<AtomicBool>,
     mut event_sink: Option<&mut dyn EventSink>,
 ) -> anyhow::Result<()> {
-    let pipeline_config = PipelineConfig {
-        sample_rate: config.sample_rate,
-        modulation: config.modulation,
-        nid_integrity: config.nid_integrity,
-        sync_timeout_samples: Some(pipeline::CC_SYNC_TIMEOUT_SAMPLES),
-    };
-    let mut cc_pipeline = ChannelPipeline::new(pipeline_config)?;
     let mut ident_table = IdentTable::new();
     let mut tsbk_count: u64 = 0;
 
-    // NCO to shift the CC to baseband when it's not at DC.
-    let mut cc_nco = if config.cc_offset_hz.abs() > 0.1 {
-        Some(Nco::new(config.cc_offset_hz, f64::from(config.sample_rate)))
+    // Determine CC pipeline: hunt from candidates or direct offset.
+    let (mut cc_pipeline, mut cc_nco, collected_tsbks) = if !config.control_channels.is_empty() {
+        hunt_for_cc(source, config, running)?
     } else {
-        None
+        let pipeline_config = PipelineConfig {
+            sample_rate: config.sample_rate,
+            modulation: config.modulation,
+            nid_integrity: config.nid_integrity,
+            sync_timeout_samples: Some(pipeline::CC_SYNC_TIMEOUT_SAMPLES),
+        };
+        let cc_pipeline = ChannelPipeline::new(pipeline_config)?;
+        let cc_nco = if config.cc_offset_hz.abs() > 0.1 {
+            Some(Nco::new(config.cc_offset_hz, f64::from(config.sample_rate)))
+        } else {
+            None
+        };
+        (cc_pipeline, cc_nco, Vec::new())
     };
+
+    // Seed ident table from TSBKs collected during hunting.
+    for tsbk in &collected_tsbks {
+        if matches!(tsbk.payload, TsbkPayload::IdentifierUpdate { .. }) {
+            ident_table.update(tsbk);
+        }
+    }
+    tsbk_count += collected_tsbks.len() as u64;
 
     let mut channel_manager = ChannelManager::new(ChannelManagerConfig {
         center_frequency: Frequency::from_hz(config.center_frequency),
@@ -107,6 +127,13 @@ pub fn decode_trunked(
     let mut stats = TrunkStats::new();
     let mut samples_since_report: u64 = 0;
     let mut total_elapsed_seconds: u64 = 0;
+
+    // CC loss tracking (only active when CC hunting is enabled).
+    let hunting_enabled = !config.control_channels.is_empty();
+    let mut samples_since_last_tsbk: u64 = 0;
+    let cc_loss_threshold = u64::from(config.sample_rate) * 10;
+    let cc_warn_threshold = u64::from(config.sample_rate) * 3;
+    let mut cc_warn_emitted = false;
 
     for iq_sample in source.by_ref() {
         if !running.load(Ordering::Relaxed) {
@@ -148,6 +175,12 @@ pub fn decode_trunked(
             {
                 tracing::info!("event sink requested shutdown");
                 break;
+            }
+
+            // Reset CC loss counter on any TSBK.
+            if matches!(event, ReceiverEvent::Tsbk(_)) {
+                samples_since_last_tsbk = 0;
+                cc_warn_emitted = false;
             }
 
             if config.json_output {
@@ -243,6 +276,19 @@ pub fn decode_trunked(
                 samples_since_report = 0;
             }
         }
+
+        // CC loss detection (only when CC hunting is active).
+        if hunting_enabled {
+            samples_since_last_tsbk += 1;
+            if samples_since_last_tsbk >= cc_loss_threshold {
+                tracing::warn!("control channel lost (no TSBKs for 10s)");
+                anyhow::bail!("control channel lost after 10 seconds without TSBKs");
+            }
+            if !cc_warn_emitted && samples_since_last_tsbk >= cc_warn_threshold {
+                tracing::warn!("control channel degraded (no TSBKs for 3s)");
+                cc_warn_emitted = true;
+            }
+        }
     }
 
     // Finalize any open recordings on shutdown.
@@ -264,6 +310,66 @@ pub fn decode_trunked(
         "trunked decode complete"
     );
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// CC hunting
+// ---------------------------------------------------------------------------
+
+/// Run the CC hunting loop, retrying on timeout until a CC is found.
+///
+/// Returns the locked pipeline, its NCO (if offset), and any TSBKs
+/// collected during hunting for ident table seeding.
+fn hunt_for_cc(
+    source: &mut SampleSource,
+    config: &TrunkedDecoderConfig,
+    running: &Arc<AtomicBool>,
+) -> anyhow::Result<(ChannelPipeline, Option<Nco>, Vec<Tsbk>)> {
+    let make_hunter_config = || cc_hunter::CcHunterConfig {
+        sample_rate: config.sample_rate,
+        center_frequency: config.center_frequency,
+        control_channels: config.control_channels.clone(),
+        modulation: config.modulation,
+        nid_integrity: config.nid_integrity,
+        lock_threshold: 2,
+        expected_nac: None,
+        hunt_timeout_samples: u64::from(config.sample_rate) * 5,
+    };
+    let mut hunter = cc_hunter::CcHunter::new(make_hunter_config())?;
+
+    loop {
+        if !running.load(Ordering::Relaxed) {
+            anyhow::bail!("interrupted during CC hunting");
+        }
+        let sample = match source.next() {
+            Some(s) => s,
+            None => anyhow::bail!("sample source exhausted during CC hunting"),
+        };
+        match hunter.process_sample(sample) {
+            cc_hunter::HuntResult::Scanning => continue,
+            cc_hunter::HuntResult::Locked {
+                frequency,
+                offset_hz,
+                pipeline,
+                collected_tsbks,
+            } => {
+                let nco = if offset_hz.abs() > 0.1 {
+                    Some(Nco::new(offset_hz, f64::from(config.sample_rate)))
+                } else {
+                    None
+                };
+                tracing::info!(
+                    frequency = %frequency,
+                    "CC hunting complete, starting trunked decode"
+                );
+                return Ok((*pipeline, nco, collected_tsbks));
+            }
+            cc_hunter::HuntResult::Timeout => {
+                tracing::warn!("CC hunt timed out, retrying...");
+                hunter = cc_hunter::CcHunter::new(make_hunter_config())?;
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -661,10 +767,12 @@ mod tests {
             max_voices: Some(10),
             json_output: false,
             heartbeat_seconds: 10,
+            control_channels: vec![],
         };
         assert_eq!(config.sample_rate, 2_400_000);
         assert_eq!(config.center_frequency, 852_350_000);
         assert!(!config.json_output);
+        assert!(config.control_channels.is_empty());
     }
 
     #[test]

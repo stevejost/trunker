@@ -486,6 +486,7 @@ fn main() -> Result<()> {
                 max_voices,
                 json_output,
                 heartbeat_seconds,
+                control_channels: vec![], // p25 CLI doesn't support CC hunting yet
             };
             trunked::decode_trunked(&mut sample_source, &trunk_config, &running, None)?;
             check_device_error(&sample_source);

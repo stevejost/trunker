@@ -12,8 +12,8 @@ async fn main() -> Result<()> {
 
     let url = std::env::var("LIVEKIT_URL").unwrap_or_else(|_| "ws://127.0.0.1:7880".into());
     let api_key = std::env::var("LIVEKIT_API_KEY").unwrap_or_else(|_| "devkey".into());
-    let api_secret =
-        std::env::var("LIVEKIT_API_SECRET").unwrap_or_else(|_| "secret_that_you_should_change".into());
+    let api_secret = std::env::var("LIVEKIT_API_SECRET")
+        .unwrap_or_else(|_| "secret_that_you_should_change".into());
 
     let token = livekit_api::access_token::AccessToken::with_api_key(&api_key, &api_secret)
         .with_identity("rust-test")

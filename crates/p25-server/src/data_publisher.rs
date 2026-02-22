@@ -101,11 +101,7 @@ impl DataPublisher {
         }
     }
 
-    async fn handle_event(
-        &self,
-        event: BroadcastEvent,
-        active: &mut HashMap<u16, CallState>,
-    ) {
+    async fn handle_event(&self, event: BroadcastEvent, active: &mut HashMap<u16, CallState>) {
         match event {
             BroadcastEvent::Audio {
                 talkgroup,

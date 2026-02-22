@@ -9,7 +9,10 @@
 //! - An audio publisher creates one LiveKit track per talkgroup
 //! - A data channel publishes JSON metadata (grants, heartbeats)
 
+mod api_heartbeat;
 mod bridge;
+mod command;
+mod config;
 mod data_publisher;
 mod livekit_publisher;
 
@@ -28,7 +31,8 @@ fn parse_hex_u32(s: &str) -> Result<u32, String> {
     if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
         u32::from_str_radix(hex, 16).map_err(|e| format!("invalid hex: {e}"))
     } else {
-        s.parse::<u32>().map_err(|e| format!("invalid number: {e} (use 0x prefix for hex)"))
+        s.parse::<u32>()
+            .map_err(|e| format!("invalid number: {e} (use 0x prefix for hex)"))
     }
 }
 
@@ -45,31 +49,31 @@ use trunker::sdr::soapy_source::SoapySource;
 #[command(name = "p25-server", version, about)]
 struct Cli {
     /// SoapySDR device argument string (e.g. "driver=sdrplay").
-    #[arg(short, long)]
-    device: String,
+    #[arg(short, long, env = "TRUNKER_DEVICE")]
+    device: Option<String>,
 
     /// Control channel frequency in Hz.
     #[arg(long)]
-    frequency: u64,
+    frequency: Option<u64>,
 
     /// Center frequency of the capture in Hz.
-    #[arg(short = 'f', long)]
-    center_freq: u64,
+    #[arg(short = 'f', long, env = "TRUNKER_CENTER_FREQ")]
+    center_freq: Option<u64>,
 
     /// Sample rate in Hz.
-    #[arg(short, long, default_value_t = 2_400_000)]
+    #[arg(short, long, default_value_t = 2_400_000, env = "TRUNKER_SAMPLE_RATE")]
     sample_rate: u32,
 
     /// Manual gain in dB (mutually exclusive with --auto-gain).
-    #[arg(long)]
+    #[arg(long, env = "TRUNKER_GAIN")]
     gain: Option<f64>,
 
     /// Enable automatic gain control.
-    #[arg(long)]
+    #[arg(long, env = "TRUNKER_AUTO_GAIN")]
     auto_gain: bool,
 
     /// Antenna port name.
-    #[arg(long)]
+    #[arg(long, env = "TRUNKER_ANTENNA")]
     antenna: Option<String>,
 
     /// Device-specific setting as key=value (repeatable).
@@ -77,7 +81,7 @@ struct Cli {
     settings: Vec<String>,
 
     /// SDR read buffer depth in milliseconds.
-    #[arg(long, default_value_t = 500)]
+    #[arg(long, default_value_t = 500, env = "TRUNKER_BUFFER_MS")]
     buffer_ms: u32,
 
     /// Seconds before tearing down an idle voice channel.
@@ -90,15 +94,15 @@ struct Cli {
 
     /// LiveKit server URL (e.g. "wss://my-server.livekit.cloud").
     #[arg(long, env = "LIVEKIT_URL")]
-    livekit_url: String,
+    livekit_url: Option<String>,
 
     /// LiveKit API key.
     #[arg(long, env = "LIVEKIT_API_KEY")]
-    livekit_api_key: String,
+    livekit_api_key: Option<String>,
 
     /// LiveKit API secret.
     #[arg(long, env = "LIVEKIT_API_SECRET")]
-    livekit_api_secret: String,
+    livekit_api_secret: Option<String>,
 
     /// LiveKit room name to join (defaults to "trunker:{trunker_system_id}").
     #[arg(long)]
@@ -109,7 +113,7 @@ struct Cli {
     livekit_identity: Option<String>,
 
     /// Audio gain multiplier for LiveKit output (default: 16.0).
-    #[arg(long, default_value_t = 16.0)]
+    #[arg(long, default_value_t = 16.0, env = "TRUNKER_AUDIO_GAIN")]
     audio_gain: f32,
 
     /// P25 system ID (decimal or 0x hex).
@@ -135,6 +139,18 @@ struct Cli {
     /// Trunker feeder unique identifier (auto-generated if omitted).
     #[arg(long)]
     trunker_feeder_id: Option<Uuid>,
+
+    /// Trunker API base URL for managed mode.
+    #[arg(long, env = "TRUNKER_API_URL", default_value = "https://trunker.app")]
+    api_url: String,
+
+    /// Feeder identifier for API registration.
+    #[arg(long, env = "TRUNKER_FEEDER_ID")]
+    feeder_id: Option<Uuid>,
+
+    /// API key for authentication with trunker-web.
+    #[arg(long, env = "TRUNKER_API_KEY")]
+    api_key: Option<String>,
 }
 
 /// System identification metadata embedded in LiveKit participant info.
@@ -178,6 +194,13 @@ impl SystemMetadata {
 
 #[tokio::main(worker_threads = 2)]
 async fn main() -> Result<()> {
+    // Load .env file before CLI parse so clap's env= attributes pick up values.
+    let env_file = std::env::var("TRUNKER_ENV_FILE").unwrap_or_else(|_| ".env".to_string());
+    match dotenvy::from_filename(&env_file) {
+        Ok(path) => eprintln!("loaded env from {}", path.display()),
+        Err(e) => eprintln!("warning: failed to load {env_file}: {e}"),
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -188,16 +211,229 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Build system identification metadata.
-    let metadata = SystemMetadata {
-        system_id: cli.system_id,
-        wacn: cli.wacn,
-        site_id: cli.site_id,
-        radioreference_id: cli.radioreference_id,
-        trunker_system_id: cli.trunker_system_id.unwrap_or_else(Uuid::new_v4),
-        trunker_feeder_id: cli.trunker_feeder_id.unwrap_or_else(Uuid::new_v4),
-    };
-    let metadata_json = serde_json::to_string(&metadata)?;
+    // Detect operating mode.
+    let mode = config::ServerMode::detect(cli.feeder_id, cli.api_key.as_deref(), &cli.api_url)?;
+
+    // Merge TRUNKER_SETTINGS env var with --setting CLI args.
+    // CLI --setting values override env values with the same key.
+    let mut settings_map: HashMap<String, String> = HashMap::new();
+    if let Ok(env_settings) = std::env::var("TRUNKER_SETTINGS") {
+        for item in env_settings.split(',') {
+            let item = item.trim();
+            if let Some((key, value)) = item.split_once('=') {
+                settings_map.insert(key.to_string(), value.to_string());
+            }
+        }
+    }
+    for s in &cli.settings {
+        let (key, value) = s
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("invalid setting '{s}': expected key=value"))?;
+        settings_map.insert(key.to_string(), value.to_string());
+    }
+    let settings: Vec<(String, String)> = settings_map.into_iter().collect();
+
+    let running = Arc::new(AtomicBool::new(true));
+
+    // Resolved configuration values (filled from API or CLI depending on mode).
+    let livekit_url: String;
+    let livekit_token: String;
+    let livekit_room: String;
+    let livekit_identity: String;
+    let metadata: SystemMetadata;
+    let metadata_json: String;
+    let center_freq: u64;
+    let cc_offset_hz: f64;
+    let device: String;
+    let control_channels: Vec<u64>;
+
+    match &mode {
+        config::ServerMode::Managed {
+            feeder_id,
+            api_key,
+            api_url,
+        } => {
+            tracing::info!(%feeder_id, %api_url, "managed mode: fetching config from API");
+
+            // Warn about ignored standalone-only options.
+            if cli.livekit_url.is_some() {
+                tracing::warn!(
+                    "--livekit-url is ignored in managed mode (LiveKit config comes from API)"
+                );
+            }
+            if cli.livekit_api_key.is_some() {
+                tracing::warn!(
+                    "--livekit-api-key is ignored in managed mode (LiveKit token comes from API)"
+                );
+            }
+            if cli.livekit_api_secret.is_some() {
+                tracing::warn!(
+                    "--livekit-api-secret is ignored in managed mode (LiveKit token comes from API)"
+                );
+            }
+
+            let api_config = config::fetch_config(api_url, feeder_id, api_key).await?;
+
+            let sdr = api_config.sdr.ok_or_else(|| {
+                anyhow::anyhow!(
+                    "feeder {feeder_id} is not assigned to a site\n  \
+                     hint: assign this feeder to a system in the trunker-web dashboard"
+                )
+            })?;
+
+            // Use CLI center_freq if provided, otherwise use API value.
+            center_freq = cli.center_freq.unwrap_or(sdr.center_frequency);
+
+            // Validate sample rate covers the network bandwidth.
+            if (cli.sample_rate as u64) < sdr.bandwidth {
+                anyhow::bail!(
+                    "sample rate {} Hz < network bandwidth {} Hz\n  \
+                     hint: set TRUNKER_SAMPLE_RATE >= {}",
+                    cli.sample_rate,
+                    sdr.bandwidth,
+                    sdr.bandwidth
+                );
+            }
+
+            // Validate all CC candidates fit within capture bandwidth.
+            let half_bw = cli.sample_rate as f64 / 2.0;
+            let valid_candidates: Vec<u64> = sdr
+                .control_channels
+                .iter()
+                .filter(|&&freq| {
+                    let offset = (freq as f64 - center_freq as f64).abs();
+                    if offset > half_bw {
+                        tracing::warn!(
+                            frequency = freq,
+                            offset_hz = offset,
+                            "CC candidate outside capture bandwidth, skipping"
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                })
+                .copied()
+                .collect();
+            if valid_candidates.is_empty() {
+                anyhow::bail!(
+                    "no CC candidates within capture bandwidth\n  \
+                     hint: center_freq={center_freq}, sample_rate={}, candidates={:?}",
+                    cli.sample_rate,
+                    sdr.control_channels
+                );
+            }
+
+            // CC hunter will scan all valid candidates in parallel.
+            // cc_offset_hz is unused when control_channels is non-empty.
+            cc_offset_hz = 0.0;
+            control_channels = valid_candidates;
+
+            // Merge system identification: CLI overrides API.
+            let api_system_id = config::parse_hex_string(&api_config.system.system_id);
+            let api_wacn = config::parse_hex_string(&api_config.system.wacn);
+
+            metadata = SystemMetadata {
+                system_id: cli.system_id.or(api_system_id),
+                wacn: cli.wacn.or(api_wacn),
+                site_id: cli.site_id,
+                radioreference_id: cli.radioreference_id,
+                trunker_system_id: cli.trunker_system_id.unwrap_or(api_config.system.id),
+                trunker_feeder_id: cli.trunker_feeder_id.unwrap_or(*feeder_id),
+            };
+            metadata_json = serde_json::to_string(&metadata)?;
+
+            // LiveKit config comes directly from the API.
+            livekit_url = api_config.url;
+            livekit_token = api_config.token;
+            livekit_room = api_config.room;
+            livekit_identity = cli
+                .livekit_identity
+                .clone()
+                .unwrap_or_else(|| format!("feeder:{}", metadata.trunker_feeder_id));
+
+            // Device must come from CLI/env (API cannot know local hardware).
+            device = cli.device.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--device or TRUNKER_DEVICE is required (API cannot know local hardware)"
+                )
+            })?;
+
+            tracing::info!(
+                system = api_config.system.name,
+                short_name = api_config.system.short_name,
+                center_freq,
+                control_channels = ?control_channels,
+                "managed config loaded"
+            );
+        }
+        config::ServerMode::Standalone => {
+            tracing::info!("standalone mode");
+
+            device = cli
+                .device
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("--device or TRUNKER_DEVICE is required"))?;
+            center_freq = cli.center_freq.ok_or_else(|| {
+                anyhow::anyhow!("--center-freq or TRUNKER_CENTER_FREQ is required")
+            })?;
+
+            cc_offset_hz = match cli.frequency {
+                Some(freq) if freq != 0 => freq as f64 - center_freq as f64,
+                _ => 0.0,
+            };
+            control_channels = vec![];
+
+            metadata = SystemMetadata {
+                system_id: cli.system_id,
+                wacn: cli.wacn,
+                site_id: cli.site_id,
+                radioreference_id: cli.radioreference_id,
+                trunker_system_id: cli.trunker_system_id.unwrap_or_else(Uuid::new_v4),
+                trunker_feeder_id: cli.trunker_feeder_id.unwrap_or_else(Uuid::new_v4),
+            };
+            metadata_json = serde_json::to_string(&metadata)?;
+
+            let livekit_url_str = cli
+                .livekit_url
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("--livekit-url or LIVEKIT_URL is required"))?;
+            let livekit_api_key = cli.livekit_api_key.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("--livekit-api-key or LIVEKIT_API_KEY is required")
+            })?;
+            let livekit_api_secret = cli.livekit_api_secret.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("--livekit-api-secret or LIVEKIT_API_SECRET is required")
+            })?;
+
+            livekit_room = cli
+                .livekit_room
+                .clone()
+                .unwrap_or_else(|| format!("trunker:{}", metadata.trunker_system_id));
+            livekit_identity = cli
+                .livekit_identity
+                .clone()
+                .unwrap_or_else(|| format!("feeder:{}", metadata.trunker_feeder_id));
+
+            // Generate access token for LiveKit.
+            livekit_token = livekit_api::access_token::AccessToken::with_api_key(
+                livekit_api_key,
+                livekit_api_secret,
+            )
+            .with_identity(&livekit_identity)
+            .with_metadata(&metadata_json)
+            .with_grants(livekit_api::access_token::VideoGrants {
+                room_join: true,
+                room: livekit_room.clone(),
+                can_publish: true,
+                can_subscribe: false,
+                can_update_own_metadata: true,
+                ..Default::default()
+            })
+            .to_jwt()?;
+
+            livekit_url = livekit_url_str.to_string();
+        }
+    }
 
     tracing::info!(
         trunker_system_id = %metadata.trunker_system_id,
@@ -208,66 +444,24 @@ async fn main() -> Result<()> {
         "system metadata"
     );
 
-    // Derive LiveKit room/identity defaults from system metadata.
-    let livekit_room = cli
-        .livekit_room
-        .unwrap_or_else(|| format!("trunker:{}", metadata.trunker_system_id));
-    let livekit_identity = cli
-        .livekit_identity
-        .unwrap_or_else(|| format!("feeder:{}", metadata.trunker_feeder_id));
-
-    let running = Arc::new(AtomicBool::new(true));
-
-    // Parse device settings.
-    let settings: Vec<(String, String)> = cli
-        .settings
-        .iter()
-        .map(|s| {
-            let (key, value) = s
-                .split_once('=')
-                .ok_or_else(|| anyhow::anyhow!("invalid setting '{s}': expected key=value"))?;
-            Ok((key.to_string(), value.to_string()))
-        })
-        .collect::<Result<Vec<_>>>()?;
-
     tracing::info!(
         room = livekit_room,
         identity = livekit_identity,
         "connecting to LiveKit server"
     );
 
-    // Generate access token for LiveKit.
-    let token = livekit_api::access_token::AccessToken::with_api_key(
-        &cli.livekit_api_key,
-        &cli.livekit_api_secret,
-    )
-    .with_identity(&livekit_identity)
-    .with_metadata(&metadata_json)
-    .with_grants(livekit_api::access_token::VideoGrants {
-        room_join: true,
-        room: livekit_room,
-        can_publish: true,
-        can_subscribe: false,
-        can_update_own_metadata: true,
-        ..Default::default()
-    })
-    .to_jwt()?;
-
     // Connect to LiveKit room.
     let mut room_options = RoomOptions::default();
     room_options.auto_subscribe = false;
     room_options.single_peer_connection = true;
-    let (room, mut room_events) =
-        Room::connect(&cli.livekit_url, &token, room_options).await?;
+    let (room, mut room_events) = Room::connect(&livekit_url, &livekit_token, room_options).await?;
     let room = Arc::new(room);
 
     tracing::info!(room_name = room.name(), "connected to LiveKit room");
 
     // Publish system metadata on the local participant so subscribers
     // (and the future central server) can identify this feeder.
-    room.local_participant()
-        .set_metadata(metadata_json)
-        .await?;
+    room.local_participant().set_metadata(metadata_json).await?;
     room.local_participant()
         .set_attributes(metadata.to_attributes())
         .await?;
@@ -325,12 +519,24 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Compute CC offset.
-    let cc_offset_hz = if cli.frequency != 0 {
-        cli.frequency as f64 - cli.center_freq as f64
-    } else {
-        0.0
-    };
+    // Spawn managed-mode background tasks.
+    if let config::ServerMode::Managed {
+        ref api_url,
+        feeder_id,
+        ref api_key,
+        ..
+    } = mode
+    {
+        let hb_url = api_url.clone();
+        let hb_key = api_key.clone();
+        let hb_running = running.clone();
+        tokio::spawn(api_heartbeat::run(hb_url, feeder_id, hb_key, hb_running));
+
+        let ws_url = api_url.clone();
+        let ws_key = api_key.clone();
+        let ws_running = running.clone();
+        tokio::spawn(command::run(ws_url, feeder_id, ws_key, ws_running));
+    }
 
     let max_voices = if cli.max_voices == 0 {
         None
@@ -342,8 +548,8 @@ async fn main() -> Result<()> {
     // thread doesn't overflow while we wait for LiveKit to connect.
     let gain = if cli.auto_gain { None } else { cli.gain };
     let sample_source = SoapySource::open(
-        &cli.device,
-        cli.center_freq,
+        &device,
+        center_freq,
         cli.sample_rate,
         gain,
         cli.antenna.as_deref(),
@@ -359,7 +565,7 @@ async fn main() -> Result<()> {
     let decode_handle = std::thread::spawn(move || {
         let config = trunker::decode::TrunkedDecoderConfig {
             sample_rate: cli.sample_rate,
-            center_frequency: cli.center_freq,
+            center_frequency: center_freq,
             cc_offset_hz,
             modulation: pipeline::Modulation::Cqpsk,
             nid_integrity: NidIntegrityPolicy::Strict,
@@ -370,6 +576,7 @@ async fn main() -> Result<()> {
             max_voices,
             json_output: false,
             heartbeat_seconds: 10,
+            control_channels,
         };
         trunker::decode::trunked::decode_trunked(
             &mut source,
@@ -447,7 +654,10 @@ mod tests {
         let json = serde_json::to_string(&meta).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
-        assert!(parsed.get("system_id").is_none(), "system_id should be absent");
+        assert!(
+            parsed.get("system_id").is_none(),
+            "system_id should be absent"
+        );
         assert!(parsed.get("wacn").is_none(), "wacn should be absent");
         assert!(parsed.get("site_id").is_none(), "site_id should be absent");
         assert!(
@@ -486,7 +696,10 @@ mod tests {
         let meta = metadata_no_optional();
         let attrs = meta.to_attributes();
 
-        assert!(!attrs.contains_key("system_id"), "system_id should be absent");
+        assert!(
+            !attrs.contains_key("system_id"),
+            "system_id should be absent"
+        );
         assert!(!attrs.contains_key("wacn"), "wacn should be absent");
         assert!(!attrs.contains_key("site_id"), "site_id should be absent");
         assert!(

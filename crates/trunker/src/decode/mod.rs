@@ -5,6 +5,7 @@
 //! implement to handle events, and the orchestration loops for CC-only
 //! and wideband trunked decoding.
 
+pub mod cc_hunter;
 pub mod control_channel;
 pub mod event;
 pub mod heartbeat;
