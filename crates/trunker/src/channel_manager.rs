@@ -106,45 +106,47 @@ fn voice_thread_main(
     event_sender: crossbeam_channel::Sender<VoiceChannelEvent>,
     carrier_acquired: Arc<AtomicBool>,
 ) {
-    while let Ok(sample) = iq_receiver.recv() {
-        let shifted = channel.nco.shift(sample);
-        if let Some(event) = channel.pipeline.process_sample(shifted) {
-            // Mark carrier acquired on first valid NID decode.
-            if let ReceiverEvent::Nid(nid) = &event
-                && nid.parity_ok
-                && !carrier_acquired.load(Ordering::Relaxed)
-            {
-                carrier_acquired.store(true, Ordering::Relaxed);
-                tracing::debug!(
-                    frequency = %channel.frequency,
-                    "carrier acquired, audio output enabled"
-                );
-            }
-
-            // Decode audio only after carrier is acquired.
-            let audio = if carrier_acquired.load(Ordering::Relaxed) {
-                if let (Some(decoder), ReceiverEvent::VoiceFrame(vf)) =
-                    (channel.decoder.as_mut(), &event)
+    while let Ok(batch) = iq_receiver.recv() {
+        for &sample in batch.iter() {
+            let shifted = channel.nco.shift(sample);
+            if let Some(event) = channel.pipeline.process_sample(shifted) {
+                // Mark carrier acquired on first valid NID decode.
+                if let ReceiverEvent::Nid(nid) = &event
+                    && nid.parity_ok
+                    && !carrier_acquired.load(Ordering::Relaxed)
                 {
-                    let received = ReceivedFrame::from(vf);
-                    let mut buffer: AudioBuffer = [0.0; SAMPLES_PER_FRAME];
-                    decoder.decode(received, &mut buffer);
-                    Some(buffer.to_vec())
+                    carrier_acquired.store(true, Ordering::Relaxed);
+                    tracing::debug!(
+                        frequency = %channel.frequency,
+                        "carrier acquired, audio output enabled"
+                    );
+                }
+
+                // Decode audio only after carrier is acquired.
+                let audio = if carrier_acquired.load(Ordering::Relaxed) {
+                    if let (Some(decoder), ReceiverEvent::VoiceFrame(vf)) =
+                        (channel.decoder.as_mut(), &event)
+                    {
+                        let received = ReceivedFrame::from(vf);
+                        let mut buffer: AudioBuffer = [0.0; SAMPLES_PER_FRAME];
+                        decoder.decode(received, &mut buffer);
+                        Some(buffer.to_vec())
+                    } else {
+                        None
+                    }
                 } else {
                     None
-                }
-            } else {
-                None
-            };
+                };
 
-            let _ = event_sender.send(VoiceChannelEvent {
-                frequency: channel.frequency,
-                talkgroup: channel.talkgroup,
-                source: channel.source,
-                nac: channel.pipeline.current_nac(),
-                event,
-                audio,
-            });
+                let _ = event_sender.send(VoiceChannelEvent {
+                    frequency: channel.frequency,
+                    talkgroup: channel.talkgroup,
+                    source: channel.source,
+                    nac: channel.pipeline.current_nac(),
+                    event,
+                    audio,
+                });
+            }
         }
     }
     // iq_receiver disconnected — sender was dropped, thread exits cleanly.
