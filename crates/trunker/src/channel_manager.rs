@@ -66,8 +66,8 @@ struct VoiceChannel {
 /// thread; this handle provides the IQ send channel, shared carrier
 /// state, and metadata for grant refresh and expiry.
 struct VoiceThreadHandle {
-    /// Send IQ samples to this thread. Drop to signal shutdown.
-    iq_sender: crossbeam_channel::Sender<Complex<f32>>,
+    /// Send batched IQ samples to this thread. Drop to signal shutdown.
+    iq_sender: crossbeam_channel::Sender<Arc<[Complex<f32>]>>,
     /// Thread join handle for cleanup.
     join_handle: Option<thread::JoinHandle<()>>,
     /// Whether carrier has been acquired (shared with voice thread).
@@ -82,10 +82,18 @@ struct VoiceThreadHandle {
     last_grant_sample: u64,
 }
 
-/// Capacity of the bounded IQ sample channel per voice thread.
+/// Number of IQ samples per batch sent to voice threads.
 ///
-/// 4096 samples at 2.4 MS/s is ~1.7 ms of buffering.
-const IQ_CHANNEL_CAPACITY: usize = 4096;
+/// 512 samples at 2.4 MS/s is ~0.21 ms per batch. Batching amortizes
+/// crossbeam channel overhead across many samples, reducing sends from
+/// millions/sec (per-sample) to ~23K/sec at 2.4 MSPS with 5 channels.
+const IQ_BATCH_SIZE: usize = 512;
+
+/// Capacity of the bounded IQ batch channel per voice thread.
+///
+/// 8 batches of 512 samples = 4096 samples total, the same buffering
+/// depth as the previous per-sample channel.
+const IQ_CHANNEL_CAPACITY: usize = 8;
 
 /// Voice thread entry point.
 ///
@@ -94,7 +102,7 @@ const IQ_CHANNEL_CAPACITY: usize = 4096;
 /// back to the manager via the event channel.
 fn voice_thread_main(
     mut channel: VoiceChannel,
-    iq_receiver: crossbeam_channel::Receiver<Complex<f32>>,
+    iq_receiver: crossbeam_channel::Receiver<Arc<[Complex<f32>]>>,
     event_sender: crossbeam_channel::Sender<VoiceChannelEvent>,
     carrier_acquired: Arc<AtomicBool>,
 ) {
