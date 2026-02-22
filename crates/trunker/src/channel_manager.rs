@@ -204,6 +204,8 @@ pub struct ChannelManager {
     event_receiver: crossbeam_channel::Receiver<VoiceChannelEvent>,
     /// Sender cloned into each voice thread.
     event_sender: crossbeam_channel::Sender<VoiceChannelEvent>,
+    /// Accumulates IQ samples before flushing as a batch to voice threads.
+    iq_batch: Vec<Complex<f32>>,
 }
 
 /// Fraction of sample rate considered usable bandwidth.
@@ -242,6 +244,7 @@ impl ChannelManager {
             expired_no_carrier: 0,
             event_receiver,
             event_sender,
+            iq_batch: Vec::with_capacity(IQ_BATCH_SIZE),
         }
     }
 
@@ -297,14 +300,10 @@ impl ChannelManager {
     pub fn process_sample(&mut self, sample: Complex<f32>, events: &mut Vec<VoiceChannelEvent>) {
         self.sample_count += 1;
 
-        // Fan out IQ sample to all voice threads.
-        for handle in self.active_channels.values() {
-            if handle.iq_sender.try_send(sample).is_err() {
-                tracing::trace!(
-                    frequency = %handle.frequency,
-                    "voice thread lagging, dropped sample"
-                );
-            }
+        // Accumulate samples into a batch before sending to voice threads.
+        self.iq_batch.push(sample);
+        if self.iq_batch.len() >= IQ_BATCH_SIZE {
+            self.flush_iq_batch();
         }
 
         // Drain events from voice threads.
@@ -316,6 +315,29 @@ impl ChannelManager {
         // avoid HashMap iteration overhead on every sample).
         if self.sample_count.is_multiple_of(10_000) {
             self.expire_channels();
+        }
+    }
+
+    /// Flush the accumulated IQ batch to all voice threads.
+    ///
+    /// Converts the batch buffer to an `Arc` slice and sends a clone to
+    /// each voice thread. This amortizes crossbeam channel overhead across
+    /// `IQ_BATCH_SIZE` samples per send.
+    fn flush_iq_batch(&mut self) {
+        if self.iq_batch.is_empty() {
+            return;
+        }
+
+        let batch: Arc<[Complex<f32>]> = Arc::from(self.iq_batch.as_slice());
+        self.iq_batch.clear();
+
+        for handle in self.active_channels.values() {
+            if handle.iq_sender.try_send(Arc::clone(&batch)).is_err() {
+                tracing::trace!(
+                    frequency = %handle.frequency,
+                    "voice thread lagging, dropped batch"
+                );
+            }
         }
     }
 
@@ -544,6 +566,9 @@ impl ChannelManager {
     /// Drops all IQ senders and joins all threads. Called on
     /// `ChannelManager` drop to ensure clean shutdown.
     pub fn shutdown(&mut self) {
+        // Flush any partial batch so voice threads get all samples.
+        self.flush_iq_batch();
+
         // Drain remaining events before shutdown.
         while self.event_receiver.try_recv().is_ok() {}
 
