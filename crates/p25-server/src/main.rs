@@ -112,8 +112,8 @@ struct Cli {
     #[arg(long)]
     livekit_identity: Option<String>,
 
-    /// Audio gain multiplier for LiveKit output (default: 16.0).
-    #[arg(long, default_value_t = 16.0, env = "TRUNKER_AUDIO_GAIN")]
+    /// Audio gain multiplier for LiveKit output (default: 4.0).
+    #[arg(long, default_value_t = 4.0, env = "TRUNKER_AUDIO_GAIN")]
     audio_gain: f32,
 
     /// P25 system ID (decimal or 0x hex).

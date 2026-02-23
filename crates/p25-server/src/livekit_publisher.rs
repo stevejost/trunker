@@ -29,11 +29,12 @@ const VOCODER_SAMPLE_RATE: u32 = 8000;
 /// Number of audio channels (mono).
 const AUDIO_CHANNELS: u32 = 1;
 
-/// Convert a raw vocoder f32 sample (after gain) to i16.
+/// Soft-limit a gained vocoder sample to the i16 range using tanh.
 ///
-/// Values outside the i16 range are clamped.
-fn vocoder_sample_to_i16(sample: f32) -> i16 {
-    sample.clamp(i16::MIN as f32, i16::MAX as f32) as i16
+/// Unlike a hard clamp, tanh smoothly bends peaks toward full scale,
+/// preserving more detail in loud passages instead of flat-clipping.
+fn soft_limit(sample: f32) -> i16 {
+    (32767.0_f32 * (sample / 32767.0_f32).tanh()) as i16
 }
 
 /// Duration of one IMBE voice frame (160 samples at 8 kHz).
@@ -149,11 +150,11 @@ impl AudioPublisher {
         }
         track.next_send = Instant::now() + FRAME_DURATION;
 
-        // Apply gain and convert to i16. No upsampling -- WebRTC
+        // Apply gain and soft-limit to i16. No upsampling -- WebRTC
         // resamples internally with a proper sinc filter.
         let pcm_i16: Vec<i16> = samples
             .iter()
-            .map(|&s| vocoder_sample_to_i16(s * gain))
+            .map(|&s| soft_limit(s * gain))
             .collect();
 
         let frame = AudioFrame {
@@ -239,26 +240,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vocoder_sample_zero() {
-        assert_eq!(vocoder_sample_to_i16(0.0), 0);
+    fn soft_limit_zero() {
+        assert_eq!(soft_limit(0.0), 0);
     }
 
     #[test]
-    fn vocoder_sample_typical_peak() {
-        // Vocoder typically peaks around ~1000.
-        assert_eq!(vocoder_sample_to_i16(1000.0), 1000);
-        assert_eq!(vocoder_sample_to_i16(-1000.0), -1000);
+    fn soft_limit_typical_peak() {
+        // Vocoder typically peaks around ~1000. tanh(1000/32767) is
+        // nearly linear, so the output is close to the input.
+        let out = soft_limit(1000.0);
+        assert!((out - 1000).abs() < 2, "got {out}");
+        let out_neg = soft_limit(-1000.0);
+        assert!((out_neg + 1000).abs() < 2, "got {out_neg}");
     }
 
     #[test]
-    fn vocoder_sample_clamps_at_i16_bounds() {
-        assert_eq!(vocoder_sample_to_i16(40000.0), i16::MAX);
-        assert_eq!(vocoder_sample_to_i16(-40000.0), i16::MIN);
+    fn soft_limit_compresses_beyond_full_scale() {
+        // Hard clamp would return i16::MAX (32767), but tanh
+        // compresses: tanh(40000/32767) ~ 0.84, so output ~ 27520.
+        let out = soft_limit(40000.0);
+        assert!(out > 25000, "should still be loud, got {out}");
+        assert!(out < i16::MAX, "should be below hard clip, got {out}");
+        // Symmetric for negative.
+        let out_neg = soft_limit(-40000.0);
+        assert!(out_neg < -25000, "got {out_neg}");
+        assert!(out_neg > i16::MIN, "got {out_neg}");
     }
 
     #[test]
-    fn vocoder_sample_small_values() {
-        assert_eq!(vocoder_sample_to_i16(1.5), 1);
-        assert_eq!(vocoder_sample_to_i16(-1.5), -1);
+    fn soft_limit_small_values() {
+        // Small values pass through nearly unchanged.
+        assert_eq!(soft_limit(1.5), 1);
+        assert_eq!(soft_limit(-1.5), -1);
+    }
+
+    #[test]
+    fn soft_limit_is_monotonic() {
+        // Increasing input should produce non-decreasing output.
+        let mut prev = i16::MIN;
+        for i in (-50000..=50000).step_by(100) {
+            let out = soft_limit(i as f32);
+            assert!(out >= prev, "not monotonic at {i}: {prev} -> {out}");
+            prev = out;
+        }
     }
 }

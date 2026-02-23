@@ -156,7 +156,7 @@ fn write_opus_head(writer: &mut PacketWriter<'static, BufWriter<File>>) -> std::
     head.push(CHANNEL_COUNT);
     head.extend_from_slice(&PRE_SKIP.to_le_bytes());
     head.extend_from_slice(&SAMPLE_RATE.to_le_bytes());
-    head.extend_from_slice(&0_i16.to_le_bytes()); // output gain
+    head.extend_from_slice(&3072_i16.to_le_bytes()); // output gain: +12 dB (Q7.8 = 12.0 * 256)
     head.push(0); // channel mapping family (mono)
 
     writer.write_packet(head, STREAM_SERIAL, PacketWriteEndInfo::EndPage, 0)?;
