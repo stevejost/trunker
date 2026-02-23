@@ -16,8 +16,8 @@ dotenvy = "0.15"
 reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false }
 ctrlc = { version = "3", features = ["termination"] }
 futures-util = "0.3"
-livekit = "0.7"
-livekit-api = "0.4"
+livekit = { version = "0.7", features = ["rustls-tls-native-roots"] }
+livekit-api = { version = "0.4", features = ["rustls-tls-native-roots"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
