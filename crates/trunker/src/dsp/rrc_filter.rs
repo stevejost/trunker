@@ -14,11 +14,18 @@ use num_complex::Complex;
 /// Operates on real-valued baseband samples (post FM demodulation).
 /// Filters at the symbol rate to minimize ISI and maximize SNR
 /// at the symbol sampling points.
+///
+/// The delay line is sized to a power of two so that circular buffer
+/// indexing uses a bitmask instead of modulo division.
 #[derive(Debug)]
 pub struct RrcFilter {
     coefficients: Vec<f32>,
     delay_line: Vec<f32>,
     delay_index: usize,
+    /// Bitmask for circular buffer indexing (`delay_line.len() - 1`).
+    delay_mask: usize,
+    /// Number of filter taps (may be less than `delay_line.len()`).
+    num_taps: usize,
 }
 
 impl RrcFilter {
@@ -32,9 +39,12 @@ impl RrcFilter {
         let sps = (sample_rate / symbol_rate).round() as usize;
         let num_taps = 2 * num_symbols * sps + 1;
         let coefficients = design_rrc(sps, excess_bw, num_taps);
+        let buf_len = coefficients.len().next_power_of_two();
         Self {
-            delay_line: vec![0.0; coefficients.len()],
+            num_taps: coefficients.len(),
+            delay_line: vec![0.0; buf_len],
             delay_index: 0,
+            delay_mask: buf_len - 1,
             coefficients,
         }
     }
@@ -49,17 +59,17 @@ impl RrcFilter {
     #[inline]
     pub fn process(&mut self, sample: f32) -> f32 {
         self.delay_line[self.delay_index] = sample;
-        self.delay_index = (self.delay_index + 1) % self.delay_line.len();
+        self.delay_index = (self.delay_index + 1) & self.delay_mask;
         self.convolve()
     }
 
     /// Compute the FIR convolution.
     #[inline]
     fn convolve(&self) -> f32 {
-        let len = self.coefficients.len();
+        let mask = self.delay_mask;
         let mut sum = 0.0_f32;
-        for i in 0..len {
-            let delay_pos = (self.delay_index + len - 1 - i) % len;
+        for i in 0..self.num_taps {
+            let delay_pos = (self.delay_index + mask - i) & mask;
             sum += self.delay_line[delay_pos] * self.coefficients[i];
         }
         sum
