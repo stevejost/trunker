@@ -116,6 +116,10 @@ struct Cli {
     #[arg(long, default_value_t = 4.0, env = "TRUNKER_AUDIO_GAIN")]
     audio_gain: f32,
 
+    /// Opus audio bitrate in bits per second for LiveKit output (default: 12000).
+    #[arg(long, default_value_t = 12_000, env = "TRUNKER_AUDIO_BITRATE")]
+    audio_bitrate: u32,
+
     /// P25 system ID (decimal or 0x hex).
     #[arg(long, value_parser = parse_hex_u32)]
     system_id: Option<u32>,
@@ -481,8 +485,9 @@ async fn main() -> Result<()> {
     // Spawn LiveKit audio publisher.
     let publisher_room = Arc::clone(&room);
     let audio_gain = cli.audio_gain;
+    let audio_bitrate = cli.audio_bitrate;
     let audio_handle = tokio::spawn(async move {
-        let mut publisher = AudioPublisher::new(publisher_room, audio_gain);
+        let mut publisher = AudioPublisher::new(publisher_room, audio_gain, audio_bitrate);
         if let Err(e) = publisher.run(audio_rx).await {
             tracing::error!(error = %e, "audio publisher error");
         }

@@ -68,15 +68,18 @@ pub struct AudioPublisher {
     tracks: HashMap<u16, TalkgroupTrack>,
     /// Gain multiplier applied to vocoder samples before publishing.
     gain: f32,
+    /// Opus audio bitrate in bits per second.
+    audio_bitrate: u32,
 }
 
 impl AudioPublisher {
     /// Create a new publisher attached to the given room.
-    pub fn new(room: Arc<Room>, gain: f32) -> Self {
+    pub fn new(room: Arc<Room>, gain: f32, audio_bitrate: u32) -> Self {
         Self {
             room,
             tracks: HashMap::new(),
             gain,
+            audio_bitrate,
         }
     }
 
@@ -208,7 +211,7 @@ impl AudioPublisher {
                     TrackPublishOptions {
                         source: TrackSource::Unknown,
                         audio_encoding: Some(AudioEncoding {
-                            max_bitrate: 24_000,
+                            max_bitrate: u64::from(self.audio_bitrate),
                         }),
                         dtx: false,
                         red: true,
