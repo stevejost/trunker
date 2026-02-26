@@ -7,6 +7,21 @@
 use tokio::sync::broadcast;
 use trunker::decode::event::{DecoderEvent, EventSink};
 
+/// LiveKit connection state, broadcast to publishers via a watch channel.
+///
+/// The room event handler sends updates through a [`tokio::sync::watch`]
+/// channel, and publishers check it to pause during hiccups and clean up
+/// stale track handles on reconnection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectionState {
+    /// Connected and operational.
+    Connected,
+    /// Connection lost, attempting to reconnect.
+    Reconnecting,
+    /// Permanently disconnected — publishers should shut down.
+    Disconnected,
+}
+
 /// Wrapper around [`DecoderEvent`] that is `Clone` for broadcast.
 ///
 /// `DecoderEvent` contains types that are not all `Clone`, so we

@@ -36,7 +36,7 @@ fn parse_hex_u32(s: &str) -> Result<u32, String> {
     }
 }
 
-use bridge::BroadcastSink;
+use bridge::{BroadcastSink, ConnectionState};
 use data_publisher::DataPublisher;
 use livekit_publisher::AudioPublisher;
 use trunker::p25::nid::NidIntegrityPolicy;
@@ -482,38 +482,47 @@ async fn main() -> Result<()> {
     let audio_rx = sink.subscribe();
     let data_rx = sink.subscribe();
 
+    // Connection state watch channel: room event handler sends updates,
+    // publishers pause/resume based on state.
+    let (conn_tx, conn_rx) = tokio::sync::watch::channel(ConnectionState::Connected);
+
     // Spawn LiveKit audio publisher.
     let publisher_room = Arc::clone(&room);
     let audio_gain = cli.audio_gain;
     let audio_bitrate = cli.audio_bitrate;
+    let audio_conn_rx = conn_rx.clone();
     let audio_handle = tokio::spawn(async move {
         let mut publisher = AudioPublisher::new(publisher_room, audio_gain, audio_bitrate);
-        if let Err(e) = publisher.run(audio_rx).await {
+        if let Err(e) = publisher.run(audio_rx, audio_conn_rx).await {
             tracing::error!(error = %e, "audio publisher error");
         }
     });
 
     // Spawn LiveKit data channel publisher.
     let data_room = Arc::clone(&room);
+    let data_conn_rx = conn_rx.clone();
     let data_handle = tokio::spawn(async move {
         let publisher = DataPublisher::new(data_room);
-        publisher.run(data_rx).await;
+        publisher.run(data_rx, data_conn_rx).await;
     });
 
-    // Spawn room event handler: log connection state changes and signal
-    // shutdown on permanent disconnect.
+    // Spawn room event handler: broadcast connection state changes to
+    // publishers and signal shutdown on permanent disconnect.
     let room_running = running.clone();
     tokio::spawn(async move {
         while let Some(event) = room_events.recv().await {
             match event {
                 RoomEvent::Reconnecting => {
                     tracing::warn!("LiveKit connection lost, reconnecting...");
+                    let _ = conn_tx.send(ConnectionState::Reconnecting);
                 }
                 RoomEvent::Reconnected => {
                     tracing::info!("LiveKit reconnected");
+                    let _ = conn_tx.send(ConnectionState::Connected);
                 }
                 RoomEvent::Disconnected { reason } => {
                     tracing::error!(?reason, "LiveKit disconnected, shutting down");
+                    let _ = conn_tx.send(ConnectionState::Disconnected);
                     room_running.store(false, Ordering::Relaxed);
                     break;
                 }

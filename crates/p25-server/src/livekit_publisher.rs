@@ -14,10 +14,10 @@ use livekit::prelude::*;
 use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::AudioSourceOptions;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio::time::{Duration, Instant};
 
-use crate::bridge::BroadcastEvent;
+use crate::bridge::{BroadcastEvent, ConnectionState};
 
 /// Sample rate for the IMBE vocoder output.
 ///
@@ -37,9 +37,6 @@ fn soft_limit(sample: f32) -> i16 {
     (32767.0_f32 * (sample / 32767.0_f32).tanh()) as i16
 }
 
-/// Duration of one IMBE voice frame (160 samples at 8 kHz).
-const FRAME_DURATION: Duration = Duration::from_millis(20);
-
 /// Mute a track after this much silence to stop RTP transmission.
 const MUTE_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -52,8 +49,6 @@ struct TalkgroupTrack {
     source: NativeAudioSource,
     /// The published track handle, used for mute/unmute control.
     publication: LocalTrackPublication,
-    /// Earliest time the next frame should be sent (real-time pacing).
-    next_send: Instant,
     /// When the last audio frame was received (for idle muting).
     last_audio: Instant,
     /// Whether the track is currently muted (no RTP transmission).
@@ -85,8 +80,13 @@ impl AudioPublisher {
 
     /// Run the publisher loop, consuming events from the broadcast channel.
     ///
-    /// Blocks until the broadcast channel is closed or a fatal error occurs.
-    pub async fn run(&mut self, mut rx: broadcast::Receiver<BroadcastEvent>) -> anyhow::Result<()> {
+    /// Blocks until the broadcast channel is closed, the connection is
+    /// permanently lost, or a fatal error occurs.
+    pub async fn run(
+        &mut self,
+        mut rx: broadcast::Receiver<BroadcastEvent>,
+        mut conn_state: watch::Receiver<ConnectionState>,
+    ) -> anyhow::Result<()> {
         let mut mute_sweep = tokio::time::interval(MUTE_SWEEP_INTERVAL);
         mute_sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -97,6 +97,10 @@ impl AudioPublisher {
                         Ok(BroadcastEvent::Audio {
                             talkgroup, samples, ..
                         }) => {
+                            // Drop frames while disconnected — tracks are stale.
+                            if *conn_state.borrow() != ConnectionState::Connected {
+                                continue;
+                            }
                             if let Err(e) = self.publish_audio(talkgroup, &samples).await {
                                 tracing::warn!(
                                     talkgroup,
@@ -118,7 +122,28 @@ impl AudioPublisher {
                     }
                 }
                 _ = mute_sweep.tick() => {
-                    self.mute_idle_tracks();
+                    if *conn_state.borrow() == ConnectionState::Connected {
+                        self.mute_idle_tracks();
+                    }
+                }
+                Ok(()) = conn_state.changed() => {
+                    match *conn_state.borrow_and_update() {
+                        ConnectionState::Reconnecting => {
+                            let count = self.tracks.len();
+                            self.tracks.clear();
+                            tracing::warn!(
+                                tracks_cleared = count,
+                                "connection lost, cleared stale tracks"
+                            );
+                        }
+                        ConnectionState::Connected => {
+                            tracing::info!("connection restored, tracks will re-publish on demand");
+                        }
+                        ConnectionState::Disconnected => {
+                            tracing::info!("permanently disconnected, audio publisher shutting down");
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -130,6 +155,11 @@ impl AudioPublisher {
     /// Applies gain, converts f32 vocoder samples to i16, and feeds the
     /// native 8 kHz samples directly to LiveKit. WebRTC's internal
     /// sinc resampler handles upsampling to 48 kHz before Opus encoding.
+    ///
+    /// No pacing sleep — the [`NativeAudioSource`] has a 1-second internal
+    /// buffer and WebRTC drains it at real-time rate. The decoder produces
+    /// frames at roughly real-time from the live SDR stream, so bursts are
+    /// absorbed by the buffer without blocking the event loop.
     async fn publish_audio(&mut self, talkgroup: u16, samples: &[f32]) -> anyhow::Result<()> {
         let gain = self.gain;
         let track = self.get_or_create_track(talkgroup).await?;
@@ -145,13 +175,6 @@ impl AudioPublisher {
         // Log peak level for debugging.
         let peak = samples.iter().copied().map(f32::abs).fold(0.0f32, f32::max);
         tracing::debug!(talkgroup, peak, "audio frame");
-
-        // Pace frames at real-time to prevent buffer overrun.
-        let now = Instant::now();
-        if now < track.next_send {
-            tokio::time::sleep_until(track.next_send).await;
-        }
-        track.next_send = Instant::now() + FRAME_DURATION;
 
         // Apply gain and soft-limit to i16. No upsampling -- WebRTC
         // resamples internally with a proper sinc filter.
@@ -227,7 +250,6 @@ impl AudioPublisher {
                 TalkgroupTrack {
                     source,
                     publication,
-                    next_send: Instant::now(),
                     last_audio: Instant::now(),
                     muted: false,
                 },

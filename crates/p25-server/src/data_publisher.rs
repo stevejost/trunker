@@ -13,10 +13,10 @@ use std::sync::Arc;
 
 use livekit::prelude::*;
 use serde::Serialize;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio::time::{Duration, Instant};
 
-use crate::bridge::BroadcastEvent;
+use crate::bridge::{BroadcastEvent, ConnectionState};
 
 /// How long after the last audio frame before we consider a call ended.
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
@@ -75,7 +75,11 @@ impl DataPublisher {
         Self { room }
     }
 
-    pub async fn run(&self, mut rx: broadcast::Receiver<BroadcastEvent>) {
+    pub async fn run(
+        &self,
+        mut rx: broadcast::Receiver<BroadcastEvent>,
+        mut conn_state: watch::Receiver<ConnectionState>,
+    ) {
         // Talkgroups with an active call (have received audio recently).
         let mut active: HashMap<u16, CallState> = HashMap::new();
         let mut sweep_timer = tokio::time::interval(SWEEP_INTERVAL);
@@ -84,7 +88,11 @@ impl DataPublisher {
             tokio::select! {
                 result = rx.recv() => {
                     match result {
-                        Ok(event) => self.handle_event(event, &mut active).await,
+                        Ok(event) => {
+                            if *conn_state.borrow() == ConnectionState::Connected {
+                                self.handle_event(event, &mut active).await;
+                            }
+                        }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             tracing::warn!(skipped = n, "data publisher lagged behind");
                         }
@@ -95,7 +103,26 @@ impl DataPublisher {
                     }
                 }
                 _ = sweep_timer.tick() => {
-                    self.sweep_expired(&mut active).await;
+                    if *conn_state.borrow() == ConnectionState::Connected {
+                        self.sweep_expired(&mut active).await;
+                    }
+                }
+                Ok(()) = conn_state.changed() => {
+                    match *conn_state.borrow_and_update() {
+                        ConnectionState::Reconnecting => {
+                            active.clear();
+                            tracing::warn!("connection lost, pausing data publisher");
+                        }
+                        ConnectionState::Connected => {
+                            tracing::info!("connection restored, resuming data publisher");
+                        }
+                        ConnectionState::Disconnected => {
+                            tracing::info!(
+                                "permanently disconnected, data publisher shutting down"
+                            );
+                            break;
+                        }
+                    }
                 }
             }
         }
